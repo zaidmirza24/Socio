@@ -1,17 +1,16 @@
 import { ApifyClient } from "apify-client";
 import { getServerEnv } from "@/lib/env";
 
-const PLACEHOLDER_VALUES = [
-  "your-apify-api-token",
-  "your-apify-task-id",
-  "your-apify-instagram-task-id",
-  "your-secure-webhook-secret",
-];
-
 function isPlaceholder(value: string | undefined): boolean {
   if (!value) return true;
   const trimmed = value.trim().toLowerCase();
-  return PLACEHOLDER_VALUES.some((p) => trimmed === p || trimmed.startsWith("your-"));
+  return (
+    trimmed.startsWith("your-") ||
+    trimmed.includes("placeholder") ||
+    trimmed.includes("example") ||
+    trimmed === "changeme" ||
+    trimmed === "not-configured"
+  );
 }
 
 /**

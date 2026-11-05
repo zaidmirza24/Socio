@@ -1,0 +1,12 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  # Netlify's secret scanner checks all environment variables against repository code and build outputs.
+  # Next.js compiles NEXT_PUBLIC_* variables into client-side JS bundles by design.
+  # We omit public frontend keys and non-sensitive identifiers from secret scanning.
+  SECRETS_SCAN_OMIT_KEYS = "NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY,NEXT_PUBLIC_APP_URL,APIFY_TASK_ID"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
