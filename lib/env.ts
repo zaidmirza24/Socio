@@ -3,7 +3,7 @@ import { z } from "zod";
 const serverEnvSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1, "SUPABASE_SERVICE_ROLE_KEY is required"),
   APIFY_API_TOKEN: z.string().min(1, "APIFY_API_TOKEN is required"),
-  APIFY_WEBHOOK_SECRET: z.string().min(1, "APIFY_WEBHOOK_SECRET is required"),
+  APIFY_WEBHOOK_SECRET: z.string().default("not-configured"),
 });
 
 const clientEnvSchema = z.object({

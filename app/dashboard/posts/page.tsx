@@ -1,43 +1,18 @@
+import Link from "next/link";
 import { formatMetric } from "@/lib/utils";
 import { ExternalLink, Heart, MessageCircle, Eye } from "lucide-react";
+import { getRecentMonitoredPosts, type RecentPostItem } from "@/lib/supabase/queries";
 
-const samplePosts = [
-  {
-    id: "p-1",
-    handle: "volunteer_alice",
-    url: "https://www.instagram.com/p/DB9xyz123AB/",
-    caption: "Excited to share our community volunteer updates for the month! #community #service",
-    mediaType: "Image",
-    postedAt: "2026-11-03 10:15",
-    likes: 142,
-    comments: 18,
-    views: null, // null for photo post -> displayed as n/a
-  },
-  {
-    id: "p-2",
-    handle: "volunteer_alice",
-    url: "https://www.instagram.com/p/DB9xyz123AC/",
-    caption: "Recap reel of yesterday's city clean-up drive. Huge thanks to everyone who joined!",
-    mediaType: "Video",
-    postedAt: "2026-11-02 14:30",
-    likes: null, // null for hidden likes -> displayed as n/a
-    comments: 45,
-    views: 1890,
-  },
-  {
-    id: "p-3",
-    handle: "volunteer_bob",
-    url: "https://www.instagram.com/p/DB9xyz123AD/",
-    caption: "Photo carousel from the youth mentorship workshop. Inspiring day!",
-    mediaType: "Sidecar",
-    postedAt: "2026-11-01 08:00",
-    likes: 89,
-    comments: 0,
-    views: null,
-  },
-];
+export const dynamic = "force-dynamic";
 
-export default function PostsPage() {
+export default async function PostsPage() {
+  let posts: RecentPostItem[] = [];
+  try {
+    posts = await getRecentMonitoredPosts(100);
+  } catch (err) {
+    console.error("[PostsPage] Failed to fetch posts:", err);
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -46,7 +21,7 @@ export default function PostsPage() {
             Recent Monitored Posts
           </h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            Posts published within the last 30-day tracking window (up to 10 per account).
+            Posts published within the last 30-day tracking window (up to 10 per account) — {posts.length} posts recorded.
           </p>
         </div>
       </div>
@@ -67,48 +42,70 @@ export default function PostsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {samplePosts.map((post) => (
-                <tr key={post.id} className="hover:bg-slate-50 transition">
-                  <td className="px-6 py-4 font-semibold text-blue-600">@{post.handle}</td>
-                  <td className="px-6 py-4 text-slate-700 max-w-xs truncate" title={post.caption}>
-                    {post.caption}
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="text-xs px-2 py-0.5 rounded bg-slate-100 font-medium text-slate-600">
-                      {post.mediaType}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-xs text-slate-500">{post.postedAt}</td>
-                  <td className="px-6 py-4 text-right font-medium">
-                    <span className="inline-flex items-center gap-1 text-rose-600">
-                      <Heart className="h-3.5 w-3.5" />
-                      {formatMetric(post.likes)}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-right font-medium">
-                    <span className="inline-flex items-center gap-1 text-teal-600">
-                      <MessageCircle className="h-3.5 w-3.5" />
-                      {formatMetric(post.comments)}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-right font-medium">
-                    <span className="inline-flex items-center gap-1 text-slate-500">
-                      <Eye className="h-3.5 w-3.5" />
-                      {formatMetric(post.views)}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <a
-                      href={post.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
-                    >
-                      View <ExternalLink className="h-3 w-3" />
-                    </a>
+              {posts.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="px-6 py-12 text-center text-slate-400">
+                    No posts found in database yet. Trigger a scrape to populate posts.
                   </td>
                 </tr>
-              ))}
+              ) : (
+                posts.map((post) => (
+                  <tr key={post.id} className="hover:bg-slate-50 transition">
+                    <td className="px-6 py-4 font-semibold text-blue-600">
+                      <Link
+                        href={`/dashboard/volunteers/${post.handle}`}
+                        className="hover:underline block"
+                      >
+                        @{post.handle}
+                      </Link>
+                      {post.volunteerName && post.volunteerName !== post.handle && (
+                        <div className="text-xs font-normal text-slate-400">{post.volunteerName}</div>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 text-slate-700 max-w-xs truncate" title={post.caption || ""}>
+                      {post.caption || <span className="text-slate-400 italic">No caption</span>}
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className="text-xs px-2 py-0.5 rounded bg-slate-100 font-medium text-slate-600">
+                        {post.mediaType}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-xs text-slate-500 whitespace-nowrap">{post.postedAt}</td>
+                    <td className="px-6 py-4 text-right font-medium">
+                      <span className="inline-flex items-center gap-1 text-rose-600">
+                        <Heart className="h-3.5 w-3.5" />
+                        {formatMetric(post.likes)}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-right font-medium">
+                      <span className="inline-flex items-center gap-1 text-teal-600">
+                        <MessageCircle className="h-3.5 w-3.5" />
+                        {formatMetric(post.comments)}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-right font-medium">
+                      <span className="inline-flex items-center gap-1 text-slate-500">
+                        <Eye className="h-3.5 w-3.5" />
+                        {formatMetric(post.views)}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      {post.url ? (
+                        <a
+                          href={post.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
+                        >
+                          View <ExternalLink className="h-3 w-3" />
+                        </a>
+                      ) : (
+                        <span className="text-xs text-slate-300">n/a</span>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -116,4 +113,3 @@ export default function PostsPage() {
     </div>
   );
 }
-
