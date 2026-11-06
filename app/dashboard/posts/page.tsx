@@ -1,28 +1,54 @@
 import Link from "next/link";
 import { formatMetric } from "@/lib/utils";
 import { ExternalLink, Heart, MessageCircle, Eye } from "lucide-react";
-import { getRecentMonitoredPosts, type RecentPostItem } from "@/lib/supabase/queries";
+import { getRecentMonitoredPosts, type RecentPostItem, type DateRangePreset } from "@/lib/supabase/queries";
+import { DateRangeFilter } from "@/components/analytics/DateRangeFilter";
 
 export const dynamic = "force-dynamic";
 
-export default async function PostsPage() {
+interface PostsPageProps {
+  searchParams: Promise<{ range?: string }>;
+}
+
+export default async function PostsPage({ searchParams }: PostsPageProps) {
+  const resolvedParams = await searchParams;
+  const rawRange = resolvedParams?.range;
+  const range: DateRangePreset =
+    rawRange === "today" || rawRange === "7d" || rawRange === "30d" || rawRange === "180d" || rawRange === "all"
+      ? rawRange
+      : "30d";
+
   let posts: RecentPostItem[] = [];
   try {
-    posts = await getRecentMonitoredPosts(100);
+    posts = await getRecentMonitoredPosts(100, range);
   } catch (err) {
     console.error("[PostsPage] Failed to fetch posts:", err);
   }
 
+  const rangeText =
+    range === "today"
+      ? "today"
+      : range === "7d"
+      ? "the last 7 days"
+      : range === "180d"
+      ? "the last 6 months"
+      : range === "all"
+      ? "all time"
+      : "the last 30-day window";
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">
             Recent Monitored Posts
           </h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            Posts published within the last 30-day tracking window (up to 10 per account) — {posts.length} posts recorded.
+            Posts published within {rangeText} (up to 10 per account) — {posts.length} posts recorded.
           </p>
+        </div>
+        <div className="flex items-center">
+          <DateRangeFilter value={range} />
         </div>
       </div>
 

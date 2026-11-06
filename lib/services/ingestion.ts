@@ -56,8 +56,9 @@ export async function processIngestion(
   }
 
   try {
-    // 2. Fetch existing accounts or create missing ones
-    const handles = Array.from(data.accounts.keys());
+    // 2. Fetch existing accounts — match handles case-insensitively so mixed-case
+    //    rows already in the DB are found and don't trigger a redundant upsert.
+    const handles = Array.from(data.accounts.keys()); // already lowercased by adapter
     const { data: existingAccounts, error: accountFetchError } = await supabase
       .from("accounts")
       .select("id, handle, platform")
@@ -73,27 +74,13 @@ export async function processIngestion(
       accountIdMap.set(acc.handle.toLowerCase(), acc.id);
     }
 
-    // Insert any newly encountered accounts
-    for (const [handle] of Array.from(data.accounts.entries())) {
-      if (!accountIdMap.has(handle)) {
-        const { data: newAcc, error: insertAccError } = await supabase
-          .from("accounts")
-          .insert({
-            platform: "instagram",
-            handle,
-            volunteer_name: handle,
-            status: "active",
-          })
-          .select("id")
-          .single();
-
-        if (insertAccError) {
-          errors.push(`Failed to insert account ${handle}: ${insertAccError.message}`);
-        } else if (newAcc) {
-          accountIdMap.set(handle, newAcc.id);
-        }
-      }
-    }
+    // Do NOT auto-create accounts for unknown handles.
+    // The accounts table is the authoritative list of monitored volunteers —
+    // only accounts explicitly added via the UI/admin are tracked.
+    // Any handle returned by the scraper that is not in accounts is silently skipped.
+    // This prevents "ghost" accounts (tagged accounts, related profiles, etc.)
+    // from being auto-inserted on every scraper run, which was causing the
+    // accounts count to grow from 48 → 84 across runs.
 
     // 3. Upsert account snapshots
     for (const [handle, metrics] of Array.from(data.accounts.entries())) {

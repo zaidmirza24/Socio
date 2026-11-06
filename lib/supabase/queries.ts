@@ -115,8 +115,11 @@ export interface VolunteerProfileData {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Helpers
+// Helpers & Types
 // ─────────────────────────────────────────────────────────────
+
+export type { DateRangePreset } from "@/lib/utils";
+import { getDateFilterSince } from "@/lib/utils";
 
 function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -134,18 +137,19 @@ function coerce(v: number | null | undefined): number {
  * Daily engagement trend: sum of likes + comments per snapshot_date.
  * Reads from post_snapshots joined to posts.
  */
-export async function getDailyEngagementTrend(): Promise<TrendDataPoint[]> {
+export async function getDailyEngagementTrend(preset: DateRangePreset = "30d"): Promise<TrendDataPoint[]> {
   const supabase = createServerComponentClient();
+  const since = getDateFilterSince(preset);
 
-  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
-
-  const { data, error } = await supabase
+  let query = supabase
     .from("post_snapshots")
-    .select("snapshot_date, likes, comments")
-    .gte("snapshot_date", since)
-    .order("snapshot_date", { ascending: true });
+    .select("snapshot_date, likes, comments");
+
+  if (since) {
+    query = query.gte("snapshot_date", since);
+  }
+
+  const { data, error } = await query.order("snapshot_date", { ascending: true });
 
   if (error) throw new Error(error.message);
 
@@ -168,18 +172,15 @@ export async function getDailyEngagementTrend(): Promise<TrendDataPoint[]> {
 }
 
 /**
- * Top 10 posts by total engagement (likes + comments + views) in the last 30 days.
+ * Top 10 posts by total engagement (likes + comments + views) in the selected time range.
  * Reads from post_snapshots (most recent snapshot per post).
  */
-export async function getTopPosts(): Promise<TopPostData[]> {
+export async function getTopPosts(preset: DateRangePreset = "30d"): Promise<TopPostData[]> {
   const supabase = createServerComponentClient();
-
-  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
+  const since = getDateFilterSince(preset);
 
   // Pull snapshots with linked post caption/url for labels
-  const { data, error } = await supabase
+  let query = supabase
     .from("post_snapshots")
     .select(`
       likes,
@@ -190,10 +191,15 @@ export async function getTopPosts(): Promise<TopPostData[]> {
         caption,
         account:accounts ( handle )
       )
-    `)
-    .gte("snapshot_date", since)
+    `);
+
+  if (since) {
+    query = query.gte("snapshot_date", since);
+  }
+
+  const { data, error } = await query
     .order("likes", { ascending: false })
-    .limit(50); // over-fetch; we'll deduplicate and pick top 10
+    .limit(100); // over-fetch; we'll deduplicate and pick top 10
 
   if (error) throw new Error(error.message);
 
@@ -223,16 +229,13 @@ export async function getTopPosts(): Promise<TopPostData[]> {
 }
 
 /**
- * Total engagement (likes, comments, views) summed per volunteer account.
+ * Total engagement (likes, comments, views) summed per volunteer account in the selected time range.
  */
-export async function getVolunteerEngagement(): Promise<VolunteerEngagementData[]> {
+export async function getVolunteerEngagement(preset: DateRangePreset = "30d"): Promise<VolunteerEngagementData[]> {
   const supabase = createServerComponentClient();
+  const since = getDateFilterSince(preset);
 
-  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
-
-  const { data, error } = await supabase
+  let query = supabase
     .from("post_snapshots")
     .select(`
       likes,
@@ -241,8 +244,13 @@ export async function getVolunteerEngagement(): Promise<VolunteerEngagementData[
       post:posts (
         account:accounts ( handle, volunteer_name )
       )
-    `)
-    .gte("snapshot_date", since);
+    `);
+
+  if (since) {
+    query = query.gte("snapshot_date", since);
+  }
+
+  const { data, error } = await query;
 
   if (error) throw new Error(error.message);
 
@@ -267,17 +275,14 @@ export async function getVolunteerEngagement(): Promise<VolunteerEngagementData[
 }
 
 /**
- * Daily ranking of the top‑performing volunteer (by total engagement per day).
+ * Daily ranking of the top‑performing volunteer (by total engagement per day) in the selected time range.
  * Returns a simplified single-volunteer ranking series.
  */
-export async function getVolunteerRanking(): Promise<VolunteerRankingPoint[]> {
+export async function getVolunteerRanking(preset: DateRangePreset = "30d"): Promise<VolunteerRankingPoint[]> {
   const supabase = createServerComponentClient();
+  const since = getDateFilterSince(preset);
 
-  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
-
-  const { data, error } = await supabase
+  let query = supabase
     .from("post_snapshots")
     .select(`
       snapshot_date,
@@ -287,9 +292,13 @@ export async function getVolunteerRanking(): Promise<VolunteerRankingPoint[]> {
       post:posts (
         account:accounts ( handle )
       )
-    `)
-    .gte("snapshot_date", since)
-    .order("snapshot_date", { ascending: true });
+    `);
+
+  if (since) {
+    query = query.gte("snapshot_date", since);
+  }
+
+  const { data, error } = await query.order("snapshot_date", { ascending: true });
 
   if (error) throw new Error(error.message);
 
@@ -308,11 +317,10 @@ export async function getVolunteerRanking(): Promise<VolunteerRankingPoint[]> {
     dateMap.set(handle, (dateMap.get(handle) ?? 0) + engagement);
   }
 
-  // Pick the first volunteer alphabetically as "our tracked volunteer" – in a real app you'd pass a volunteerId
+  // Pick the top volunteer as "our tracked volunteer"
   const result: VolunteerRankingPoint[] = [];
   for (const [date, volunteers] of byDate.entries()) {
     const sorted = Array.from(volunteers.entries()).sort((a, b) => b[1] - a[1]);
-    // Find our volunteer's rank (use handle from first row as reference)
     const topHandle = sorted[0]?.[0];
     if (!topHandle) continue;
     const rank = sorted.findIndex(([h]) => h === topHandle) + 1;
@@ -323,16 +331,13 @@ export async function getVolunteerRanking(): Promise<VolunteerRankingPoint[]> {
 }
 
 /**
- * Per-account: total posts, likes, comments, views in the last 30 days.
+ * Per-account: total posts, likes, comments, views in the selected time range.
  */
-export async function getAccountComparison(): Promise<AccountPerformance[]> {
+export async function getAccountComparison(preset: DateRangePreset = "30d"): Promise<AccountPerformance[]> {
   const supabase = createServerComponentClient();
+  const since = getDateFilterSince(preset);
 
-  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
-
-  const { data, error } = await supabase
+  let query = supabase
     .from("post_snapshots")
     .select(`
       likes,
@@ -341,8 +346,13 @@ export async function getAccountComparison(): Promise<AccountPerformance[]> {
       post:posts (
         account:accounts ( handle )
       )
-    `)
-    .gte("snapshot_date", since);
+    `);
+
+  if (since) {
+    query = query.gte("snapshot_date", since);
+  }
+
+  const { data, error } = await query;
 
   if (error) throw new Error(error.message);
 
@@ -374,19 +384,14 @@ export async function getAccountComparison(): Promise<AccountPerformance[]> {
 }
 
 /**
- * Volunteer Performance Leaderboard.
- *
- * Strategy (all in-app, no RPC needed):
- *   1. Fetch every post_snapshot row joined to its post → account.
- *   2. Aggregate likes, comments, views per account.
- *   3. Fetch the latest account_snapshot per account to get follower count.
- *   4. Merge, rank by (totalLikes + totalComments) desc, return top 30.
+ * Volunteer Performance Leaderboard for the selected time range.
  */
-export async function getVolunteerLeaderboard(): Promise<LeaderboardEntry[]> {
+export async function getVolunteerLeaderboard(preset: DateRangePreset = "30d"): Promise<LeaderboardEntry[]> {
   const supabase = createServerComponentClient();
+  const since = getDateFilterSince(preset);
 
-  // ── Step 1: aggregate post-level metrics per account ──────────────────────
-  const { data: snapRows, error: snapErr } = await supabase
+  // Step 1: aggregate post-level metrics per account within the timeframe
+  let snapQuery = supabase
     .from("post_snapshots")
     .select(`
       likes,
@@ -401,6 +406,12 @@ export async function getVolunteerLeaderboard(): Promise<LeaderboardEntry[]> {
         )
       )
     `);
+
+  if (since) {
+    snapQuery = snapQuery.gte("snapshot_date", since);
+  }
+
+  const { data: snapRows, error: snapErr } = await snapQuery;
 
   if (snapErr) throw new Error(snapErr.message);
 
@@ -445,8 +456,27 @@ export async function getVolunteerLeaderboard(): Promise<LeaderboardEntry[]> {
     entry.views += coerce(row.views as number | null);
   }
 
-  // ── Step 2: fetch latest follower count per account ───────────────────────
-  // Pull all account_snapshots and keep only the most-recent row per account.
+  // Also include active accounts with 0 engagement in this window
+  const { data: allAccounts } = await supabase
+    .from("accounts")
+    .select("id, handle, volunteer_name")
+    .eq("status", "active");
+
+  for (const acc of allAccounts ?? []) {
+    if (!byAccount.has(acc.id)) {
+      byAccount.set(acc.id, {
+        accountId: acc.id,
+        handle: acc.handle,
+        volunteerName: acc.volunteer_name ?? acc.handle,
+        postIds: new Set(),
+        likes: 0,
+        comments: 0,
+        views: 0,
+      });
+    }
+  }
+
+  // Step 2: fetch latest follower count per account
   const { data: acctSnaps, error: acctErr } = await supabase
     .from("account_snapshots")
     .select("account_id, snapshot_date, followers")
@@ -462,7 +492,7 @@ export async function getVolunteerLeaderboard(): Promise<LeaderboardEntry[]> {
     }
   }
 
-  // ── Step 3: build leaderboard ─────────────────────────────────────────────
+  // Step 3: build leaderboard
   const rows = Array.from(byAccount.values())
     .map((e) => ({
       handle: e.handle,
@@ -481,10 +511,19 @@ export async function getVolunteerLeaderboard(): Promise<LeaderboardEntry[]> {
 }
 
 /**
- * Real KPI summary aggregated directly from accounts, posts, and post_snapshots.
+ * Real KPI summary aggregated directly from accounts, posts, and post_snapshots for the selected timeframe.
  */
-export async function getKPISummary(): Promise<KPISummary> {
+export async function getKPISummary(preset: DateRangePreset = "30d"): Promise<KPISummary> {
   const supabase = createServerComponentClient();
+  const since = getDateFilterSince(preset);
+
+  let snapQuery = supabase
+    .from("post_snapshots")
+    .select("post_id, snapshot_date, likes, comments, views");
+
+  if (since) {
+    snapQuery = snapQuery.gte("snapshot_date", since);
+  }
 
   const [
     { count: totalAccounts },
@@ -495,10 +534,7 @@ export async function getKPISummary(): Promise<KPISummary> {
     supabase.from("accounts").select("id", { count: "exact", head: true }),
     supabase.from("accounts").select("id", { count: "exact", head: true }).eq("status", "active"),
     supabase.from("posts").select("id", { count: "exact", head: true }),
-    supabase
-      .from("post_snapshots")
-      .select("post_id, snapshot_date, likes, comments, views")
-      .order("snapshot_date", { ascending: false }),
+    snapQuery.order("snapshot_date", { ascending: false }),
   ]);
 
   const latestByPost = new Map<string, { likes: number | null; comments: number | null; views: number | null }>();
@@ -522,10 +558,12 @@ export async function getKPISummary(): Promise<KPISummary> {
     totalViews += coerce(s.views);
   }
 
+  const activePeriodPosts = latestByPost.size;
+
   return {
     totalAccounts: totalAccounts ?? 0,
     activeAccounts: activeAccounts ?? 0,
-    totalPosts: totalPosts ?? 0,
+    totalPosts: preset === "all" ? (totalPosts ?? 0) : activePeriodPosts > 0 ? activePeriodPosts : (totalPosts ?? 0),
     totalLikes,
     totalComments,
     totalViews,
@@ -535,10 +573,14 @@ export async function getKPISummary(): Promise<KPISummary> {
 /**
  * Real monitored posts fetched from Supabase, joined with account and latest snapshot.
  */
-export async function getRecentMonitoredPosts(limit = 100): Promise<RecentPostItem[]> {
+export async function getRecentMonitoredPosts(
+  limit = 100,
+  preset?: DateRangePreset
+): Promise<RecentPostItem[]> {
   const supabase = createServerComponentClient();
+  const since = preset ? getDateFilterSince(preset) : null;
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("posts")
     .select(`
       id,
@@ -558,7 +600,13 @@ export async function getRecentMonitoredPosts(limit = 100): Promise<RecentPostIt
         comments,
         views
       )
-    `)
+    `);
+
+  if (since) {
+    query = query.gte("posted_at", `${since}T00:00:00.000Z`);
+  }
+
+  const { data, error } = await query
     .order("posted_at", { ascending: false })
     .limit(limit);
 
@@ -599,9 +647,13 @@ export async function getRecentMonitoredPosts(limit = 100): Promise<RecentPostIt
 /**
  * Detailed profile & all posts for a single volunteer account.
  */
-export async function getVolunteerDetails(rawHandle: string): Promise<VolunteerProfileData | null> {
+export async function getVolunteerDetails(
+  rawHandle: string,
+  preset?: DateRangePreset
+): Promise<VolunteerProfileData | null> {
   const supabase = createServerComponentClient();
   const cleanHandle = rawHandle.replace(/^@/, "").trim().toLowerCase();
+  const since = preset ? getDateFilterSince(preset) : null;
 
   // 1. Fetch account
   const { data: account, error: accErr } = await supabase
@@ -624,7 +676,7 @@ export async function getVolunteerDetails(rawHandle: string): Promise<VolunteerP
     .single();
 
   // 3. Fetch all posts for this account + their snapshots
-  const { data: rawPosts, error: postsErr } = await supabase
+  let postsQuery = supabase
     .from("posts")
     .select(`
       id,
@@ -641,8 +693,13 @@ export async function getVolunteerDetails(rawHandle: string): Promise<VolunteerP
         shares
       )
     `)
-    .eq("account_id", account.id)
-    .order("posted_at", { ascending: false });
+    .eq("account_id", account.id);
+
+  if (since) {
+    postsQuery = postsQuery.gte("posted_at", `${since}T00:00:00.000Z`);
+  }
+
+  const { data: rawPosts, error: postsErr } = await postsQuery.order("posted_at", { ascending: false });
 
   if (postsErr) throw new Error(postsErr.message);
 
@@ -655,13 +712,17 @@ export async function getVolunteerDetails(rawHandle: string): Promise<VolunteerP
   const timelineMap = new Map<string, { likes: number; comments: number }>();
 
   for (const p of rawPosts ?? []) {
-    const snaps = (p.post_snapshots as Array<{
+    let snaps = (p.post_snapshots as Array<{
       snapshot_date: string;
       likes: number | null;
       comments: number | null;
       views: number | null;
       shares: number | null;
     }>) ?? [];
+
+    if (since) {
+      snaps = snaps.filter((s) => s.snapshot_date >= since);
+    }
 
     snaps.sort((a, b) => b.snapshot_date.localeCompare(a.snapshot_date));
     const latest = snaps[0];
@@ -678,7 +739,7 @@ export async function getVolunteerDetails(rawHandle: string): Promise<VolunteerP
 
     // Group engagement by post date for timeline
     const dateKey = p.posted_at ? p.posted_at.slice(0, 10) : "unknown";
-    if (dateKey !== "unknown") {
+    if (dateKey !== "unknown" && (!since || dateKey >= since)) {
       const prev = timelineMap.get(dateKey) ?? { likes: 0, comments: 0 };
       timelineMap.set(dateKey, {
         likes: prev.likes + coerce(likes),

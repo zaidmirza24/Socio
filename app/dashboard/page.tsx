@@ -7,6 +7,7 @@ import {
   getVolunteerLeaderboard,
   getKPISummary,
   getRecentMonitoredPosts,
+  type DateRangePreset,
   type TrendDataPoint,
   type TopPostData,
   type VolunteerEngagementData,
@@ -20,8 +21,19 @@ import { CampaignAnalyticsView } from "@/components/analytics/CampaignAnalyticsV
 
 export const dynamic = "force-dynamic";
 
-export default async function DashboardPage() {
-  // Load all chart + table + KPI + post data in parallel from Supabase
+interface DashboardPageProps {
+  searchParams: Promise<{ range?: string }>;
+}
+
+export default async function DashboardPage({ searchParams }: DashboardPageProps) {
+  const resolvedParams = await searchParams;
+  const rawRange = resolvedParams?.range;
+  const range: DateRangePreset =
+    rawRange === "today" || rawRange === "7d" || rawRange === "30d" || rawRange === "180d" || rawRange === "all"
+      ? rawRange
+      : "30d";
+
+  // Load all chart + table + KPI + post data in parallel from Supabase for the selected range
   let trendData: TrendDataPoint[] = [];
   let topPosts: TopPostData[] = [];
   let volunteerEngagement: VolunteerEngagementData[] = [];
@@ -49,14 +61,14 @@ export default async function DashboardPage() {
       kpi,
       recentPosts,
     ] = await Promise.all([
-      getDailyEngagementTrend(),
-      getTopPosts(),
-      getVolunteerEngagement(),
-      getVolunteerRanking(),
-      getAccountComparison(),
-      getVolunteerLeaderboard(),
-      getKPISummary(),
-      getRecentMonitoredPosts(60),
+      getDailyEngagementTrend(range),
+      getTopPosts(range),
+      getVolunteerEngagement(range),
+      getVolunteerRanking(range),
+      getAccountComparison(range),
+      getVolunteerLeaderboard(range),
+      getKPISummary(range),
+      getRecentMonitoredPosts(60, range),
     ]);
   } catch (err) {
     console.error("[DashboardPage] Failed to load analytics:", err);
@@ -64,6 +76,7 @@ export default async function DashboardPage() {
 
   return (
     <CampaignAnalyticsView
+      currentRange={range}
       trendData={trendData}
       topPosts={topPosts}
       volunteerEngagement={volunteerEngagement}

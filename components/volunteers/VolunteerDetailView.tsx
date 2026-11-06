@@ -20,17 +20,20 @@ import {
   Sparkles,
   Share2,
 } from "lucide-react";
-import { formatMetric } from "@/lib/utils";
+import { formatMetric, formatNumber } from "@/lib/utils";
 import { EngagementTrendChart } from "@/components/charts/EngagementTrendChart";
-import type { VolunteerProfileData } from "@/lib/supabase/queries";
+import { DateRangeFilter } from "@/components/analytics/DateRangeFilter";
+import type { VolunteerProfileData, DateRangePreset } from "@/lib/supabase/queries";
 
 interface VolunteerDetailViewProps {
   data: VolunteerProfileData;
+  initialRange?: DateRangePreset;
 }
 
-export function VolunteerDetailView({ data }: VolunteerDetailViewProps) {
-  const { account, metrics, timeline, posts } = data;
+export function VolunteerDetailView({ data, initialRange = "30d" }: VolunteerDetailViewProps) {
+  const { account, metrics: defaultMetrics, timeline: defaultTimeline, posts } = data;
 
+  const [dateFilter, setDateFilter] = useState<DateRangePreset>(initialRange);
   const [copiedLink, setCopiedLink] = useState<string | null>(null);
   const [copiedHandle, setCopiedHandle] = useState(false);
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
@@ -49,9 +52,73 @@ export function VolunteerDetailView({ data }: VolunteerDetailViewProps) {
     setTimeout(() => setCopiedHandle(false), 2000);
   };
 
-  // Filter posts
-  const filteredPosts = useMemo(() => {
+  // Date cutoff calculation
+  const cutoffDate = useMemo(() => {
+    if (dateFilter === "all") return null;
+    const now = new Date();
+    if (dateFilter === "today") {
+      return now.toISOString().slice(0, 10);
+    }
+    const days = dateFilter === "7d" ? 7 : dateFilter === "180d" ? 180 : 30;
+    const d = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+    return d.toISOString().slice(0, 10);
+  }, [dateFilter]);
+
+  // Filter posts by date
+  const dateFilteredPosts = useMemo(() => {
+    if (!cutoffDate) return posts;
     return posts.filter((p) => {
+      const postDate = p.postedAt ? p.postedAt.slice(0, 10) : "";
+      return postDate >= cutoffDate;
+    });
+  }, [posts, cutoffDate]);
+
+  // Recalculate metrics for the selected date range
+  const metrics = useMemo(() => {
+    const totalLikes = dateFilteredPosts.reduce((acc, p) => acc + (p.likes ?? 0), 0);
+    const totalComments = dateFilteredPosts.reduce((acc, p) => acc + (p.comments ?? 0), 0);
+    const totalViews = dateFilteredPosts.reduce((acc, p) => acc + (p.views ?? 0), 0);
+    const totalMonitoredPosts = dateFilteredPosts.length;
+    const avgEngagementPerPost =
+      totalMonitoredPosts > 0
+        ? Math.round((totalLikes + totalComments) / totalMonitoredPosts)
+        : 0;
+
+    return {
+      totalMonitoredPosts,
+      totalLikes,
+      totalComments,
+      totalViews,
+      avgEngagementPerPost,
+    };
+  }, [dateFilteredPosts]);
+
+  // Filter timeline for the selected date range
+  const timeline = useMemo(() => {
+    if (dateFilter === "all") return defaultTimeline;
+    const byDate = new Map<string, { likes: number; comments: number }>();
+    for (const p of dateFilteredPosts) {
+      const dateKey = p.postedAt ? p.postedAt.slice(0, 10) : "unknown";
+      if (dateKey !== "unknown") {
+        const existing = byDate.get(dateKey) ?? { likes: 0, comments: 0 };
+        byDate.set(dateKey, {
+          likes: existing.likes + (p.likes ?? 0),
+          comments: existing.comments + (p.comments ?? 0),
+        });
+      }
+    }
+    return Array.from(byDate.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([date, v]) => ({
+        date: new Date(date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+        likes: v.likes,
+        comments: v.comments,
+      }));
+  }, [defaultTimeline, dateFilter, dateFilteredPosts]);
+
+  // Filter posts by search and media type
+  const filteredPosts = useMemo(() => {
+    return dateFilteredPosts.filter((p) => {
       const matchesSearch = searchQuery
         ? (p.caption || "").toLowerCase().includes(searchQuery.toLowerCase())
         : true;
@@ -61,7 +128,7 @@ export function VolunteerDetailView({ data }: VolunteerDetailViewProps) {
           : (p.mediaType || "").toLowerCase() === mediaFilter.toLowerCase();
       return matchesSearch && matchesType;
     });
-  }, [posts, searchQuery, mediaFilter]);
+  }, [dateFilteredPosts, searchQuery, mediaFilter]);
 
   return (
     <div className="space-y-6">
@@ -149,8 +216,9 @@ export function VolunteerDetailView({ data }: VolunteerDetailViewProps) {
             </div>
           </div>
 
-          {/* Action buttons */}
+          {/* Action buttons & Date Range Filter */}
           <div className="flex flex-wrap items-center gap-3">
+            <DateRangeFilter value={dateFilter} onChange={setDateFilter} size="sm" />
             <a
               href={`https://www.instagram.com/${account.handle}/`}
               target="_blank"
@@ -182,7 +250,17 @@ export function VolunteerDetailView({ data }: VolunteerDetailViewProps) {
               {metrics.totalMonitoredPosts}
             </span>
           </div>
-          <span className="mt-1 block text-xs text-slate-400">Within 30-day window</span>
+          <span className="mt-1 block text-xs text-slate-400">
+            {dateFilter === "today"
+              ? "Recorded today"
+              : dateFilter === "7d"
+              ? "Past 7 days"
+              : dateFilter === "180d"
+              ? "Past 6 months"
+              : dateFilter === "all"
+              ? "All recorded history"
+              : "Within 30-day window"}
+          </span>
         </div>
 
         {/* Total Likes */}
@@ -197,7 +275,7 @@ export function VolunteerDetailView({ data }: VolunteerDetailViewProps) {
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-3xl font-bold text-slate-900">
-              {metrics.totalLikes.toLocaleString()}
+              {formatNumber(metrics.totalLikes)}
             </span>
           </div>
           <span className="mt-1 block text-xs text-slate-400">Aggregated across posts</span>
@@ -215,7 +293,7 @@ export function VolunteerDetailView({ data }: VolunteerDetailViewProps) {
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-3xl font-bold text-slate-900">
-              {metrics.totalComments.toLocaleString()}
+              {formatNumber(metrics.totalComments)}
             </span>
           </div>
           <span className="mt-1 block text-xs text-slate-400">Audience replies & discussions</span>
@@ -233,7 +311,7 @@ export function VolunteerDetailView({ data }: VolunteerDetailViewProps) {
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-3xl font-bold text-slate-900">
-              {metrics.avgEngagementPerPost.toLocaleString()}
+              {formatNumber(metrics.avgEngagementPerPost)}
             </span>
           </div>
           <span className="mt-1 block text-xs text-slate-400">Likes + comments / post</span>

@@ -27,15 +27,18 @@ import { EngagementTrendChart, type TrendDataPoint } from "@/components/charts/E
 import { TopPostsChart, type TopPostData } from "@/components/charts/TopPostsChart";
 import { DailyVolunteerRankingChart, type VolunteerRankingPoint } from "@/components/charts/DailyVolunteerRankingChart";
 import { InstagramAccountComparisonChart, type AccountPerformance } from "@/components/charts/InstagramAccountComparisonChart";
-import { formatMetric } from "@/lib/utils";
+import { DateRangeFilter } from "@/components/analytics/DateRangeFilter";
+import { formatMetric, formatNumber } from "@/lib/utils";
 import type {
   KPISummary,
   LeaderboardEntry,
   RecentPostItem,
   VolunteerEngagementData,
+  DateRangePreset,
 } from "@/lib/supabase/queries";
 
 export interface CampaignAnalyticsViewProps {
+  currentRange?: DateRangePreset;
   trendData: TrendDataPoint[];
   topPosts: TopPostData[];
   volunteerEngagement: VolunteerEngagementData[];
@@ -104,6 +107,7 @@ function SectionCard({
 }
 
 export function CampaignAnalyticsView({
+  currentRange = "30d",
   trendData,
   topPosts,
   volunteerRanking,
@@ -213,7 +217,7 @@ export function CampaignAnalyticsView({
   return (
     <div className="space-y-6">
       {/* ── Top Header & Tab Navigation ── */}
-      <div className="flex flex-col gap-4 border-b border-slate-200 pb-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-4 border-b border-slate-200 pb-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">Campaign Analytics</h1>
           <p className="mt-0.5 text-xs text-slate-500 sm:text-sm">
@@ -221,8 +225,9 @@ export function CampaignAnalyticsView({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">
+        <div className="flex flex-wrap items-center gap-3">
+          <DateRangeFilter value={currentRange} />
+          <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
             Daily Ingestion Active
           </span>
@@ -324,7 +329,17 @@ export function CampaignAnalyticsView({
                 <span className="text-3xl font-bold text-slate-900">{kpi.totalPosts}</span>
                 <span className="text-xs font-medium text-slate-400">≤10 / account</span>
               </div>
-              <span className="mt-1 block text-xs text-slate-400">Active 30-day window</span>
+              <span className="mt-1 block text-xs text-slate-400">
+                {currentRange === "today"
+                  ? "Recorded today"
+                  : currentRange === "7d"
+                  ? "Past 7 days"
+                  : currentRange === "180d"
+                  ? "Past 6 months"
+                  : currentRange === "all"
+                  ? "All recorded history"
+                  : "Active 30-day window"}
+              </span>
             </div>
 
             <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs">
@@ -338,7 +353,7 @@ export function CampaignAnalyticsView({
               </div>
               <div className="mt-3 flex items-baseline gap-2">
                 <span className="text-3xl font-bold text-slate-900">
-                  {kpi.totalLikes.toLocaleString()}
+                  {formatNumber(kpi.totalLikes)}
                 </span>
               </div>
               <span className="mt-1 block text-xs text-slate-400">Across monitored posts</span>
@@ -355,7 +370,7 @@ export function CampaignAnalyticsView({
               </div>
               <div className="mt-3 flex items-baseline gap-2">
                 <span className="text-3xl font-bold text-slate-900">
-                  {kpi.totalComments.toLocaleString()}
+                  {formatNumber(kpi.totalComments)}
                 </span>
               </div>
               <span className="mt-1 block text-xs text-slate-400">Direct conversations</span>
@@ -385,7 +400,7 @@ export function CampaignAnalyticsView({
                   )}
                 </p>
                 <p className="text-xs text-amber-800">
-                  {topVolunteer ? `${topVolunteer.totalEngagement.toLocaleString()} engagements` : ""}
+                  {topVolunteer ? `${formatNumber(topVolunteer.totalEngagement)} engagements` : ""}
                 </p>
               </div>
             </div>
@@ -399,7 +414,7 @@ export function CampaignAnalyticsView({
                   Avg. Engagement / Post
                 </span>
                 <p className="text-sm font-bold text-slate-900">
-                  {avgEngagementPerPost.toLocaleString()} interactions
+                  {formatNumber(avgEngagementPerPost)} interactions
                 </p>
                 <p className="text-xs text-blue-800">Across {kpi.totalPosts} published posts</p>
               </div>
@@ -548,13 +563,13 @@ export function CampaignAnalyticsView({
                   <div>
                     <span className="text-slate-400">Total Engagement</span>
                     <p className="text-base font-bold text-slate-900">
-                      {leaderboard[0].totalEngagement.toLocaleString()}
+                      {formatNumber(leaderboard[0].totalEngagement)}
                     </p>
                   </div>
                   <div>
                     <span className="text-slate-400">Posts / Followers</span>
                     <p className="font-semibold text-slate-700">
-                      {leaderboard[0].posts} · {leaderboard[0].followers.toLocaleString()}
+                      {leaderboard[0].posts} · {formatNumber(leaderboard[0].followers)}
                     </p>
                   </div>
                 </div>
@@ -581,13 +596,13 @@ export function CampaignAnalyticsView({
                   <div>
                     <span className="text-slate-400">Total Engagement</span>
                     <p className="text-base font-bold text-slate-900">
-                      {leaderboard[1].totalEngagement.toLocaleString()}
+                      {formatNumber(leaderboard[1].totalEngagement)}
                     </p>
                   </div>
                   <div>
                     <span className="text-slate-400">Posts / Followers</span>
                     <p className="font-semibold text-slate-700">
-                      {leaderboard[1].posts} · {leaderboard[1].followers.toLocaleString()}
+                      {leaderboard[1].posts} · {formatNumber(leaderboard[1].followers)}
                     </p>
                   </div>
                 </div>
@@ -614,13 +629,13 @@ export function CampaignAnalyticsView({
                   <div>
                     <span className="text-slate-400">Total Engagement</span>
                     <p className="text-base font-bold text-slate-900">
-                      {leaderboard[2].totalEngagement.toLocaleString()}
+                      {formatNumber(leaderboard[2].totalEngagement)}
                     </p>
                   </div>
                   <div>
                     <span className="text-slate-400">Posts / Followers</span>
                     <p className="font-semibold text-slate-700">
-                      {leaderboard[2].posts} · {leaderboard[2].followers.toLocaleString()}
+                      {leaderboard[2].posts} · {formatNumber(leaderboard[2].followers)}
                     </p>
                   </div>
                 </div>
@@ -918,7 +933,7 @@ export function CampaignAnalyticsView({
                         </div>
 
                         <span className="rounded bg-slate-100 px-1.5 py-0.5 font-bold text-slate-800 text-[11px]">
-                          {totalPostEngagement.toLocaleString()} eng
+                          {formatNumber(totalPostEngagement)} eng
                         </span>
                       </div>
 

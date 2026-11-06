@@ -10,6 +10,7 @@ import {
   CartesianGrid,
   Legend,
 } from "recharts";
+import { formatNumber } from "@/lib/utils";
 
 export interface AccountPerformance {
   account: string;
@@ -54,7 +55,7 @@ export function InstagramAccountComparisonChart({ data }: { data: AccountPerform
               boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
               fontSize: "12px",
             }}
-            formatter={(value: number, name: string) => [value.toLocaleString(), name]}
+            formatter={(value: number, name: string) => [formatNumber(value), name]}
           />
           <Legend
             iconType="circle"

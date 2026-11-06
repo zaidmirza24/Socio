@@ -9,6 +9,7 @@ import {
   CartesianGrid,
   Tooltip,
 } from "recharts";
+import { formatNumber } from "@/lib/utils";
 
 export interface TrendDataPoint {
   date: string;
@@ -68,7 +69,7 @@ export function EngagementTrendChart({ data, metricFilter = "all" }: EngagementT
               boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
               fontSize: "12px",
             }}
-            formatter={(value: number, name: string) => [value.toLocaleString(), name]}
+            formatter={(value: number, name: string) => [formatNumber(value), name]}
           />
           {showLikes && (
             <Area

@@ -8,6 +8,7 @@ import {
   PlayCircle
 } from "lucide-react";
 import { TriggerScraperButton } from "@/components/TriggerScraperButton";
+import { SignOutButton } from "@/components/SignOutButton";
 
 export default function DashboardLayout({
   children,
@@ -72,12 +73,15 @@ export default function DashboardLayout({
           </nav>
         </div>
 
-        <div className="p-4 border-t border-slate-200">
-          <div className="flex items-center gap-2 text-xs text-blue-700 bg-blue-50 px-3 py-2 rounded-md border border-blue-200 mb-3 font-medium">
+        <div className="p-4 border-t border-slate-200 space-y-3">
+          <div className="flex items-center gap-2 text-xs text-blue-700 bg-blue-50 px-3 py-2 rounded-md border border-blue-200 font-medium">
             <PlayCircle className="h-4 w-4 text-blue-600 shrink-0" />
             <span>UI On-Demand Mode</span>
           </div>
-          <div className="text-xs text-slate-400 text-center">
+          
+          <SignOutButton variant="sidebar" />
+
+          <div className="text-[11px] text-slate-400 text-center">
             Private Vercel Cloud Build
           </div>
         </div>
@@ -91,6 +95,7 @@ export default function DashboardLayout({
           </h2>
           <div className="flex items-center gap-3">
             <TriggerScraperButton />
+            <SignOutButton variant="header" />
           </div>
         </header>
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   ShieldCheck,
   CheckCircle2,
@@ -14,6 +14,8 @@ import {
   Database,
 } from "lucide-react";
 import { TriggerScraperButton } from "@/components/TriggerScraperButton";
+import { DateRangeFilter } from "@/components/analytics/DateRangeFilter";
+import type { DateRangePreset } from "@/lib/supabase/queries";
 
 interface RunItem {
   id: string;
@@ -33,6 +35,7 @@ export default function SystemHealthPage() {
   const [runs, setRuns] = useState<RunItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [dateFilter, setDateFilter] = useState<DateRangePreset>("30d");
 
   const fetchRuns = async () => {
     setLoading(true);
@@ -55,8 +58,20 @@ export default function SystemHealthPage() {
     fetchRuns();
   }, []);
 
-  const totalRuns = runs.length;
-  const successfulRuns = runs.filter((r) => r.status === "success").length;
+  const filteredRuns = useMemo(() => {
+    if (dateFilter === "all") return runs;
+    const now = new Date();
+    const cutoffStr =
+      dateFilter === "today"
+        ? now.toISOString().slice(0, 10)
+        : new Date(now.getTime() - (dateFilter === "7d" ? 7 : dateFilter === "180d" ? 180 : 30) * 86400000)
+            .toISOString()
+            .slice(0, 10);
+    return runs.filter((r) => r.started_at && r.started_at.slice(0, 10) >= cutoffStr);
+  }, [runs, dateFilter]);
+
+  const totalRuns = filteredRuns.length;
+  const successfulRuns = filteredRuns.filter((r) => r.status === "success").length;
   const successRate = totalRuns > 0 ? Math.round((successfulRuns / totalRuns) * 100) : 100;
 
   const calculateDuration = (start: string, end: string | null) => {
@@ -143,7 +158,15 @@ export default function SystemHealthPage() {
 
       {/* Execution Audit Log Table */}
       <div className="space-y-4">
-        <h2 className="text-lg font-bold text-slate-900">Recent Collection Runs</h2>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">Recent Collection Runs</h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Showing {filteredRuns.length} recorded execution runs
+            </p>
+          </div>
+          <DateRangeFilter value={dateFilter} onChange={setDateFilter} size="sm" />
+        </div>
 
         <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
           {loading ? (
@@ -156,12 +179,12 @@ export default function SystemHealthPage() {
               <AlertCircle className="h-7 w-7 mx-auto mb-2 text-red-500" />
               <p className="text-sm font-semibold">{error}</p>
             </div>
-          ) : runs.length === 0 ? (
+          ) : filteredRuns.length === 0 ? (
             <div className="p-10 text-center text-slate-400">
               <Clock className="h-9 w-9 mx-auto mb-2 text-slate-300" />
-              <p className="text-sm font-medium text-slate-600">No scraper runs recorded yet</p>
+              <p className="text-sm font-medium text-slate-600">No scraper runs found for this time period</p>
               <p className="text-xs text-slate-400 mt-1">
-                Click "Run Scraper Now" above to dispatch your first Instagram data ingestion!
+                Try selecting "All Time" or click "Run Scraper Now" above to trigger a fresh run.
               </p>
             </div>
           ) : (
@@ -180,7 +203,7 @@ export default function SystemHealthPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
-                  {runs.map((run) => (
+                  {filteredRuns.map((run) => (
                     <tr key={run.id} className="hover:bg-slate-50/70 transition">
                       <td className="px-6 py-4 font-mono text-xs text-slate-900">
                         {run.actor_run_id || run.id.slice(0, 8)}

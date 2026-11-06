@@ -10,6 +10,7 @@ import {
   CartesianGrid,
   Cell,
 } from "recharts";
+import { formatNumber } from "@/lib/utils";
 
 export interface TopPostData {
   title: string;
@@ -69,7 +70,7 @@ export function TopPostsChart({ data }: { data: TopPostData[] }) {
               boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
               fontSize: "12px",
             }}
-            formatter={(value: number) => [value.toLocaleString(), "Total Engagement"]}
+            formatter={(value: number) => [formatNumber(value), "Total Engagement"]}
           />
           <Bar dataKey="engagement" radius={[0, 4, 4, 0]} maxBarSize={22}>
             {sorted.map((_, i) => (
