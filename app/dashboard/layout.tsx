@@ -5,7 +5,9 @@ import {
   Layers, 
   Activity, 
   Settings,
-  PlayCircle
+  PlayCircle,
+  FileText,
+  CheckSquare
 } from "lucide-react";
 import { TriggerScraperButton } from "@/components/TriggerScraperButton";
 import { SignOutButton } from "@/components/SignOutButton";
@@ -36,7 +38,23 @@ export default function DashboardLayout({
               className="flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition"
             >
               <BarChart3 className="h-4 w-4" />
-              Overview
+              Matrix &amp; Overview
+            </Link>
+
+            <Link
+              href="/dashboard/captions"
+              className="flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition"
+            >
+              <FileText className="h-4 w-4" />
+              Campaign Captions
+            </Link>
+
+            <Link
+              href="/dashboard/review"
+              className="flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition"
+            >
+              <CheckSquare className="h-4 w-4" />
+              Review Queue
             </Link>
 
             <Link

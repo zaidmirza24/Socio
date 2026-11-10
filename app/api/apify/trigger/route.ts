@@ -17,10 +17,7 @@ export async function POST(request: NextRequest) {
       data: { user },
     } = await supabase.auth.getUser();
 
-    const authHeader = request.headers.get("authorization");
-    const isDev = process.env.NODE_ENV !== "production";
-
-    if (!user && !(isDev && authHeader === "Bearer dev-override")) {
+    if (!user) {
       return NextResponse.json(
         {
           error: "Unauthorized: Team login required to dispatch scraper runs.",

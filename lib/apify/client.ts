@@ -1,5 +1,5 @@
 import { ApifyClient } from "apify-client";
-import { getServerEnv } from "@/lib/env";
+import { getServerEnv } from "../env.ts";
 
 function isPlaceholder(value: string | undefined): boolean {
   if (!value) return true;
@@ -64,6 +64,20 @@ export function verifyWebhookSecret(receivedSecret: string | null | undefined): 
   }
   const expectedSecret = getServerEnv().APIFY_WEBHOOK_SECRET;
   return receivedSecret === expectedSecret;
+}
+
+/**
+ * Safely deletes an Apify dataset to enforce zero data retention.
+ */
+export async function deleteApifyDataset(datasetId: string): Promise<boolean> {
+  try {
+    const client = getApifyClient();
+    await client.dataset(datasetId).delete();
+    return true;
+  } catch (err: unknown) {
+    console.error(`[Apify] Failed to delete dataset ${datasetId}:`, err);
+    return false;
+  }
 }
 
 /**

@@ -55,6 +55,20 @@ export async function middleware(request: NextRequest) {
     request.nextUrl.pathname.startsWith("/analytics") ||
     request.nextUrl.pathname.startsWith("/settings");
 
+  const isProtectedApi =
+    request.nextUrl.pathname.startsWith("/api/") &&
+    !request.nextUrl.pathname.startsWith("/api/webhooks") &&
+    !request.nextUrl.pathname.startsWith("/api/auth") &&
+    !request.nextUrl.pathname.startsWith("/api/admin/users");
+
+  // Deny unauthenticated API calls
+  if (!user && isProtectedApi) {
+    return NextResponse.json(
+      { error: "Unauthorized: Team login required" },
+      { status: 401 }
+    );
+  }
+
   // Redirect unauthenticated team members to login
   if (!user && isProtectedPage) {
     const redirectUrl = request.nextUrl.clone();

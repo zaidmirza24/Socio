@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "node --no-warnings --experimental-strip-types tests/instagram.test.ts"
+    "clean-db": "node scripts/clean-db.mjs",
+    "test": "node --no-warnings --experimental-strip-types tests/instagram.test.ts && node --no-warnings --experimental-strip-types tests/matching.test.ts && node --no-warnings --experimental-strip-types tests/ingestion.test.ts && node --no-warnings --experimental-strip-types tests/diff.test.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",

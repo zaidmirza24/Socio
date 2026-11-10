@@ -7,9 +7,9 @@ const accountItemSchema = z.object({
   volunteer_name: z.string().min(1, "Volunteer name is required").trim(),
   handle: z
     .string()
-    .min(1, "Instagram handle is required")
+    .min(1, "Handle is required")
     .transform((v) => v.replace(/^@/, "").trim().toLowerCase()),
-  platform: z.enum(["instagram", "facebook"]).default("instagram"),
+  platform: z.enum(["instagram", "facebook", "x"]).default("instagram"),
   status: z.enum(["active", "paused", "archived"]).default("active"),
 });
 
@@ -20,22 +20,33 @@ const bulkAccountsSchema = z.object({
     .max(500, "Maximum 500 accounts per bulk batch"),
 });
 
-async function checkAuth(request: NextRequest) {
+async function getAuthenticatedAdmin() {
   const supabase = createServerComponentClient();
   const { data: { user } } = await supabase.auth.getUser();
-  const isDev = process.env.NODE_ENV !== "production";
-  const authHeader = request.headers.get("authorization");
-  if (!user && !isDev && authHeader !== "Bearer dev-override") {
-    return false;
+
+  if (!user) {
+    return { authorized: false as const, status: 401, error: "Unauthorized: Team login required" };
   }
-  return true;
+
+  const admin = createAdminClient();
+  const { data: profile } = await admin
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+
+  if (!profile || profile.role !== "admin") {
+    return { authorized: false as const, status: 403, error: "Forbidden: Admin privileges required" };
+  }
+
+  return { authorized: true as const, user };
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const isAuthorized = await checkAuth(request);
-    if (!isAuthorized) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await getAuthenticatedAdmin();
+    if (!auth.authorized) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status });
     }
 
     const body = await request.json().catch(() => ({}));

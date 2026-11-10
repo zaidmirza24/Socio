@@ -118,7 +118,8 @@ export interface VolunteerProfileData {
 // Helpers & Types
 // ─────────────────────────────────────────────────────────────
 
-export type { DateRangePreset } from "@/lib/utils";
+import type { DateRangePreset } from "@/lib/utils";
+export type { DateRangePreset };
 import { getDateFilterSince } from "@/lib/utils";
 
 function fmtDate(iso: string): string {
@@ -238,10 +239,13 @@ export async function getVolunteerEngagement(preset: DateRangePreset = "30d"): P
   let query = supabase
     .from("post_snapshots")
     .select(`
+      post_id,
+      snapshot_date,
       likes,
       comments,
       views,
       post:posts (
+        id,
         account:accounts ( handle, volunteer_name )
       )
     `);
@@ -250,21 +254,43 @@ export async function getVolunteerEngagement(preset: DateRangePreset = "30d"): P
     query = query.gte("snapshot_date", since);
   }
 
-  const { data, error } = await query;
+  const { data, error } = await query.order("snapshot_date", { ascending: false });
 
   if (error) throw new Error(error.message);
 
-  const byAccount = new Map<string, { likes: number; comments: number; views: number }>();
+  // 1. Keep only the latest snapshot per post
+  const latestByPost = new Map<string, {
+    volunteer: string;
+    likes: number;
+    comments: number;
+    views: number;
+  }>();
+
   for (const row of data ?? []) {
     const postRow = Array.isArray(row.post) ? row.post[0] : row.post;
     if (!postRow) continue;
+    const postId = (row.post_id as string) || (postRow.id as string);
+    if (!postId || latestByPost.has(postId)) continue;
+
     const acct = Array.isArray(postRow.account) ? postRow.account[0] : postRow.account;
     const volunteer = (acct?.volunteer_name as string | null) ?? (acct?.handle as string) ?? "Unknown";
-    const existing = byAccount.get(volunteer) ?? { likes: 0, comments: 0, views: 0 };
-    byAccount.set(volunteer, {
-      likes: existing.likes + coerce(row.likes as number | null),
-      comments: existing.comments + coerce(row.comments as number | null),
-      views: existing.views + coerce(row.views as number | null),
+
+    latestByPost.set(postId, {
+      volunteer,
+      likes: coerce(row.likes as number | null),
+      comments: coerce(row.comments as number | null),
+      views: coerce(row.views as number | null),
+    });
+  }
+
+  // 2. Aggregate latest post metrics by volunteer account
+  const byAccount = new Map<string, { likes: number; comments: number; views: number }>();
+  for (const item of latestByPost.values()) {
+    const existing = byAccount.get(item.volunteer) ?? { likes: 0, comments: 0, views: 0 };
+    byAccount.set(item.volunteer, {
+      likes: existing.likes + item.likes,
+      comments: existing.comments + item.comments,
+      views: existing.views + item.views,
     });
   }
 
@@ -340,10 +366,13 @@ export async function getAccountComparison(preset: DateRangePreset = "30d"): Pro
   let query = supabase
     .from("post_snapshots")
     .select(`
+      post_id,
+      snapshot_date,
       likes,
       comments,
       views,
       post:posts (
+        id,
         account:accounts ( handle )
       )
     `);
@@ -352,23 +381,48 @@ export async function getAccountComparison(preset: DateRangePreset = "30d"): Pro
     query = query.gte("snapshot_date", since);
   }
 
-  const { data, error } = await query;
+  const { data, error } = await query.order("snapshot_date", { ascending: false });
 
   if (error) throw new Error(error.message);
 
-  const byAccount = new Map<string, { posts: Set<string>; likes: number; comments: number; views: number }>();
-  let idx = 0;
+  // 1. Keep only the latest snapshot per post
+  const latestByPost = new Map<string, {
+    handle: string;
+    postId: string;
+    likes: number;
+    comments: number;
+    views: number;
+  }>();
+
   for (const row of data ?? []) {
     const postRow = Array.isArray(row.post) ? row.post[0] : row.post;
     if (!postRow) continue;
+    const postId = (row.post_id as string) || (postRow.id as string);
+    if (!postId || latestByPost.has(postId)) continue;
+
     const acct = Array.isArray(postRow.account) ? postRow.account[0] : postRow.account;
-    const handle = `@${(acct?.handle as string) ?? `acct${idx++}`}`;
-    if (!byAccount.has(handle)) byAccount.set(handle, { posts: new Set(), likes: 0, comments: 0, views: 0 });
-    const entry = byAccount.get(handle)!;
-    entry.posts.add(String(idx));
-    entry.likes += coerce(row.likes as number | null);
-    entry.comments += coerce(row.comments as number | null);
-    entry.views += coerce(row.views as number | null);
+    const handle = `@${(acct?.handle as string) ?? "unknown"}`;
+
+    latestByPost.set(postId, {
+      handle,
+      postId,
+      likes: coerce(row.likes as number | null),
+      comments: coerce(row.comments as number | null),
+      views: coerce(row.views as number | null),
+    });
+  }
+
+  // 2. Aggregate post count and latest engagement metrics per handle
+  const byAccount = new Map<string, { posts: Set<string>; likes: number; comments: number; views: number }>();
+  for (const item of latestByPost.values()) {
+    if (!byAccount.has(item.handle)) {
+      byAccount.set(item.handle, { posts: new Set(), likes: 0, comments: 0, views: 0 });
+    }
+    const entry = byAccount.get(item.handle)!;
+    entry.posts.add(item.postId);
+    entry.likes += item.likes;
+    entry.comments += item.comments;
+    entry.views += item.views;
   }
 
   return Array.from(byAccount.entries())
@@ -390,10 +444,12 @@ export async function getVolunteerLeaderboard(preset: DateRangePreset = "30d"): 
   const supabase = createServerComponentClient();
   const since = getDateFilterSince(preset);
 
-  // Step 1: aggregate post-level metrics per account within the timeframe
+  // Step 1: Query snapshots ordered by snapshot_date DESC
   let snapQuery = supabase
     .from("post_snapshots")
     .select(`
+      post_id,
+      snapshot_date,
       likes,
       comments,
       views,
@@ -411,9 +467,44 @@ export async function getVolunteerLeaderboard(preset: DateRangePreset = "30d"): 
     snapQuery = snapQuery.gte("snapshot_date", since);
   }
 
-  const { data: snapRows, error: snapErr } = await snapQuery;
+  const { data: snapRows, error: snapErr } = await snapQuery.order("snapshot_date", { ascending: false });
 
   if (snapErr) throw new Error(snapErr.message);
+
+  // 1. Keep only the latest snapshot per post
+  const latestByPost = new Map<string, {
+    accountId: string;
+    handle: string;
+    volunteerName: string;
+    postId: string;
+    likes: number;
+    comments: number;
+    views: number;
+  }>();
+
+  for (const row of snapRows ?? []) {
+    const postRow = Array.isArray(row.post) ? row.post[0] : row.post;
+    if (!postRow) continue;
+    const acctRow = Array.isArray(postRow.account) ? postRow.account[0] : postRow.account;
+    if (!acctRow) continue;
+
+    const postId = (row.post_id as string) || (postRow.id as string);
+    if (!postId || latestByPost.has(postId)) continue;
+
+    const accountId = acctRow.id as string;
+    const handle = (acctRow.handle as string) ?? "unknown";
+    const volunteerName = (acctRow.volunteer_name as string | null) ?? handle;
+
+    latestByPost.set(postId, {
+      accountId,
+      handle,
+      volunteerName,
+      postId,
+      likes: coerce(row.likes as number | null),
+      comments: coerce(row.comments as number | null),
+      views: coerce(row.views as number | null),
+    });
+  }
 
   type AggEntry = {
     accountId: string;
@@ -427,33 +518,23 @@ export async function getVolunteerLeaderboard(preset: DateRangePreset = "30d"): 
 
   const byAccount = new Map<string, AggEntry>();
 
-  for (const row of snapRows ?? []) {
-    const postRow = Array.isArray(row.post) ? row.post[0] : row.post;
-    if (!postRow) continue;
-    const acctRow = Array.isArray(postRow.account) ? postRow.account[0] : postRow.account;
-    if (!acctRow) continue;
-
-    const accountId = acctRow.id as string;
-    const handle = (acctRow.handle as string) ?? "unknown";
-    const volunteerName = (acctRow.volunteer_name as string | null) ?? handle;
-    const postId = postRow.id as string;
-
-    if (!byAccount.has(accountId)) {
-      byAccount.set(accountId, {
-        accountId,
-        handle,
-        volunteerName,
+  for (const item of latestByPost.values()) {
+    if (!byAccount.has(item.accountId)) {
+      byAccount.set(item.accountId, {
+        accountId: item.accountId,
+        handle: item.handle,
+        volunteerName: item.volunteerName,
         postIds: new Set(),
         likes: 0,
         comments: 0,
         views: 0,
       });
     }
-    const entry = byAccount.get(accountId)!;
-    entry.postIds.add(postId);
-    entry.likes += coerce(row.likes as number | null);
-    entry.comments += coerce(row.comments as number | null);
-    entry.views += coerce(row.views as number | null);
+    const entry = byAccount.get(item.accountId)!;
+    entry.postIds.add(item.postId);
+    entry.likes += item.likes;
+    entry.comments += item.comments;
+    entry.views += item.views;
   }
 
   // Also include active accounts with 0 engagement in this window

@@ -8,11 +8,8 @@ export async function GET(request: NextRequest) {
     const supabaseUser = createServerComponentClient();
     const { data: { user } } = await supabaseUser.auth.getUser();
 
-    const authHeader = request.headers.get("authorization");
-    const isDev = process.env.NODE_ENV !== "production";
-
-    if (!user && !(isDev && authHeader === "Bearer dev-override")) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized: Team login required" }, { status: 401 });
     }
 
     const results: {

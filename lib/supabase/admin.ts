@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { getServerEnv, getClientEnv } from "@/lib/env";
+import { getServerEnv, getClientEnv } from "../env.ts";
 
 /**
  * Creates an elevated Supabase admin client using the service-role key.
@@ -17,6 +17,13 @@ export function createAdminClient() {
       auth: {
         autoRefreshToken: false,
         persistSession: false,
+      },
+      global: {
+        fetch: (url, options = {}) =>
+          fetch(url, {
+            ...options,
+            cache: "no-store",
+          }),
       },
     }
   );

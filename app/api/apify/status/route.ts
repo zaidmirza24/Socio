@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getApifyClient } from "@/lib/apify/client";
+import { getApifyClient, deleteApifyDataset } from "@/lib/apify/client";
 import { normalizeInstagramDataset } from "@/lib/collectors/instagram";
 import { processIngestion } from "@/lib/services/ingestion";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -12,10 +12,7 @@ export async function GET(request: NextRequest) {
       data: { user },
     } = await supabaseUser.auth.getUser();
 
-    const authHeader = request.headers.get("authorization");
-    const isDev = process.env.NODE_ENV !== "production";
-
-    if (!user && !(isDev && authHeader === "Bearer dev-override")) {
+    if (!user) {
       return NextResponse.json(
         { error: "Unauthorized: Team login required" },
         { status: 401 }
@@ -112,6 +109,9 @@ export async function GET(request: NextRequest) {
       const summary = await processIngestion(normalized, {
         actorRunId: run.id,
       });
+
+      // Cleanup Apify dataset after successful ingestion
+      await deleteApifyDataset(datasetId);
 
       return NextResponse.json({
         runId: run.id,

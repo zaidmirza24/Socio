@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, Suspense } from "react";
 import {
   ShieldCheck,
   CheckCircle2,
@@ -165,7 +165,9 @@ export default function SystemHealthPage() {
               Showing {filteredRuns.length} recorded execution runs
             </p>
           </div>
-          <DateRangeFilter value={dateFilter} onChange={setDateFilter} size="sm" />
+          <Suspense fallback={<div className="h-9 w-48 animate-pulse bg-slate-100 rounded-xl" />}>
+            <DateRangeFilter value={dateFilter} onChange={setDateFilter} size="sm" />
+          </Suspense>
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">

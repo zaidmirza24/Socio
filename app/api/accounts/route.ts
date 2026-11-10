@@ -4,9 +4,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createServerComponentClient } from "@/lib/supabase/server";
 
 const createAccountSchema = z.object({
-  handle: z.string().min(1, "Instagram handle is required").transform((v) => v.replace(/^@/, "").trim().toLowerCase()),
+  handle: z.string().min(1, "Handle is required").transform((v) => v.replace(/^@/, "").trim().toLowerCase()),
   volunteer_name: z.string().min(1, "Volunteer name is required").trim(),
-  platform: z.enum(["instagram", "facebook"]).default("instagram"),
+  platform: z.enum(["instagram", "facebook", "x"]).default("instagram"),
   status: z.enum(["active", "paused", "archived"]).default("active"),
 });
 
@@ -17,22 +17,35 @@ const updateAccountSchema = z.object({
   status: z.enum(["active", "paused", "archived"]).optional(),
 });
 
-async function checkAuth(request: NextRequest) {
+async function getAuthenticatedUser(requireAdmin: boolean = false) {
   const supabase = createServerComponentClient();
   const { data: { user } } = await supabase.auth.getUser();
-  const isDev = process.env.NODE_ENV !== "production";
-  const authHeader = request.headers.get("authorization");
-  if (!user && !isDev && authHeader !== "Bearer dev-override") {
-    return false;
+
+  if (!user) {
+    return { authorized: false as const, status: 401, error: "Unauthorized: Team login required" };
   }
-  return true;
+
+  if (requireAdmin) {
+    const admin = createAdminClient();
+    const { data: profile } = await admin
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .single();
+
+    if (!profile || profile.role !== "admin") {
+      return { authorized: false as const, status: 403, error: "Forbidden: Admin privileges required" };
+    }
+  }
+
+  return { authorized: true as const, user };
 }
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
-    const isAuthorized = await checkAuth(request);
-    if (!isAuthorized) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await getAuthenticatedUser(false);
+    if (!auth.authorized) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status });
     }
 
     const admin = createAdminClient();
@@ -93,9 +106,9 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const isAuthorized = await checkAuth(request);
-    if (!isAuthorized) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await getAuthenticatedUser(true);
+    if (!auth.authorized) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status });
     }
 
     const body = await request.json().catch(() => ({}));
@@ -142,9 +155,9 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
-    const isAuthorized = await checkAuth(request);
-    if (!isAuthorized) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await getAuthenticatedUser(true);
+    if (!auth.authorized) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status });
     }
 
     const body = await request.json().catch(() => ({}));
@@ -183,9 +196,9 @@ export async function PATCH(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
-    const isAuthorized = await checkAuth(request);
-    if (!isAuthorized) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await getAuthenticatedUser(true);
+    if (!auth.authorized) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status });
     }
 
     const url = new URL(request.url);

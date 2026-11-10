@@ -13,11 +13,6 @@ export default async function VolunteerDetailPage({ params, searchParams }: Prop
   const { handle } = await params;
   const resolvedSearchParams = await searchParams;
   const decodedHandle = decodeURIComponent(handle);
-  const data = await getVolunteerDetails(decodedHandle);
-
-  if (!data) {
-    notFound();
-  }
 
   const initialRange: DateRangePreset =
     resolvedSearchParams?.range === "today" ||
@@ -27,6 +22,12 @@ export default async function VolunteerDetailPage({ params, searchParams }: Prop
     resolvedSearchParams?.range === "all"
       ? (resolvedSearchParams.range as DateRangePreset)
       : "30d";
+
+  const data = await getVolunteerDetails(decodedHandle, initialRange);
+
+  if (!data) {
+    notFound();
+  }
 
   return <VolunteerDetailView data={data} initialRange={initialRange} />;
 }

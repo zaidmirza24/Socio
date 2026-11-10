@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getApifyClient, verifyWebhookSecret } from "@/lib/apify/client";
+import { getApifyClient, verifyWebhookSecret, deleteApifyDataset } from "@/lib/apify/client";
 import { normalizeInstagramDataset } from "@/lib/collectors/instagram";
 import { processIngestion } from "@/lib/services/ingestion";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -101,6 +101,9 @@ export async function POST(request: NextRequest) {
     // 5. Normalize and Ingest
     const normalizedData = normalizeInstagramDataset(rawItems);
     const summary = await processIngestion(normalizedData, { actorRunId });
+
+    // 6. Delete Apify dataset after successful ingestion for zero residual third-party retention
+    await deleteApifyDataset(datasetId);
 
     return NextResponse.json({
       success: true,

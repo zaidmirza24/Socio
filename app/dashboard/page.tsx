@@ -17,7 +17,8 @@ import {
   type KPISummary,
   type RecentPostItem,
 } from "@/lib/supabase/queries";
-import { CampaignAnalyticsView } from "@/components/analytics/CampaignAnalyticsView";
+import { getMatrixData, type MatrixData } from "@/lib/supabase/matrix";
+import { DashboardTabs } from "@/components/dashboard/DashboardTabs";
 
 export const dynamic = "force-dynamic";
 
@@ -33,7 +34,21 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
       ? rawRange
       : "30d";
 
-  // Load all chart + table + KPI + post data in parallel from Supabase for the selected range
+  // Load Matrix Data and Analytics Data in parallel from Supabase
+  let matrixData: MatrixData = {
+    captions: [],
+    rows: [],
+    stats: {
+      totalVolunteers: 0,
+      activeCaptionsCount: 0,
+      totalPosted: 0,
+      totalPending: 0,
+      totalNeedsReview: 0,
+      totalNotVisible: 0,
+      completionRate: 0,
+    },
+  };
+
   let trendData: TrendDataPoint[] = [];
   let topPosts: TopPostData[] = [];
   let volunteerEngagement: VolunteerEngagementData[] = [];
@@ -51,16 +66,18 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   };
 
   try {
-    [
-      trendData,
-      topPosts,
-      volunteerEngagement,
-      volunteerRanking,
-      accountComparison,
-      leaderboard,
-      kpi,
-      recentPosts,
+    const [
+      matrix,
+      trend,
+      top,
+      volEng,
+      volRank,
+      accComp,
+      lead,
+      kpiData,
+      posts,
     ] = await Promise.all([
+      getMatrixData(),
       getDailyEngagementTrend(range),
       getTopPosts(range),
       getVolunteerEngagement(range),
@@ -70,21 +87,34 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
       getKPISummary(range),
       getRecentMonitoredPosts(60, range),
     ]);
+
+    matrixData = matrix;
+    trendData = trend;
+    topPosts = top;
+    volunteerEngagement = volEng;
+    volunteerRanking = volRank;
+    accountComparison = accComp;
+    leaderboard = lead;
+    kpi = kpiData;
+    recentPosts = posts;
   } catch (err) {
-    console.error("[DashboardPage] Failed to load analytics:", err);
+    console.error("[DashboardPage] Failed to load dashboard data:", err);
   }
 
   return (
-    <CampaignAnalyticsView
-      currentRange={range}
-      trendData={trendData}
-      topPosts={topPosts}
-      volunteerEngagement={volunteerEngagement}
-      volunteerRanking={volunteerRanking}
-      accountComparison={accountComparison}
-      leaderboard={leaderboard}
-      kpi={kpi}
-      recentPosts={recentPosts}
+    <DashboardTabs
+      matrixData={matrixData}
+      analyticsData={{
+        currentRange: range,
+        trendData,
+        topPosts,
+        volunteerEngagement,
+        volunteerRanking,
+        accountComparison,
+        leaderboard,
+        kpi,
+        recentPosts,
+      }}
     />
   );
 }
