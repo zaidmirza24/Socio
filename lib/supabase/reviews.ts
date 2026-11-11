@@ -126,7 +126,8 @@ export async function getReviewQueueItems(
  * 7. Marks the review item as `approved` and triggers cache revalidation.
  */
 export async function approveReviewItem(
-  reviewId: string
+  reviewId: string,
+  overrideCaptionId?: string
 ): Promise<{ success: boolean; error?: string }> {
   const auth = await verifyAdminCaller();
   if (!auth.authorized) {
@@ -146,6 +147,7 @@ export async function approveReviewItem(
     return { success: false, error: "Review item not found." };
   }
 
+  const targetCaptionId = overrideCaptionId || item.caption_id;
   const { normalized, hash } = processCaption(item.candidate_caption);
   const now = new Date().toISOString();
   const targetDate = formatDate();
@@ -154,7 +156,7 @@ export async function approveReviewItem(
     // 2. Cache variant hash in caption_approved_variants
     await supabase.from("caption_approved_variants").upsert(
       {
-        caption_id: item.caption_id,
+        caption_id: targetCaptionId,
         variant_hash: hash,
         variant_caption: normalized,
         approved_at: now,
@@ -184,7 +186,7 @@ export async function approveReviewItem(
       .from("matched_posts")
       .upsert(
         {
-          caption_id: item.caption_id,
+          caption_id: targetCaptionId,
           account_id: item.account_id,
           platform: item.platform,
           platform_post_id: item.platform_post_id,
@@ -270,6 +272,7 @@ export async function approveReviewItem(
     const { error: updateError } = await supabase
       .from("review_queue")
       .update({
+        caption_id: targetCaptionId,
         status: "approved",
         reviewed_at: now,
         reviewed_by: auth.user.id,

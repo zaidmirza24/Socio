@@ -19,6 +19,7 @@ import {
   rejectReviewItem,
   type ReviewQueueDisplayItem,
 } from "@/lib/supabase/reviews";
+import { formatDisplayDate } from "@/lib/utils";
 import { CaptionDiffModal } from "./CaptionDiffModal";
 
 interface ReviewQueueViewProps {
@@ -226,8 +227,8 @@ export function ReviewQueueView({ initialItems }: ReviewQueueViewProps) {
                         </span>
                       )}
 
-                      <span className="text-xs text-slate-400">
-                        {new Date(item.createdAt).toLocaleDateString()}
+                      <span suppressHydrationWarning className="text-xs text-slate-400">
+                        {formatDisplayDate(item.createdAt)}
                       </span>
                     </div>
                   </div>

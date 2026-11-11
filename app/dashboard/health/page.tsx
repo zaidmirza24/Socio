@@ -16,6 +16,7 @@ import {
 import { TriggerScraperButton } from "@/components/TriggerScraperButton";
 import { DateRangeFilter } from "@/components/analytics/DateRangeFilter";
 import type { DateRangePreset } from "@/lib/supabase/queries";
+import { formatDisplayDateTime, formatDate, getDateFilterSince } from "@/lib/utils";
 
 interface RunItem {
   id: string;
@@ -35,7 +36,7 @@ export default function SystemHealthPage() {
   const [runs, setRuns] = useState<RunItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [dateFilter, setDateFilter] = useState<DateRangePreset>("30d");
+  const [dateFilter, setDateFilter] = useState<DateRangePreset>("today");
 
   const fetchRuns = async () => {
     setLoading(true);
@@ -60,14 +61,13 @@ export default function SystemHealthPage() {
 
   const filteredRuns = useMemo(() => {
     if (dateFilter === "all") return runs;
-    const now = new Date();
-    const cutoffStr =
-      dateFilter === "today"
-        ? now.toISOString().slice(0, 10)
-        : new Date(now.getTime() - (dateFilter === "7d" ? 7 : dateFilter === "180d" ? 180 : 30) * 86400000)
-            .toISOString()
-            .slice(0, 10);
-    return runs.filter((r) => r.started_at && r.started_at.slice(0, 10) >= cutoffStr);
+    const cutoffStr = getDateFilterSince(dateFilter);
+    if (!cutoffStr) return runs;
+    return runs.filter((r) => {
+      if (!r.started_at) return false;
+      const runDate = formatDate(new Date(r.started_at));
+      return runDate >= cutoffStr;
+    });
   }, [runs, dateFilter]);
 
   const totalRuns = filteredRuns.length;
@@ -215,8 +215,8 @@ export default function SystemHealthPage() {
                           {run.platform}
                         </span>
                       </td>
-                      <td className="px-6 py-4 text-xs text-slate-500">
-                        {new Date(run.started_at).toLocaleString()}
+                      <td suppressHydrationWarning className="px-6 py-4 text-xs text-slate-500">
+                        {formatDisplayDateTime(run.started_at)}
                       </td>
                       <td className="px-6 py-4 text-xs font-mono text-slate-500">
                         {calculateDuration(run.started_at, run.completed_at)}

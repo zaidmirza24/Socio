@@ -38,8 +38,8 @@ export function DateRangeFilter({
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
 
-  // If no controlled value, read from searchParams, defaulting to "30d"
-  const currentParam = (searchParams?.get("range") as DateRangePreset) || "30d";
+  // If no controlled value, read from searchParams, defaulting to "today"
+  const currentParam = (searchParams?.get("range") as DateRangePreset) || "today";
   const activePreset: DateRangePreset = value ?? currentParam;
 
   const options: DateRangeOption[] = showAllOption

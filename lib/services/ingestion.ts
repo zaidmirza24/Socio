@@ -115,7 +115,7 @@ export async function processIngestion(
     // 2. Fetch active campaign captions & approved variants for matching
     const { data: activeCaptionsRaw, error: captionsError } = await supabase
       .from("campaign_captions")
-      .select("id, caption_hash, canonical_caption, normalized_caption")
+      .select("id, caption_hash, canonical_caption, normalized_caption, released_at")
       .eq("status", "active");
 
     if (captionsError) {
@@ -127,6 +127,7 @@ export async function processIngestion(
       caption_hash: c.caption_hash,
       canonical_caption: c.canonical_caption,
       normalized_caption: c.normalized_caption,
+      released_at: c.released_at,
     }));
 
     const { data: approvedVariantsRaw, error: variantsError } = await supabase
@@ -141,6 +142,16 @@ export async function processIngestion(
       caption_id: v.caption_id,
       variant_hash: v.variant_hash,
     }));
+
+    // Fetch existing review queue items to preserve human review decisions
+    const { data: existingReviewsRaw } = await supabase
+      .from("review_queue")
+      .select("platform, platform_post_id, status");
+
+    const existingReviewStatusMap = new Map<string, string>();
+    for (const r of existingReviewsRaw || []) {
+      existingReviewStatusMap.set(`${r.platform}:${r.platform_post_id}`, r.status);
+    }
 
     // 3. Fetch all active monitored accounts for Instagram
     const { data: allMonitoredAccounts, error: accountFetchError } = await supabase
@@ -231,10 +242,12 @@ export async function processIngestion(
         continue;
       }
 
-      // Execute Two-Tier Matching Pipeline
-      const matchResult = matchCaption(post.caption, activeCaptions, approvedVariants);
+      // Execute Two-Tier Matching Pipeline with Temporal Embargo Validation
+      const matchResult = matchCaption(post.caption, activeCaptions, approvedVariants, {
+        postedAt: post.posted_at,
+      });
 
-      // --- CASE 1: Below threshold or empty -> DISCARD IMMEDIATELY ---
+      // --- CASE 1: Below threshold, outside embargo window, or empty -> DISCARD IMMEDIATELY ---
       if (!matchResult.matched) {
         postsDiscarded++;
         // Zero DB rows created for non-matching posts
@@ -243,6 +256,21 @@ export async function processIngestion(
 
       // --- CASE 2: Tier 2 Fuzzy match (0.90 <= similarity < 1.0) -> REVIEW QUEUE ---
       if (matchResult.needsReview) {
+        const postKey = `${post.platform}:${post.platform_post_id}`;
+        const existingStatus = existingReviewStatusMap.get(postKey);
+
+        // Guard against the "Review Resurrection Loop":
+        // If an admin already rejected this post, respect the decision and discard it.
+        if (existingStatus === "rejected") {
+          postsDiscarded++;
+          continue;
+        }
+
+        // If an admin already approved this post, it is already tracked.
+        if (existingStatus === "approved") {
+          continue;
+        }
+
         const { error: queueError } = await supabase
           .from("review_queue")
           .upsert(
@@ -265,6 +293,7 @@ export async function processIngestion(
           errors.push(`Failed to queue post ${post.platform_post_id} for review: ${queueError.message}`);
         } else {
           reviewsQueued++;
+          existingReviewStatusMap.set(postKey, "pending");
         }
         continue;
       }

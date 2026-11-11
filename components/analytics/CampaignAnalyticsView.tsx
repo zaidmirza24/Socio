@@ -107,7 +107,7 @@ function SectionCard({
 }
 
 export function CampaignAnalyticsView({
-  currentRange = "30d",
+  currentRange = "today",
   trendData,
   topPosts,
   volunteerRanking,

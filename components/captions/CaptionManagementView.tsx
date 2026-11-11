@@ -14,7 +14,7 @@ import {
   MessageCircle,
   Hash,
 } from "lucide-react";
-import { formatNumber } from "@/lib/utils";
+import { formatNumber, formatDisplayDate } from "@/lib/utils";
 import {
   createCampaignCaption,
   updateCaptionStatus,
@@ -258,8 +258,8 @@ export function CaptionManagementView({ initialCaptions }: CaptionManagementView
                     </div>
 
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-slate-400">
-                        Released: {new Date(caption.released_at).toLocaleDateString()}
+                      <span suppressHydrationWarning className="text-xs text-slate-400">
+                        Released: {formatDisplayDate(caption.released_at)}
                       </span>
                       <button
                         onClick={() => handleToggleStatus(caption.id, caption.status)}

@@ -18,7 +18,7 @@ import {
   Filter,
 } from "lucide-react";
 import type { MatrixData, MatrixCellStatus } from "@/lib/supabase/matrix";
-import { formatMetric } from "@/lib/utils";
+import { formatMetric, formatDisplayDate } from "@/lib/utils";
 
 interface VolunteersMatrixViewProps {
   data: MatrixData;
@@ -196,8 +196,8 @@ export function VolunteersMatrixView({ data }: VolunteersMatrixViewProps) {
                         <span className="truncate" title={caption.title}>
                           {caption.title}
                         </span>
-                        <span className="text-[10px] text-slate-400 font-normal shrink-0">
-                          {new Date(caption.releasedAt).toLocaleDateString()}
+                        <span suppressHydrationWarning className="text-[10px] text-slate-400 font-normal shrink-0">
+                          {formatDisplayDate(caption.releasedAt)}
                         </span>
                       </div>
                     </th>

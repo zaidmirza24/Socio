@@ -16,7 +16,7 @@ export default async function PostsPage({ searchParams }: PostsPageProps) {
   const range: DateRangePreset =
     rawRange === "today" || rawRange === "7d" || rawRange === "30d" || rawRange === "180d" || rawRange === "all"
       ? rawRange
-      : "30d";
+      : "today";
 
   let posts: RecentPostItem[] = [];
   try {

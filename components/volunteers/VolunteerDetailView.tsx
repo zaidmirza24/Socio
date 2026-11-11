@@ -20,7 +20,7 @@ import {
   Sparkles,
   Share2,
 } from "lucide-react";
-import { formatMetric, formatNumber } from "@/lib/utils";
+import { formatMetric, formatNumber, formatDate, getDateFilterSince } from "@/lib/utils";
 import { EngagementTrendChart } from "@/components/charts/EngagementTrendChart";
 import { DateRangeFilter } from "@/components/analytics/DateRangeFilter";
 import type { VolunteerProfileData, DateRangePreset } from "@/lib/supabase/queries";
@@ -30,7 +30,7 @@ interface VolunteerDetailViewProps {
   initialRange?: DateRangePreset;
 }
 
-export function VolunteerDetailView({ data, initialRange = "30d" }: VolunteerDetailViewProps) {
+export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerDetailViewProps) {
   const { account, metrics: defaultMetrics, timeline: defaultTimeline, posts } = data;
 
   const [dateFilter, setDateFilter] = useState<DateRangePreset>(initialRange);
@@ -52,23 +52,20 @@ export function VolunteerDetailView({ data, initialRange = "30d" }: VolunteerDet
     setTimeout(() => setCopiedHandle(false), 2000);
   };
 
-  // Date cutoff calculation
+  // Date cutoff calculation — uses IST-aware getDateFilterSince
   const cutoffDate = useMemo(() => {
-    if (dateFilter === "all") return null;
-    const now = new Date();
-    if (dateFilter === "today") {
-      return now.toISOString().slice(0, 10);
-    }
-    const days = dateFilter === "7d" ? 7 : dateFilter === "180d" ? 180 : 30;
-    const d = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
-    return d.toISOString().slice(0, 10);
+    return getDateFilterSince(dateFilter);
   }, [dateFilter]);
 
-  // Filter posts by date
+  // Filter posts by date — postedAt is a UTC ISO string ("2026-11-10 09:30").
+  // We replace the space with T to get a valid ISO string, parse it as UTC,
+  // then convert to IST date for comparison so early-morning IST posts aren't dropped.
   const dateFilteredPosts = useMemo(() => {
     if (!cutoffDate) return posts;
     return posts.filter((p) => {
-      const postDate = p.postedAt ? p.postedAt.slice(0, 10) : "";
+      if (!p.postedAt) return false;
+      const isoString = p.postedAt.replace(" ", "T") + ":00Z";
+      const postDate = formatDate(new Date(isoString));
       return postDate >= cutoffDate;
     });
   }, [posts, cutoffDate]);

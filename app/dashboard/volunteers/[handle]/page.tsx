@@ -21,9 +21,11 @@ export default async function VolunteerDetailPage({ params, searchParams }: Prop
     resolvedSearchParams?.range === "180d" ||
     resolvedSearchParams?.range === "all"
       ? (resolvedSearchParams.range as DateRangePreset)
-      : "30d";
+      : "today";
 
-  const data = await getVolunteerDetails(decodedHandle, initialRange);
+  // Fetch all posts — no preset passed so DB returns every post for this volunteer.
+  // Client-side dateFilter state handles all filtering interactively.
+  const data = await getVolunteerDetails(decodedHandle);
 
   if (!data) {
     notFound();

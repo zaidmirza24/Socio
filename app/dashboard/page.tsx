@@ -32,7 +32,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   const range: DateRangePreset =
     rawRange === "today" || rawRange === "7d" || rawRange === "30d" || rawRange === "180d" || rawRange === "all"
       ? rawRange
-      : "30d";
+      : "today";
 
   // Load Matrix Data and Analytics Data in parallel from Supabase
   let matrixData: MatrixData = {

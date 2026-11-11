@@ -2,16 +2,19 @@ import {
   normalizeCaption,
   computeCaptionHash,
   processCaption,
+  segmentCaption,
+  countWords,
 } from "../lib/matching/normalizer.ts";
 import {
   matchCaption,
   jaroSimilarity,
   jaroWinklerSimilarity,
+  getAdaptiveThreshold,
   type MatchableCaption,
   type MatchableVariant,
 } from "../lib/matching/matcher.ts";
 
-function assert(condition: boolean, message: string): void {
+function assert(condition: boolean, message: string): asserts condition {
   if (!condition) {
     throw new Error(`Assertion failed: ${message}`);
   }
@@ -177,7 +180,9 @@ function runMatchingTests(): void {
     postedAt: "2026-04-01T12:00:00Z",
   });
   assert(resOldPost.matched === false, "Old post before campaign release must not match");
-  assert(resOldPost.reason === "outside_embargo_window", `Expected outside_embargo_window, got ${resOldPost.reason}`);
+  if (!resOldPost.matched) {
+    assert(resOldPost.reason === "outside_embargo_window", `Expected outside_embargo_window, got ${resOldPost.reason}`);
+  }
   console.log("✓ Temporal Embargo: Past post published prior to campaign release safely filtered");
 
   // Test Ambiguity Detection (Two very similar campaigns)
@@ -219,6 +224,87 @@ function runMatchingTests(): void {
   const resNull = matchCaption(null, activeCaptions);
   assert(resNull.matched === false && resNull.reason === "empty_caption", "Null caption discarded");
   console.log("✓ Discard Engine: Empty/null captions safely rejected");
+
+  // ─────────────────────────────────────────────────────────────
+  // 5. Section Segmentation Engine
+  // ─────────────────────────────────────────────────────────────
+  const multiLineWithSections =
+    "Namaste volunteers!\n\nJoin us this Sunday for our Tree Planting Drive! Bring gloves.\n\nRegards, District Youth Wing\n#CleanIndia #GreenEarth";
+  const sections1 = segmentCaption(multiLineWithSections);
+  assert(sections1.prefix === "namaste volunteers!", `Prefix mismatch: ${sections1.prefix}`);
+  assert(
+    sections1.cleanBody === "join us this sunday for our tree planting drive! bring gloves.",
+    `Clean body mismatch: ${sections1.cleanBody}`
+  );
+  assert(sections1.hashtags.includes("#cleanindia"), "Must extract #cleanindia");
+  assert(sections1.hashtags.includes("#greenearth"), "Must extract #greenearth");
+  console.log("✓ Section Segmentation: Accurately extracted prefix, core body, suffix, and hashtags");
+
+  const singleLineWithSections =
+    "Namaste all! Join us this Sunday for our Tree Planting Drive! Bring gloves. #CleanIndia #YouthWing";
+  const sections2 = segmentCaption(singleLineWithSections);
+  assert(sections2.prefix === "namaste all!", `Single-line prefix mismatch: ${sections2.prefix}`);
+  assert(
+    sections2.cleanBody === "join us this sunday for our tree planting drive! bring gloves.",
+    `Single-line clean body mismatch: ${sections2.cleanBody}`
+  );
+  console.log("✓ Section Segmentation: Accurately extracted single-line greetings and trailing hashtag blocks");
+
+  // ─────────────────────────────────────────────────────────────
+  // 6. Dynamic / Adaptive Thresholding Engine
+  // ─────────────────────────────────────────────────────────────
+  assert(getAdaptiveThreshold(4) === 0.94, "Short captions (<=10 words) must require >= 0.94");
+  assert(getAdaptiveThreshold(25) === 0.89, "Medium captions (11-45 words) must require >= 0.89");
+  assert(getAdaptiveThreshold(60) === 0.84, "Long captions (>45 words) must require >= 0.84");
+  console.log("✓ Dynamic Thresholding: Correctly scaled thresholds across short, medium, and long text lengths");
+
+  // 6A. Short Caption False Positive Defense:
+  // Short canonical: 4 words ("Happy Republic Day! #ProudIndian")
+  // Personal post: "Happy Independence Day! #ProudIndian with family"
+  const shortCanonical = "Happy Republic Day! #ProudIndian";
+  const shortCaptions: MatchableCaption[] = [
+    {
+      id: "caption-republic",
+      canonical_caption: shortCanonical,
+      normalized_caption: normalizeCaption(shortCanonical),
+      caption_hash: computeCaptionHash(normalizeCaption(shortCanonical)),
+    },
+  ];
+  const personalShortPost = "Happy Independence Day! #ProudIndian with family";
+  const resShortDefense = matchCaption(personalShortPost, shortCaptions);
+  assert(
+    resShortDefense.matched === false,
+    "Personal holiday post must NOT match short campaign caption (False Positive Defense)"
+  );
+  console.log("✓ Dynamic Thresholding: Prevented false positive match on short 4-word campaign");
+
+  // 6B. Long Caption Partial-Quote Protection:
+  // Long 3-paragraph official press release (70 words)
+  const longCanonical =
+    "We are proud to announce our nationwide afforestation campaign for 2026. Every citizen has a vital role to play in preserving our ecosystem and planting native trees.\n\nJoin our volunteer chapter this Saturday at 8:00 AM at the city central grounds. Bring reusable water bottles, comfortable walking shoes, and gloves. Refreshments and saplings will be provided on-site.\n\nTogether we can build a greener tomorrow. For questions contact volunteer helpline at 9876543210.";
+  const longCaptions: MatchableCaption[] = [
+    {
+      id: "caption-afforestation",
+      canonical_caption: longCanonical,
+      normalized_caption: normalizeCaption(longCanonical),
+      caption_hash: computeCaptionHash(normalizeCaption(longCanonical)),
+    },
+  ];
+
+  // Volunteer posts only Paragraph 2 (the call-to-action) with a personal greeting and hashtag
+  const volunteerPartialPost =
+    "Namaste friends! Join our volunteer chapter this Saturday at 8:00 AM at the city central grounds. Bring reusable water bottles, comfortable walking shoes, and gloves. Refreshments and saplings will be provided on-site. #GreenerTomorrow";
+  const resLongPartial = matchCaption(volunteerPartialPost, longCaptions);
+  assert(
+    resLongPartial.matched === true,
+    "Volunteer posting call-to-action paragraph from long press release must be captured (False Negative Defense)"
+  );
+  if (resLongPartial.matched) {
+    assert(resLongPartial.tier === "tier2_fuzzy", "Partial quote routes to review queue");
+    assert(resLongPartial.confidence >= 0.90, `Expected high confidence for paragraph match, got ${resLongPartial.confidence}`);
+    assert(resLongPartial.captionId === "caption-afforestation", "Must match caption-afforestation");
+  }
+  console.log(`✓ Dynamic Thresholding: Partial quote from long campaign statement successfully matched (confidence: ${resLongPartial.matched ? resLongPartial.confidence : 0})`);
 
   console.log("--- All Normalization & Matching Engine Tests Passed! ---");
 }

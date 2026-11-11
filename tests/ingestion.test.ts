@@ -105,6 +105,51 @@ function runIngestionTests(): void {
   assert(discardedCount === 2, `Expected 2 discarded posts, got ${discardedCount}`);
   console.log("✓ Discard Engine correctly filtered candidate stream: 1 matched, 1 queued, 2 discarded");
 
+  // 3b. Review Queue State Machine Guard (Prevents Re-opening Rejected/Approved Posts)
+  const existingReviewQueue = new Map<string, "pending" | "approved" | "rejected">([
+    ["instagram:post-rejected-yesterday", "rejected"],
+    ["instagram:post-already-approved", "approved"],
+  ]);
+
+  const recurringPosts = [
+    {
+      platform: "instagram",
+      platform_post_id: "post-rejected-yesterday",
+      caption: "Join us this Sunday for our Annual Tree Planting Drive! Bring glove.", // would match fuzzy
+    },
+    {
+      platform: "instagram",
+      platform_post_id: "post-already-approved",
+      caption: "Join us this Sunday for our Annual Tree Planting Drive! Bring glove.", // would match fuzzy
+    },
+    {
+      platform: "instagram",
+      platform_post_id: "post-new-fuzzy",
+      caption: "Join us this Sunday for our Annual Tree Planting Drive! Bring glove.", // new fuzzy match
+    },
+  ];
+
+  let recurringQueued = 0;
+  let recurringDiscarded = 0;
+
+  for (const post of recurringPosts) {
+    const res = matchCaption(post.caption, activeCaptions, approvedVariants);
+    if (res.matched && res.needsReview) {
+      const existingStatus = existingReviewQueue.get(`${post.platform}:${post.platform_post_id}`);
+      if (existingStatus === "rejected") {
+        recurringDiscarded++;
+      } else if (existingStatus === "approved") {
+        // Already handled, do not reopen
+      } else {
+        recurringQueued++;
+      }
+    }
+  }
+
+  assert(recurringQueued === 1, `Expected only 1 new post to be queued, got ${recurringQueued}`);
+  assert(recurringDiscarded === 1, `Expected 1 rejected post to remain discarded, got ${recurringDiscarded}`);
+  console.log("✓ Review Queue State Guard: Rejected items never resurrected to pending on subsequent scrapes");
+
   // ─────────────────────────────────────────────────────────────
   // 4. Metric Delta Calculations
   // ─────────────────────────────────────────────────────────────

@@ -120,7 +120,7 @@ export interface VolunteerProfileData {
 
 import type { DateRangePreset } from "@/lib/utils";
 export type { DateRangePreset };
-import { getDateFilterSince } from "@/lib/utils";
+import { getDateFilterSince, formatDate } from "@/lib/utils";
 
 function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -138,7 +138,7 @@ function coerce(v: number | null | undefined): number {
  * Daily engagement trend: sum of likes + comments per snapshot_date.
  * Reads from post_snapshots joined to posts.
  */
-export async function getDailyEngagementTrend(preset: DateRangePreset = "30d"): Promise<TrendDataPoint[]> {
+export async function getDailyEngagementTrend(preset: DateRangePreset = "today"): Promise<TrendDataPoint[]> {
   const supabase = createServerComponentClient();
   const since = getDateFilterSince(preset);
 
@@ -176,7 +176,7 @@ export async function getDailyEngagementTrend(preset: DateRangePreset = "30d"): 
  * Top 10 posts by total engagement (likes + comments + views) in the selected time range.
  * Reads from post_snapshots (most recent snapshot per post).
  */
-export async function getTopPosts(preset: DateRangePreset = "30d"): Promise<TopPostData[]> {
+export async function getTopPosts(preset: DateRangePreset = "today"): Promise<TopPostData[]> {
   const supabase = createServerComponentClient();
   const since = getDateFilterSince(preset);
 
@@ -232,7 +232,7 @@ export async function getTopPosts(preset: DateRangePreset = "30d"): Promise<TopP
 /**
  * Total engagement (likes, comments, views) summed per volunteer account in the selected time range.
  */
-export async function getVolunteerEngagement(preset: DateRangePreset = "30d"): Promise<VolunteerEngagementData[]> {
+export async function getVolunteerEngagement(preset: DateRangePreset = "today"): Promise<VolunteerEngagementData[]> {
   const supabase = createServerComponentClient();
   const since = getDateFilterSince(preset);
 
@@ -304,7 +304,7 @@ export async function getVolunteerEngagement(preset: DateRangePreset = "30d"): P
  * Daily ranking of the top‑performing volunteer (by total engagement per day) in the selected time range.
  * Returns a simplified single-volunteer ranking series.
  */
-export async function getVolunteerRanking(preset: DateRangePreset = "30d"): Promise<VolunteerRankingPoint[]> {
+export async function getVolunteerRanking(preset: DateRangePreset = "today"): Promise<VolunteerRankingPoint[]> {
   const supabase = createServerComponentClient();
   const since = getDateFilterSince(preset);
 
@@ -359,7 +359,7 @@ export async function getVolunteerRanking(preset: DateRangePreset = "30d"): Prom
 /**
  * Per-account: total posts, likes, comments, views in the selected time range.
  */
-export async function getAccountComparison(preset: DateRangePreset = "30d"): Promise<AccountPerformance[]> {
+export async function getAccountComparison(preset: DateRangePreset = "today"): Promise<AccountPerformance[]> {
   const supabase = createServerComponentClient();
   const since = getDateFilterSince(preset);
 
@@ -440,7 +440,7 @@ export async function getAccountComparison(preset: DateRangePreset = "30d"): Pro
 /**
  * Volunteer Performance Leaderboard for the selected time range.
  */
-export async function getVolunteerLeaderboard(preset: DateRangePreset = "30d"): Promise<LeaderboardEntry[]> {
+export async function getVolunteerLeaderboard(preset: DateRangePreset = "today"): Promise<LeaderboardEntry[]> {
   const supabase = createServerComponentClient();
   const since = getDateFilterSince(preset);
 
@@ -594,7 +594,7 @@ export async function getVolunteerLeaderboard(preset: DateRangePreset = "30d"): 
 /**
  * Real KPI summary aggregated directly from accounts, posts, and post_snapshots for the selected timeframe.
  */
-export async function getKPISummary(preset: DateRangePreset = "30d"): Promise<KPISummary> {
+export async function getKPISummary(preset: DateRangePreset = "today"): Promise<KPISummary> {
   const supabase = createServerComponentClient();
   const since = getDateFilterSince(preset);
 
@@ -656,10 +656,10 @@ export async function getKPISummary(preset: DateRangePreset = "30d"): Promise<KP
  */
 export async function getRecentMonitoredPosts(
   limit = 100,
-  preset?: DateRangePreset
+  preset: DateRangePreset = "today"
 ): Promise<RecentPostItem[]> {
   const supabase = createServerComponentClient();
-  const since = preset ? getDateFilterSince(preset) : null;
+  const since = getDateFilterSince(preset);
 
   let query = supabase
     .from("posts")
@@ -684,7 +684,8 @@ export async function getRecentMonitoredPosts(
     `);
 
   if (since) {
-    query = query.gte("posted_at", `${since}T00:00:00.000Z`);
+    const startOfPeriodIso = new Date(`${since}T00:00:00+05:30`).toISOString();
+    query = query.gte("posted_at", startOfPeriodIso);
   }
 
   const { data, error } = await query
@@ -727,6 +728,10 @@ export async function getRecentMonitoredPosts(
 
 /**
  * Detailed profile & all posts for a single volunteer account.
+ * Always fetches all posts (no date filter at the DB level) so the client
+ * can switch date ranges without a server round-trip.
+ * The preset parameter only controls how aggregated metrics & the timeline
+ * are computed on the server for the initial render.
  */
 export async function getVolunteerDetails(
   rawHandle: string,
@@ -734,6 +739,7 @@ export async function getVolunteerDetails(
 ): Promise<VolunteerProfileData | null> {
   const supabase = createServerComponentClient();
   const cleanHandle = rawHandle.replace(/^@/, "").trim().toLowerCase();
+  // Used only for server-side metrics/timeline aggregation, NOT to filter fetched posts
   const since = preset ? getDateFilterSince(preset) : null;
 
   // 1. Fetch account
@@ -756,8 +762,8 @@ export async function getVolunteerDetails(
     .limit(1)
     .single();
 
-  // 3. Fetch all posts for this account + their snapshots
-  let postsQuery = supabase
+  // 3. Fetch ALL posts for this account + their snapshots (no date filter — client handles filtering)
+  const postsQuery = supabase
     .from("posts")
     .select(`
       id,
@@ -775,10 +781,6 @@ export async function getVolunteerDetails(
       )
     `)
     .eq("account_id", account.id);
-
-  if (since) {
-    postsQuery = postsQuery.gte("posted_at", `${since}T00:00:00.000Z`);
-  }
 
   const { data: rawPosts, error: postsErr } = await postsQuery.order("posted_at", { ascending: false });
 
@@ -818,8 +820,10 @@ export async function getVolunteerDetails(
     totalComments += coerce(comments);
     totalViews += coerce(views);
 
-    // Group engagement by post date for timeline
-    const dateKey = p.posted_at ? p.posted_at.slice(0, 10) : "unknown";
+    // Group engagement by post date for timeline — convert posted_at (UTC) to IST date
+    const dateKey = p.posted_at
+      ? formatDate(new Date(p.posted_at as string))
+      : "unknown";
     if (dateKey !== "unknown" && (!since || dateKey >= since)) {
       const prev = timelineMap.get(dateKey) ?? { likes: 0, comments: 0 };
       timelineMap.set(dateKey, {

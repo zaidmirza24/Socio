@@ -67,6 +67,150 @@ export function normalizeCaption(raw: string | null | undefined): string {
 }
 
 /**
+ * Structured sections of a social media caption.
+ */
+export interface CaptionSections {
+  raw: string;
+  prefix: string;      // Greetings, forward markers, chapter labels
+  body: string;        // The core message body
+  suffix: string;      // Trailing sign-offs, contacts, links, hashtag clusters
+  hashtags: string[];  // All hashtags extracted from the caption
+  cleanBody: string;   // Normalized body stripped of hashtags and extra whitespace
+  wordCount: number;   // Number of words in cleanBody
+}
+
+const GREETING_PATTERN =
+  /^(?:namaste|namaskar|hello|hi|hey|dear|good\s+(?:morning|afternoon|evening)|pranam|jai\s+hind|friends|volunteers|team|all)(?:[!:,.\s-]|$)/i;
+
+const FORWARD_HEADER_PATTERN =
+  /^(?:\*?forwarded(?:\s+message)?\*?|\[\d{1,2}[\/.-]\d{1,2}.*?\]|\bupdate:|\bannouncement:|\bchapter\s+[^:\n]+:|\bdistrict\s+[^:\n]+:)/i;
+
+const SIGNOFF_PATTERN =
+  /^(?:regards|warm\s+regards|thanks|thank\s+you|best\s+wishes|yours\s+truly|signed|volunteer\s+id|contact|call|phone|ph|whatsapp|dm\s+for|reach\s+out\s+at|link\s+in\s+bio|link\s+in\s+story|check\s+bio|swipe\s+up)\b/i;
+
+function isPureHashtagLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (trimmed.length === 0) return false;
+  return trimmed.split(/\s+/).every((w) => w.startsWith("#"));
+}
+
+/**
+ * Counts unicode-aware words in a string.
+ */
+export function countWords(text: string): number {
+  if (!text) return 0;
+  const tokens = text
+    .split(/\s+/)
+    .map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ""))
+    .filter((w) => w.length > 0);
+  return tokens.length;
+}
+
+/**
+ * Segments a normalized social media caption into prefix, core body, suffix, and hashtags.
+ * Handles both multi-line and single-line caption structures.
+ */
+export function segmentCaption(raw: string | null | undefined): CaptionSections {
+  if (!raw || raw.trim().length === 0) {
+    return {
+      raw: "",
+      prefix: "",
+      body: "",
+      suffix: "",
+      hashtags: [],
+      cleanBody: "",
+      wordCount: 0,
+    };
+  }
+
+  const normalized = normalizeCaption(raw);
+  const hashtagMatches = normalized.match(/#[\p{L}\p{N}_]+/gu) || [];
+  const hashtags = Array.from(new Set(hashtagMatches));
+
+  const lines = normalized.split("\n");
+  let prefix = "";
+  let suffix = "";
+  let body = normalized;
+
+  // 1. Multi-line extraction
+  if (lines.length > 1) {
+    let startIndex = 0;
+    let endIndex = lines.length;
+
+    // Scan top prefix lines (greetings, forward banners)
+    while (startIndex < Math.min(2, endIndex - 1)) {
+      const line = lines[startIndex].trim();
+      if (GREETING_PATTERN.test(line) || FORWARD_HEADER_PATTERN.test(line)) {
+        startIndex++;
+      } else {
+        break;
+      }
+    }
+
+    // Scan bottom suffix lines (sign-offs, hashtag lines)
+    while (endIndex > startIndex + 1) {
+      const line = lines[endIndex - 1].trim();
+      if (isPureHashtagLine(line) || SIGNOFF_PATTERN.test(line)) {
+        endIndex--;
+      } else {
+        break;
+      }
+    }
+
+    if (startIndex > 0) {
+      prefix = lines.slice(0, startIndex).join("\n").trim();
+    }
+    if (endIndex < lines.length) {
+      suffix = lines.slice(endIndex).join("\n").trim();
+    }
+    body = lines.slice(startIndex, endIndex).join("\n").trim();
+  }
+
+  // 2. Strip trailing inline hashtag cluster from body
+  const trailingHashtagRegex = /(?:\s*#[\p{L}\p{N}_]+)+$/u;
+  const trailingMatch = body.match(trailingHashtagRegex);
+  if (trailingMatch) {
+    const trailingTags = trailingMatch[0].trim();
+    suffix = suffix ? `${trailingTags}\n${suffix}` : trailingTags;
+    body = body.slice(0, body.length - trailingMatch[0].length).trim();
+  }
+
+  // 3. Strip single-line greeting if prefix is still empty
+  if (!prefix) {
+    const singleLineGreetingRegex =
+      /^((?:namaste|namaskar|hello|hi|hey|dear|good\s+(?:morning|afternoon|evening)|pranam|jai\s+hind)(?:\s+[\p{L}\p{N}_]+){0,3}[!:,.\-])\s+(.+)$/iu;
+    const greetingMatch = body.match(singleLineGreetingRegex);
+    if (greetingMatch && greetingMatch[2].length >= 10) {
+      prefix = greetingMatch[1].trim();
+      body = greetingMatch[2].trim();
+    }
+  }
+
+  // Fallback if stripping leaves body empty
+  if (!body.trim()) {
+    body = normalized;
+  }
+
+  // 4. Clean body: strip remaining inline hashtags and collapse horizontal spaces
+  const cleanBody = body
+    .replace(/#[\p{L}\p{N}_]+/gu, "")
+    .replace(/[^\S\r\n]+/g, " ")
+    .trim();
+
+  const finalCleanBody = cleanBody || body;
+
+  return {
+    raw: normalized,
+    prefix,
+    body,
+    suffix,
+    hashtags,
+    cleanBody: finalCleanBody,
+    wordCount: countWords(finalCleanBody),
+  };
+}
+
+/**
  * Computes the SHA-256 hexadecimal digest of the given string.
  */
 export function computeCaptionHash(normalizedCaption: string): string {

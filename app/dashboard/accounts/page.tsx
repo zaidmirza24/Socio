@@ -23,6 +23,7 @@ import {
   X,
 } from "lucide-react";
 import { TriggerScraperButton } from "@/components/TriggerScraperButton";
+import { formatNumber, formatMetric } from "@/lib/utils";
 
 interface AccountItem {
   id: string;
@@ -513,7 +514,7 @@ export default function AccountsPage() {
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Audience</span>
-          <div className="mt-1 text-2xl font-bold text-slate-900">{totalFollowers.toLocaleString()}</div>
+          <div suppressHydrationWarning className="mt-1 text-2xl font-bold text-slate-900">{formatNumber(totalFollowers)}</div>
         </div>
       </div>
 
@@ -634,8 +635,8 @@ export default function AccountsPage() {
                       </span>
                     </td>
                     <td className="px-6 py-4 text-right font-medium">{account.postsCount}</td>
-                    <td className="px-6 py-4 text-right">
-                      {account.followers !== null ? account.followers.toLocaleString() : "n/a"}
+                    <td suppressHydrationWarning className="px-6 py-4 text-right">
+                      {formatMetric(account.followers)}
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-1.5">

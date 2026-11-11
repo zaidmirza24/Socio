@@ -1,4 +1,10 @@
-import { normalizeCaption, computeCaptionHash } from "./normalizer.ts";
+import {
+  normalizeCaption,
+  computeCaptionHash,
+  segmentCaption,
+  countWords,
+  type CaptionSections,
+} from "./normalizer.ts";
 
 export interface MatchableCaption {
   id: string;
@@ -13,9 +19,16 @@ export interface MatchableVariant {
   variant_hash: string;
 }
 
+export interface AdaptiveThresholdOptions {
+  shortThreshold?: number;  // Default: 0.94 for <= 10 words
+  mediumThreshold?: number; // Default: 0.89 for 11-45 words
+  longThreshold?: number;   // Default: 0.84 for > 45 words
+}
+
 export interface MatchCaptionOptions {
   postedAt?: string | Date | null;
   embargoToleranceHours?: number; // default 48 hours
+  adaptiveThresholds?: AdaptiveThresholdOptions;
 }
 
 export type MatchResult =
@@ -29,6 +42,7 @@ export type MatchResult =
       needsReview: false;
       isAmbiguous?: boolean;
       alternativeCaptionId?: string;
+      matchedSegment?: "full" | "core_body";
     }
   | {
       matched: true;
@@ -51,6 +65,8 @@ export type MatchResult =
       needsReview: true;
       isAmbiguous?: boolean;
       alternativeCaptionId?: string;
+      matchedSegment?: "full" | "core_body" | "paragraph";
+      appliedThreshold?: number;
     }
   | {
       matched: false;
@@ -61,10 +77,30 @@ export type MatchResult =
         | "outside_embargo_window";
       normalizedCaption?: string;
       highestScore?: number;
+      thresholdRequired?: number;
     };
 
 export const FUZZY_SIMILARITY_THRESHOLD = 0.9;
 export const DEFAULT_EMBARGO_TOLERANCE_HOURS = 48;
+
+/**
+ * Calculates adaptive similarity threshold based on canonical caption word count:
+ * - Short (<= 10 words): Stricter threshold (0.94) to prevent false positives from generic personal posts.
+ * - Medium (11-45 words): Standard threshold (0.89) balancing precision and recall.
+ * - Long (> 45 words): Forgiving threshold (0.84) to accommodate partial quoting or bilingual text.
+ */
+export function getAdaptiveThreshold(
+  wordCount: number,
+  options?: AdaptiveThresholdOptions
+): number {
+  if (wordCount <= 10) {
+    return options?.shortThreshold ?? 0.94;
+  }
+  if (wordCount <= 45) {
+    return options?.mediumThreshold ?? 0.89;
+  }
+  return options?.longThreshold ?? 0.84;
+}
 
 /**
  * Calculates Jaro similarity between two strings s1 and s2.
@@ -301,30 +337,96 @@ export function matchCaption(
     };
   }
 
-  // --- Tier 2: Hybrid Fuzzy Matching (Jaro-Winkler + Token Containment) ---
+  // --- Tier 2: Section-Segmented Hybrid Matching with Dynamic/Adaptive Thresholding ---
+  const candidateSections = segmentCaption(normalized);
+
   let bestScore = 0;
   let bestCaption: MatchableCaption | null = null;
+  let bestThreshold = FUZZY_SIMILARITY_THRESHOLD;
+  let bestSegment: "full" | "core_body" | "paragraph" = "full";
+
   let runnerUpScore = 0;
   let runnerUpCaption: MatchableCaption | null = null;
+  let runnerUpThreshold = FUZZY_SIMILARITY_THRESHOLD;
 
   for (const caption of eligibleCaptions) {
-    const score = computeCaptionSimilarity(normalized, caption.normalized_caption);
-    if (score > bestScore) {
+    const canonSections = segmentCaption(caption.normalized_caption);
+    const canonWordCount = canonSections.wordCount || countWords(caption.normalized_caption);
+    const threshold = getAdaptiveThreshold(canonWordCount, options?.adaptiveThresholds);
+
+    // 1. Full-string similarity (Jaro-Winkler + Token Containment)
+    const simFull = computeCaptionSimilarity(normalized, caption.normalized_caption);
+
+    // 2. Section clean-body similarity (comparing core campaign text without greetings/hashtags)
+    const simBody = computeCaptionSimilarity(candidateSections.cleanBody, canonSections.cleanBody);
+
+    // 3. Cross-boundary similarities (candidate core vs full canonical, candidate full vs canonical core)
+    const simCandBodyVsCanon = computeCaptionSimilarity(
+      candidateSections.cleanBody,
+      caption.normalized_caption
+    );
+    const simCandVsCanonBody = computeCaptionSimilarity(
+      normalized,
+      canonSections.cleanBody
+    );
+
+    let pairScore = Math.max(simFull, simBody, simCandBodyVsCanon, simCandVsCanonBody);
+    let pairSegment: "full" | "core_body" | "paragraph" =
+      pairScore === simBody || pairScore === simCandBodyVsCanon || pairScore === simCandVsCanonBody
+        ? "core_body"
+        : "full";
+
+    // 4. Exact Core Body Match Boost:
+    // If volunteer copied the exact campaign text but wrapped it in personal greetings and hashtags
+    if (
+      candidateSections.cleanBody === canonSections.cleanBody &&
+      canonSections.cleanBody.length >= 15
+    ) {
+      if (pairScore < 0.99) {
+        pairScore = 0.99;
+        pairSegment = "core_body";
+      }
+    }
+
+    // 5. Long Caption Paragraph Containment (> 45 words):
+    // If canonical is a multi-paragraph campaign statement, check if any major paragraph matches
+    if (canonWordCount > 45) {
+      const paragraphs = caption.normalized_caption.split(/\n\n+/);
+      for (const p of paragraphs) {
+        if (countWords(p) >= 12) {
+          const pScore = Math.max(
+            computeCaptionSimilarity(candidateSections.cleanBody, p),
+            computeCaptionSimilarity(normalized, p)
+          );
+          if (pScore > pairScore) {
+            pairScore = pScore;
+            pairSegment = "paragraph";
+          }
+        }
+      }
+    }
+
+    if (pairScore > bestScore) {
       runnerUpScore = bestScore;
       runnerUpCaption = bestCaption;
-      bestScore = score;
+      runnerUpThreshold = bestThreshold;
+
+      bestScore = pairScore;
       bestCaption = caption;
-    } else if (score > runnerUpScore) {
-      runnerUpScore = score;
+      bestThreshold = threshold;
+      bestSegment = pairSegment;
+    } else if (pairScore > runnerUpScore) {
+      runnerUpScore = pairScore;
       runnerUpCaption = caption;
+      runnerUpThreshold = threshold;
     }
   }
 
-  if (bestCaption && bestScore >= FUZZY_SIMILARITY_THRESHOLD) {
+  if (bestCaption && bestScore >= bestThreshold) {
     const roundedConfidence = Math.round(bestScore * 10000) / 10000;
     const isAmbiguous =
       runnerUpCaption !== null &&
-      runnerUpScore >= FUZZY_SIMILARITY_THRESHOLD &&
+      runnerUpScore >= runnerUpThreshold &&
       bestScore - runnerUpScore < 0.05;
 
     return {
@@ -337,6 +439,8 @@ export function matchCaption(
       needsReview: true,
       isAmbiguous,
       alternativeCaptionId: isAmbiguous && runnerUpCaption ? runnerUpCaption.id : undefined,
+      matchedSegment: bestSegment,
+      appliedThreshold: bestThreshold,
     };
   }
 
@@ -345,5 +449,6 @@ export function matchCaption(
     reason: "below_similarity_threshold",
     normalizedCaption: normalized,
     highestScore: Math.round(bestScore * 10000) / 10000,
+    thresholdRequired: bestThreshold,
   };
 }

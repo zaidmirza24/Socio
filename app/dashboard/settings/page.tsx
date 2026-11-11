@@ -18,6 +18,7 @@ import {
   Mail,
   User,
 } from "lucide-react";
+import { formatDisplayDate } from "@/lib/utils";
 
 interface TestResult {
   success: boolean;
@@ -325,8 +326,8 @@ export default function SettingsPage() {
                             {member.role}
                           </span>
                         </td>
-                        <td className="px-4 py-3 text-xs text-slate-500">
-                          {new Date(member.created_at).toLocaleDateString()}
+                        <td suppressHydrationWarning className="px-4 py-3 text-xs text-slate-500">
+                          {formatDisplayDate(member.created_at)}
                         </td>
                         <td className="px-4 py-3 text-right">
                           {member.id !== currentUser?.id && (

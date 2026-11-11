@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { computeWordDiff } from "@/lib/matching/diff";
 import type { ReviewQueueDisplayItem } from "@/lib/supabase/reviews";
+import { formatDisplayDateTime } from "@/lib/utils";
 
 interface CaptionDiffModalProps {
   item: ReviewQueueDisplayItem | null;
@@ -78,8 +79,8 @@ export function CaptionDiffModal({
             <span>
               <strong>Platform:</strong> {item.platform.toUpperCase()}
             </span>
-            <span>
-              <strong>Detected:</strong> {new Date(item.createdAt).toLocaleString()}
+            <span suppressHydrationWarning>
+              <strong>Detected:</strong> {formatDisplayDateTime(item.createdAt)}
             </span>
           </div>
 
