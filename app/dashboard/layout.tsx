@@ -1,16 +1,7 @@
-import Link from "next/link";
-import { 
-  BarChart3, 
-  Users, 
-  Layers, 
-  Activity, 
-  Settings,
-  PlayCircle,
-  FileText,
-  CheckSquare
-} from "lucide-react";
-import { TriggerScraperButton } from "@/components/TriggerScraperButton";
+import { SidebarNav } from "@/components/dashboard/SidebarNav";
+import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { SignOutButton } from "@/components/SignOutButton";
+import { ShieldCheck, Activity } from "lucide-react";
 
 export default function DashboardLayout({
   children,
@@ -18,109 +9,66 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex min-h-screen">
-      {/* Sidebar Navigation */}
-      <aside className="w-64 border-r border-slate-200 bg-white flex flex-col justify-between shrink-0">
-        <div>
-          <div className="flex items-center gap-3 px-6 py-5 border-b border-slate-200">
-            <div className="h-8 w-8 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold text-sm">
+    <div className="flex min-h-screen bg-slate-50 antialiased selection:bg-blue-100 selection:text-blue-900">
+      {/* Sidebar Navigation (Desktop) */}
+      <aside className="hidden lg:flex w-64 border-r border-slate-200/90 bg-white flex-col justify-between shrink-0 sticky top-0 h-screen z-40">
+        <div className="overflow-y-auto">
+          {/* Brand Header */}
+          <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-200/80 bg-slate-50/50">
+            <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white font-bold text-base shadow-sm shadow-blue-500/20">
               S
             </div>
-            <div>
-              <span className="font-semibold text-slate-900 text-sm block">Socio Monitor</span>
-              <span className="text-xs text-slate-400">Instagram Campaign</span>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="font-bold text-slate-900 text-sm tracking-tight truncate">
+                  Socio Monitor
+                </span>
+                <span className="text-[10px] font-semibold bg-blue-100 text-blue-700 px-1.5 py-0.2 rounded-full">
+                  v2.0
+                </span>
+              </div>
+              <span className="text-[11px] text-slate-400 block truncate">
+                Instagram Campaign Intel
+              </span>
             </div>
           </div>
 
-          <nav className="p-4 space-y-1">
-            <Link
-              href="/dashboard"
-              className="flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition"
-            >
-              <BarChart3 className="h-4 w-4" />
-              Matrix &amp; Overview
-            </Link>
-
-            <Link
-              href="/dashboard/captions"
-              className="flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition"
-            >
-              <FileText className="h-4 w-4" />
-              Campaign Captions
-            </Link>
-
-            <Link
-              href="/dashboard/review"
-              className="flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition"
-            >
-              <CheckSquare className="h-4 w-4" />
-              Review Queue
-            </Link>
-
-            <Link
-              href="/dashboard/accounts"
-              className="flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition"
-            >
-              <Users className="h-4 w-4" />
-              Accounts
-            </Link>
-
-            <Link
-              href="/dashboard/posts"
-              className="flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition"
-            >
-              <Layers className="h-4 w-4" />
-              Recent Posts
-            </Link>
-
-            <Link
-              href="/dashboard/health"
-              className="flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition"
-            >
-              <Activity className="h-4 w-4" />
-              System Health
-            </Link>
-
-            <Link
-              href="/dashboard/settings"
-              className="flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition"
-            >
-              <Settings className="h-4 w-4" />
-              Settings
-            </Link>
-          </nav>
+          {/* Grouped Sidebar Navigation */}
+          <SidebarNav />
         </div>
 
-        <div className="p-4 border-t border-slate-200 space-y-3">
-          <div className="flex items-center gap-2 text-xs text-blue-700 bg-blue-50 px-3 py-2 rounded-md border border-blue-200 font-medium">
-            <PlayCircle className="h-4 w-4 text-blue-600 shrink-0" />
-            <span>UI On-Demand Mode</span>
+        {/* Sidebar Footer */}
+        <div className="p-4 border-t border-slate-200/80 bg-slate-50/40 space-y-3">
+          <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-white border border-slate-200/80 shadow-xs">
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+              <span className="text-[11px] font-medium text-slate-700">Cluster Status</span>
+            </div>
+            <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200/60">
+              Healthy
+            </span>
           </div>
-          
+
           <SignOutButton variant="sidebar" />
 
-          <div className="text-[11px] text-slate-400 text-center">
-            Private Vercel Cloud Build
+          <div className="flex items-center justify-center gap-1.5 text-[10px] text-slate-400">
+            <ShieldCheck className="h-3 w-3 text-slate-400" />
+            <span>Private Vercel Cloud Build</span>
           </div>
         </div>
       </aside>
 
       {/* Main Content Area */}
-      <main className="flex-1 bg-slate-50 flex flex-col min-w-0">
-        <header className="h-16 border-b border-slate-200 bg-white px-8 flex items-center justify-between shrink-0">
-          <h2 className="text-base font-semibold text-slate-800">
-            Social Media Engagement Monitoring
-          </h2>
-          <div className="flex items-center gap-3">
-            <TriggerScraperButton />
-            <SignOutButton variant="header" />
-          </div>
-        </header>
+      <div className="flex-1 flex flex-col min-w-0">
+        <DashboardHeader />
 
-        <div className="p-8 flex-1 overflow-auto">
+        <main className="flex-1 p-6 lg:p-8 overflow-y-auto">
           {children}
-        </div>
-      </main>
+        </main>
+      </div>
     </div>
   );
 }

@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Users,
   Layers,
@@ -116,7 +117,28 @@ export function CampaignAnalyticsView({
   kpi,
   recentPosts,
 }: CampaignAnalyticsViewProps) {
-  const [activeTab, setActiveTab] = useState<ActiveTab>("overview");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const tabParam = searchParams.get("tab");
+  const initialTab: ActiveTab =
+    tabParam === "volunteers" || tabParam === "content" ? tabParam : "overview";
+
+  const [activeTab, setActiveTab] = useState<ActiveTab>(initialTab);
+
+  useEffect(() => {
+    if (tabParam === "volunteers" || tabParam === "content" || tabParam === "overview") {
+      setActiveTab(tabParam);
+    }
+  }, [tabParam]);
+
+  const handleSubtabSelect = (subtab: ActiveTab) => {
+    setActiveTab(subtab);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("view", "analytics");
+    params.set("tab", subtab);
+    router.replace(`/dashboard?${params.toString()}`, { scroll: false });
+  };
+
   const [trendMetric, setTrendMetric] = useState<MetricFilter>("all");
   const [searchVolunteer, setSearchVolunteer] = useState("");
   const [sortLeaderboardBy, setSortLeaderboardBy] = useState<
@@ -238,7 +260,7 @@ export function CampaignAnalyticsView({
       <div className="flex border-b border-slate-200">
         <nav className="-mb-px flex space-x-6" aria-label="Tabs">
           <button
-            onClick={() => setActiveTab("overview")}
+            onClick={() => handleSubtabSelect("overview")}
             className={`flex items-center gap-2 pb-3 pt-1 text-sm font-medium border-b-2 transition-colors cursor-pointer ${
               activeTab === "overview"
                 ? "border-blue-600 text-blue-600"
@@ -250,7 +272,7 @@ export function CampaignAnalyticsView({
           </button>
 
           <button
-            onClick={() => setActiveTab("volunteers")}
+            onClick={() => handleSubtabSelect("volunteers")}
             className={`flex items-center gap-2 pb-3 pt-1 text-sm font-medium border-b-2 transition-colors cursor-pointer ${
               activeTab === "volunteers"
                 ? "border-blue-600 text-blue-600"
@@ -271,7 +293,7 @@ export function CampaignAnalyticsView({
           </button>
 
           <button
-            onClick={() => setActiveTab("content")}
+            onClick={() => handleSubtabSelect("content")}
             className={`flex items-center gap-2 pb-3 pt-1 text-sm font-medium border-b-2 transition-colors cursor-pointer ${
               activeTab === "content"
                 ? "border-blue-600 text-blue-600"
@@ -390,7 +412,7 @@ export function CampaignAnalyticsView({
                 <p className="truncate text-sm font-bold text-slate-900">
                   {topVolunteer ? (
                     <Link
-                      href={`/dashboard/volunteers/${topVolunteer.handle}`}
+                      href={`/dashboard/volunteers/${topVolunteer.handle}?from=leaderboard`}
                       className="hover:underline"
                     >
                       @{topVolunteer.handle} ({topVolunteer.volunteerName})
@@ -552,7 +574,7 @@ export function CampaignAnalyticsView({
                 </div>
                 <div className="mt-3">
                   <Link
-                    href={`/dashboard/volunteers/${leaderboard[0].handle}`}
+                    href={`/dashboard/volunteers/${leaderboard[0].handle}?from=leaderboard`}
                     className="text-base font-bold text-slate-900 hover:text-blue-600 hover:underline block truncate"
                   >
                     {leaderboard[0].volunteerName}
@@ -585,7 +607,7 @@ export function CampaignAnalyticsView({
                 </div>
                 <div className="mt-3">
                   <Link
-                    href={`/dashboard/volunteers/${leaderboard[1].handle}`}
+                    href={`/dashboard/volunteers/${leaderboard[1].handle}?from=leaderboard`}
                     className="text-base font-bold text-slate-900 hover:text-blue-600 hover:underline block truncate"
                   >
                     {leaderboard[1].volunteerName}
@@ -618,7 +640,7 @@ export function CampaignAnalyticsView({
                 </div>
                 <div className="mt-3">
                   <Link
-                    href={`/dashboard/volunteers/${leaderboard[2].handle}`}
+                    href={`/dashboard/volunteers/${leaderboard[2].handle}?from=leaderboard`}
                     className="text-base font-bold text-slate-900 hover:text-blue-600 hover:underline block truncate"
                   >
                     {leaderboard[2].volunteerName}
@@ -749,7 +771,7 @@ export function CampaignAnalyticsView({
                             <td className="px-5 py-3.5">
                               <div className="font-semibold text-slate-900">
                                 <Link
-                                  href={`/dashboard/volunteers/${item.handle}`}
+                                  href={`/dashboard/volunteers/${item.handle}?from=leaderboard`}
                                   className="hover:text-blue-600 hover:underline"
                                 >
                                   {item.volunteerName}
@@ -787,7 +809,7 @@ export function CampaignAnalyticsView({
                             </td>
                             <td className="px-5 py-3.5 text-right">
                               <Link
-                                href={`/dashboard/volunteers/${item.handle}`}
+                                href={`/dashboard/volunteers/${item.handle}?from=leaderboard`}
                                 className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 hover:text-blue-600 transition"
                               >
                                 View
@@ -881,7 +903,7 @@ export function CampaignAnalyticsView({
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <Link
-                            href={`/dashboard/volunteers/${post.handle}`}
+                            href={`/dashboard/volunteers/${post.handle}?from=leaderboard`}
                             className="font-bold text-slate-900 hover:text-blue-600 hover:underline block truncate text-sm"
                           >
                             @{post.handle}

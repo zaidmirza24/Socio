@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "clean-db": "node scripts/clean-db.mjs",
+    "seed-demo": "node scripts/seed-demo-data.mjs",
     "test": "node --no-warnings --experimental-strip-types tests/instagram.test.ts && node --no-warnings --experimental-strip-types tests/matching.test.ts && node --no-warnings --experimental-strip-types tests/ingestion.test.ts && node --no-warnings --experimental-strip-types tests/diff.test.ts && node --no-warnings --experimental-strip-types tests/politicians_public_accounts.test.ts",
     "test:politicians": "node --no-warnings --experimental-strip-types tests/politicians_public_accounts.test.ts",
     "test:bulk": "node --no-warnings --experimental-strip-types tests/bulk_captions.test.ts",

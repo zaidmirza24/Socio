@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   ExternalLink,
@@ -19,6 +20,9 @@ import {
   Calendar,
   Sparkles,
   Share2,
+  Grid,
+  BarChart3,
+  Users,
 } from "lucide-react";
 import { formatMetric, formatNumber, formatDate, getDateFilterSince } from "@/lib/utils";
 import { EngagementTrendChart } from "@/components/charts/EngagementTrendChart";
@@ -32,6 +36,9 @@ interface VolunteerDetailViewProps {
 
 export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerDetailViewProps) {
   const { account, metrics: defaultMetrics, timeline: defaultTimeline, posts } = data;
+  const searchParams = useSearchParams();
+  const fromSource = searchParams?.get("from");
+  const isFromMatrix = fromSource === "matrix";
 
   const [dateFilter, setDateFilter] = useState<DateRangePreset>(initialRange);
   const [copiedLink, setCopiedLink] = useState<string | null>(null);
@@ -129,19 +136,72 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
 
   return (
     <div className="space-y-6">
-      {/* ── Breadcrumb & Back button ── */}
-      <div className="flex items-center gap-3 text-sm text-slate-500">
-        <Link
-          href="/dashboard"
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 font-medium hover:bg-slate-50 transition"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to Dashboard
-        </Link>
-        <span>/</span>
-        <span>Volunteers</span>
-        <span>/</span>
-        <span className="font-semibold text-slate-900">@{account.handle}</span>
+      {/* ── Drill-Down Breadcrumb & Navigation Bar ── */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+        <div className="flex flex-wrap items-center gap-2 text-slate-500">
+          {/* Primary Back Button */}
+          <Link
+            href={
+              isFromMatrix
+                ? "/dashboard?view=matrix"
+                : "/dashboard?view=analytics&tab=volunteers"
+            }
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border border-slate-200 bg-white text-slate-800 font-bold hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 shadow-xs transition"
+          >
+            <ArrowLeft className="h-3.5 w-3.5 text-blue-600" />
+            <span>
+              {isFromMatrix
+                ? "Back to Matrix"
+                : "Back to Volunteer Leaderboard"}
+            </span>
+          </Link>
+
+          <span className="text-slate-300">/</span>
+
+          <Link
+            href="/dashboard?view=analytics&tab=volunteers"
+            className="text-slate-600 hover:text-blue-600 font-medium transition"
+          >
+            Leaderboard
+          </Link>
+
+          <span className="text-slate-300">/</span>
+
+          <span className="font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded-md">
+            @{account.handle}
+          </span>
+        </div>
+
+        {/* Secondary Drilling Shortcuts */}
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          {!isFromMatrix ? (
+            <Link
+              href="/dashboard?view=matrix"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50/80 hover:bg-white text-slate-600 hover:text-blue-600 text-xs font-semibold transition"
+              title="View this volunteer's post cells across active campaigns in the Matrix"
+            >
+              <Grid className="h-3.5 w-3.5 text-slate-400" />
+              <span>View in Matrix</span>
+            </Link>
+          ) : (
+            <Link
+              href="/dashboard?view=analytics&tab=volunteers"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50/80 hover:bg-white text-slate-600 hover:text-blue-600 text-xs font-semibold transition"
+              title="View ranking and comparison in Volunteer Leaderboard"
+            >
+              <BarChart3 className="h-3.5 w-3.5 text-slate-400" />
+              <span>View Leaderboard</span>
+            </Link>
+          )}
+
+          <Link
+            href="/dashboard/accounts"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50/80 hover:bg-white text-slate-600 hover:text-blue-600 text-xs font-semibold transition"
+          >
+            <Users className="h-3.5 w-3.5 text-slate-400" />
+            <span>Directory</span>
+          </Link>
+        </div>
       </div>
 
       {/* ── Volunteer Profile Header ── */}

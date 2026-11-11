@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Settings,
   Database,
@@ -69,8 +69,23 @@ export default function SettingsPage() {
   const [userFormError, setUserFormError] = useState<string | null>(null);
   const [userFormSuccess, setUserFormSuccess] = useState<string | null>(null);
 
+  const fetchTeamMembers = useCallback(async () => {
+    setLoadingMembers(true);
+    try {
+      const res = await fetch("/api/admin/users");
+      if (res.ok) {
+        const data = await res.json();
+        setTeamMembers(data.users || []);
+      }
+    } catch {
+      // Ignored
+    } finally {
+      setLoadingMembers(false);
+    }
+  }, []);
+
   // Fetch current user and role
-  const fetchCurrentUser = async () => {
+  const fetchCurrentUser = useCallback(async () => {
     setLoadingUser(true);
     try {
       const res = await fetch("/api/auth/me");
@@ -96,26 +111,11 @@ export default function SettingsPage() {
     } finally {
       setLoadingUser(false);
     }
-  };
-
-  const fetchTeamMembers = async () => {
-    setLoadingMembers(true);
-    try {
-      const res = await fetch("/api/admin/users");
-      if (res.ok) {
-        const data = await res.json();
-        setTeamMembers(data.users || []);
-      }
-    } catch {
-      // Ignored
-    } finally {
-      setLoadingMembers(false);
-    }
-  };
+  }, [fetchTeamMembers]);
 
   useEffect(() => {
     fetchCurrentUser();
-  }, []);
+  }, [fetchCurrentUser]);
 
   const handleTestConnections = async () => {
     setTesting(true);

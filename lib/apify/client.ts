@@ -63,6 +63,9 @@ export function verifyWebhookSecret(receivedSecret: string | null | undefined): 
     return false;
   }
   const expectedSecret = getServerEnv().APIFY_WEBHOOK_SECRET;
+  if (!expectedSecret || isPlaceholder(expectedSecret)) {
+    return false;
+  }
   return receivedSecret === expectedSecret;
 }
 

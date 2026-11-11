@@ -30,11 +30,22 @@ export function CaptionDiffModal({
   onReject,
   isProcessing,
 }: CaptionDiffModalProps) {
-  if (!isOpen || !item) return null;
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isOpen && !isProcessing) {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, isProcessing, onClose]);
 
   const { originalTokens, modifiedTokens } = useMemo(() => {
+    if (!item) return { originalTokens: [], modifiedTokens: [] };
     return computeWordDiff(item.canonicalCaption, item.candidateCaption);
-  }, [item.canonicalCaption, item.candidateCaption]);
+  }, [item]);
+
+  if (!isOpen || !item) return null;
 
   const similarityPercent = Math.round(item.similarityScore * 100);
 
@@ -129,7 +140,7 @@ export function CaptionDiffModal({
           <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm flex flex-col">
             <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-100">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-700">
-                Volunteer's Actual Post Caption
+                Volunteer&apos;s Actual Post Caption
               </span>
               <span className="text-[11px] text-emerald-600 font-medium">
                 Additions in Green

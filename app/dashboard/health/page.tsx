@@ -186,7 +186,7 @@ export default function SystemHealthPage() {
               <Clock className="h-9 w-9 mx-auto mb-2 text-slate-300" />
               <p className="text-sm font-medium text-slate-600">No scraper runs found for this time period</p>
               <p className="text-xs text-slate-400 mt-1">
-                Try selecting "All Time" or click "Run Scraper Now" above to trigger a fresh run.
+                Try selecting &quot;All Time&quot; or click &quot;Run Scraper Now&quot; above to trigger a fresh run.
               </p>
             </div>
           ) : (

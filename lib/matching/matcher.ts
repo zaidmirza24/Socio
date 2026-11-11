@@ -258,6 +258,31 @@ export function computeCaptionSimilarity(
 }
 
 /**
+ * Extracts and cleans URLs for security and integrity verification.
+ * Compares hostname and pathname (case-insensitive, trailing slash trimmed).
+ */
+export function extractCleanUrls(text: string): string[] {
+  const matches = text.match(/https?:\/\/[^\s]+/gi) || [];
+  return matches.map((u) => {
+    const clean = u.replace(/[.,!?:;)\]'"]+$/, "");
+    try {
+      const parsed = new URL(clean);
+      return (parsed.hostname + parsed.pathname).toLowerCase().replace(/\/+$/, "");
+    } catch {
+      return clean.toLowerCase().replace(/\/+$/, "");
+    }
+  });
+}
+
+export function urlsMatch(textA: string, textB: string): boolean {
+  const urlsA = extractCleanUrls(textA);
+  const urlsB = extractCleanUrls(textB);
+  if (urlsA.length === 0 && urlsB.length === 0) return true;
+  if (urlsA.length !== urlsB.length) return false;
+  return urlsA.every((u, i) => u === urlsB[i]);
+}
+
+/**
  * Executes the two-tier caption matching pipeline:
  * - Tier 1A: Exact Normalized-Caption Hash match (SHA-256)
  * - Tier 1B: Exact Hash match against approved variants
@@ -309,7 +334,7 @@ export function matchCaption(
 
   // --- Tier 1A: Exact hash match against active canonical captions ---
   const exactMatch = eligibleCaptions.find((c) => c.caption_hash === hash);
-  if (exactMatch) {
+  if (exactMatch && urlsMatch(rawCaption, exactMatch.canonical_caption)) {
     return {
       matched: true,
       tier: "tier1_exact",
@@ -327,15 +352,18 @@ export function matchCaption(
     (v) => v.variant_hash === hash && eligibleCaptionIds.has(v.caption_id)
   );
   if (variantMatch) {
-    return {
-      matched: true,
-      tier: "manual_approved",
-      confidence: 1.0,
-      captionId: variantMatch.caption_id,
-      normalizedCaption: normalized,
-      captionHash: hash,
-      needsReview: false,
-    };
+    const parentCap = eligibleCaptions.find((c) => c.id === variantMatch.caption_id);
+    if (!parentCap || urlsMatch(rawCaption, parentCap.canonical_caption)) {
+      return {
+        matched: true,
+        tier: "manual_approved",
+        confidence: 1.0,
+        captionId: variantMatch.caption_id,
+        normalizedCaption: normalized,
+        captionHash: hash,
+        needsReview: false,
+      };
+    }
   }
 
   // --- Tier 1C: Exact Semantic Content Match (Punctuation & Newline Tolerant) ---
@@ -348,7 +376,7 @@ export function matchCaption(
     const contentMatch = eligibleCaptions.find(
       (c) => normalizeContentText(c.normalized_caption) === candidateContent
     );
-    if (contentMatch) {
+    if (contentMatch && urlsMatch(rawCaption, contentMatch.canonical_caption)) {
       return {
         matched: true,
         tier: "tier1_exact",
