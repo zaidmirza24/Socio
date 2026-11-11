@@ -196,6 +196,171 @@ export async function createCampaignCaption(input: {
   };
 }
 
+export interface BulkCaptionInputItem {
+  title: string;
+  canonicalCaption: string;
+  releasedAt?: string;
+}
+
+export interface BulkCaptionResult {
+  success: boolean;
+  error?: string;
+  totalSubmitted: number;
+  insertedCount: number;
+  skippedDuplicatesCount: number;
+  insertedCaptions: CampaignCaption[];
+}
+
+/**
+ * Creates and registers multiple official campaign captions in a single atomic batch.
+ * - Deduplicates within the incoming batch
+ * - Queries existing database hashes in a single query
+ * - Skips already-registered captions without failing the whole batch
+ * - Performs a single batch insert for all unique valid captions
+ */
+export async function createCampaignCaptionsBulk(
+  items: BulkCaptionInputItem[]
+): Promise<BulkCaptionResult> {
+  const auth = await verifyAdminCaller();
+  if (!auth.authorized) {
+    return {
+      success: false,
+      error: auth.error,
+      totalSubmitted: items.length,
+      insertedCount: 0,
+      skippedDuplicatesCount: 0,
+      insertedCaptions: [],
+    };
+  }
+
+  if (!items || items.length === 0) {
+    return {
+      success: false,
+      error: "No captions provided for bulk registration.",
+      totalSubmitted: 0,
+      insertedCount: 0,
+      skippedDuplicatesCount: 0,
+      insertedCaptions: [],
+    };
+  }
+
+  const supabase = createAdminClient();
+
+  // 1. Process, normalize, and hash all items; deduplicate in-memory within batch
+  const processedItems: Array<{
+    title: string;
+    canonical_caption: string;
+    normalized_caption: string;
+    caption_hash: string;
+    released_at: string;
+    status: string;
+  }> = [];
+
+  const batchSeenHashes = new Set<string>();
+  let internalDuplicateCount = 0;
+
+  for (const item of items) {
+    const title = (item.title || "").trim();
+    const rawCaption = (item.canonicalCaption || "").trim();
+
+    if (!title || !rawCaption) continue;
+
+    const { normalized, hash } = processCaption(rawCaption);
+
+    if (batchSeenHashes.has(hash)) {
+      internalDuplicateCount++;
+      continue;
+    }
+    batchSeenHashes.add(hash);
+
+    const releasedAt = item.releasedAt
+      ? new Date(item.releasedAt).toISOString()
+      : new Date().toISOString();
+
+    processedItems.push({
+      title,
+      canonical_caption: rawCaption,
+      normalized_caption: normalized,
+      caption_hash: hash,
+      released_at: releasedAt,
+      status: "active",
+    });
+  }
+
+  if (processedItems.length === 0) {
+    return {
+      success: false,
+      error: "All provided captions were empty or invalid.",
+      totalSubmitted: items.length,
+      insertedCount: 0,
+      skippedDuplicatesCount: internalDuplicateCount,
+      insertedCaptions: [],
+    };
+  }
+
+  // 2. Query existing database hashes in a single operation
+  const allHashes = processedItems.map((p) => p.caption_hash);
+  const { data: existingRows, error: checkError } = await supabase
+    .from("campaign_captions")
+    .select("caption_hash")
+    .in("caption_hash", allHashes);
+
+  if (checkError) {
+    return {
+      success: false,
+      error: `Database check error: ${checkError.message}`,
+      totalSubmitted: items.length,
+      insertedCount: 0,
+      skippedDuplicatesCount: 0,
+      insertedCaptions: [],
+    };
+  }
+
+  const existingHashSet = new Set((existingRows || []).map((r) => r.caption_hash));
+  const newItemsToInsert = processedItems.filter((p) => !existingHashSet.has(p.caption_hash));
+  const dbDuplicateCount = processedItems.length - newItemsToInsert.length;
+  const totalSkipped = internalDuplicateCount + dbDuplicateCount;
+
+  if (newItemsToInsert.length === 0) {
+    return {
+      success: true,
+      error: "All submitted captions are already registered in the database.",
+      totalSubmitted: items.length,
+      insertedCount: 0,
+      skippedDuplicatesCount: totalSkipped,
+      insertedCaptions: [],
+    };
+  }
+
+  // 3. Perform atomic batch insert
+  const { data: insertedRecords, error: insertError } = await supabase
+    .from("campaign_captions")
+    .insert(newItemsToInsert)
+    .select();
+
+  if (insertError) {
+    return {
+      success: false,
+      error: `Database insert error: ${insertError.message}`,
+      totalSubmitted: items.length,
+      insertedCount: 0,
+      skippedDuplicatesCount: totalSkipped,
+      insertedCaptions: [],
+    };
+  }
+
+  revalidatePath("/dashboard/captions");
+  revalidatePath("/dashboard");
+
+  return {
+    success: true,
+    totalSubmitted: items.length,
+    insertedCount: insertedRecords?.length || newItemsToInsert.length,
+    skippedDuplicatesCount: totalSkipped,
+    insertedCaptions: (insertedRecords as CampaignCaption[]) || [],
+  };
+}
+
 /**
  * Updates status of a campaign caption (e.g. 'archived' or 'active').
  */

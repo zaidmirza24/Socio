@@ -80,13 +80,13 @@ export interface CaptionSections {
 }
 
 const GREETING_PATTERN =
-  /^(?:namaste|namaskar|hello|hi|hey|dear|good\s+(?:morning|afternoon|evening)|pranam|jai\s+hind|friends|volunteers|team|all)(?:[!:,.\s-]|$)/i;
+  /^(?:namaste|namaskar|hello|hi|hey|dear|good\s+(?:morning|afternoon|evening)|pranam|jai\s+hind|friends|volunteers|team|all|नमस्ते|नमस्कार|प्रणाम|जय\s+हि(?:न्द|ंद)|साथियों|मित्रों)(?:[!:,.\s\u0964\u0965-]|$)/iu;
 
 const FORWARD_HEADER_PATTERN =
   /^(?:\*?forwarded(?:\s+message)?\*?|\[\d{1,2}[\/.-]\d{1,2}.*?\]|\bupdate:|\bannouncement:|\bchapter\s+[^:\n]+:|\bdistrict\s+[^:\n]+:)/i;
 
 const SIGNOFF_PATTERN =
-  /^(?:regards|warm\s+regards|thanks|thank\s+you|best\s+wishes|yours\s+truly|signed|volunteer\s+id|contact|call|phone|ph|whatsapp|dm\s+for|reach\s+out\s+at|link\s+in\s+bio|link\s+in\s+story|check\s+bio|swipe\s+up)\b/i;
+  /^(?:regards|warm\s+regards|thanks|thank\s+you|best\s+wishes|yours\s+truly|signed|volunteer\s+id|contact|call|phone|ph|whatsapp|dm\s+for|reach\s+out\s+at|link\s+in\s+bio|link\s+in\s+story|check\s+bio|swipe\s+up|धन्यवाद|सादर|शुभकामनाएं)\b/iu;
 
 function isPureHashtagLine(line: string): boolean {
   const trimmed = line.trim();
@@ -95,20 +95,20 @@ function isPureHashtagLine(line: string): boolean {
 }
 
 /**
- * Counts unicode-aware words in a string.
+ * Counts unicode-aware words in a string, preserving Devanagari / Indic marks (\p{M}).
  */
 export function countWords(text: string): number {
   if (!text) return 0;
   const tokens = text
     .split(/\s+/)
-    .map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ""))
+    .map((w) => w.replace(/^[^\p{L}\p{M}\p{N}]+|[^\p{L}\p{M}\p{N}]+$/gu, ""))
     .filter((w) => w.length > 0);
   return tokens.length;
 }
 
 /**
  * Segments a normalized social media caption into prefix, core body, suffix, and hashtags.
- * Handles both multi-line and single-line caption structures.
+ * Handles both multi-line and single-line caption structures across English, Hindi, and regional scripts.
  */
 export function segmentCaption(raw: string | null | undefined): CaptionSections {
   if (!raw || raw.trim().length === 0) {
@@ -124,7 +124,7 @@ export function segmentCaption(raw: string | null | undefined): CaptionSections 
   }
 
   const normalized = normalizeCaption(raw);
-  const hashtagMatches = normalized.match(/#[\p{L}\p{N}_]+/gu) || [];
+  const hashtagMatches = normalized.match(/#[\p{L}\p{M}\p{N}_]+/gu) || [];
   const hashtags = Array.from(new Set(hashtagMatches));
 
   const lines = normalized.split("\n");
@@ -167,7 +167,7 @@ export function segmentCaption(raw: string | null | undefined): CaptionSections 
   }
 
   // 2. Strip trailing inline hashtag cluster from body
-  const trailingHashtagRegex = /(?:\s*#[\p{L}\p{N}_]+)+$/u;
+  const trailingHashtagRegex = /(?:\s*#[\p{L}\p{M}\p{N}_]+)+$/u;
   const trailingMatch = body.match(trailingHashtagRegex);
   if (trailingMatch) {
     const trailingTags = trailingMatch[0].trim();
@@ -178,7 +178,7 @@ export function segmentCaption(raw: string | null | undefined): CaptionSections 
   // 3. Strip single-line greeting if prefix is still empty
   if (!prefix) {
     const singleLineGreetingRegex =
-      /^((?:namaste|namaskar|hello|hi|hey|dear|good\s+(?:morning|afternoon|evening)|pranam|jai\s+hind)(?:\s+[\p{L}\p{N}_]+){0,3}[!:,.\-])\s+(.+)$/iu;
+      /^((?:namaste|namaskar|hello|hi|hey|dear|good\s+(?:morning|afternoon|evening)|pranam|jai\s+hind|नमस्ते|नमस्कार|प्रणाम|जय\s+हि(?:न्द|ंद)|साथियों|मित्रों)(?:\s+[\p{L}\p{M}\p{N}_]+){0,3}[!:,.\u0964\u0965\-])\s+(.+)$/iu;
     const greetingMatch = body.match(singleLineGreetingRegex);
     if (greetingMatch && greetingMatch[2].length >= 10) {
       prefix = greetingMatch[1].trim();
@@ -193,7 +193,7 @@ export function segmentCaption(raw: string | null | undefined): CaptionSections 
 
   // 4. Clean body: strip remaining inline hashtags and collapse horizontal spaces
   const cleanBody = body
-    .replace(/#[\p{L}\p{N}_]+/gu, "")
+    .replace(/#[\p{L}\p{M}\p{N}_]+/gu, "")
     .replace(/[^\S\r\n]+/g, " ")
     .trim();
 
@@ -215,6 +215,26 @@ export function segmentCaption(raw: string | null | undefined): CaptionSections 
  */
 export function computeCaptionHash(normalizedCaption: string): string {
   return createHash("sha256").update(normalizedCaption, "utf8").digest("hex");
+}
+
+/**
+ * Normalizes text for exact semantic content matching by stripping punctuation 
+ * and collapsing all whitespace (spaces, tabs, newlines) to single spaces.
+ * Used to verify if candidate caption has the exact same words and order as canonical caption,
+ * regardless of punctuation differences or line-break formatting.
+ */
+export function normalizeContentText(text: string | null | undefined): string {
+  if (!text) return "";
+  return normalizeCaption(text)
+    // Protect {{url}} token from punctuation stripping
+    .replace(/\{\{url\}\}/g, "___URL_PLACEHOLDER___")
+    // Strip all Unicode punctuation (periods, commas, exclamation marks, hyphens, quotes, brackets, etc.)
+    .replace(/[\p{P}]+/gu, " ")
+    // Restore {{url}} placeholder
+    .replace(/___URL_PLACEHOLDER___/g, "{{url}}")
+    // Collapse all whitespace sequences (spaces, tabs, newlines) into single spaces
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**

@@ -3,6 +3,7 @@ import {
   computeCaptionHash,
   segmentCaption,
   countWords,
+  normalizeContentText,
   type CaptionSections,
 } from "./normalizer.ts";
 
@@ -211,7 +212,7 @@ export function calculateTokenSimilarity(
     text
       .toLowerCase()
       .split(/\s+/)
-      .map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ""))
+      .map((w) => w.replace(/^[^\p{L}\p{M}\p{N}]+|[^\p{L}\p{M}\p{N}]+$/gu, ""))
       .filter((w) => w.length > 0);
 
   const canonTokens = tokenizeWords(canonical);
@@ -335,6 +336,29 @@ export function matchCaption(
       captionHash: hash,
       needsReview: false,
     };
+  }
+
+  // --- Tier 1C: Exact Semantic Content Match (Punctuation & Newline Tolerant) ---
+  // When a volunteer publishes the distributed content with identical words and order,
+  // but with minor punctuation variations (! vs ., commas, quotes) or internal
+  // line-break differences (\n vs spaces from copy-paste/mobile text wrapping),
+  // this is an exact match for the campaign and must NOT drop into human review.
+  const candidateContent = normalizeContentText(normalized);
+  if (candidateContent.length > 0) {
+    const contentMatch = eligibleCaptions.find(
+      (c) => normalizeContentText(c.normalized_caption) === candidateContent
+    );
+    if (contentMatch) {
+      return {
+        matched: true,
+        tier: "tier1_exact",
+        confidence: 1.0,
+        captionId: contentMatch.id,
+        normalizedCaption: normalized,
+        captionHash: hash,
+        needsReview: false,
+      };
+    }
   }
 
   // --- Tier 2: Section-Segmented Hybrid Matching with Dynamic/Adaptive Thresholding ---
