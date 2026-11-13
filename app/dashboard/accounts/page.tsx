@@ -395,11 +395,17 @@ export default function AccountsPage() {
 
   const handleLoadSampleData = () => {
     setBulkTextInput(
-      `Priya Sharma, @priyasharma_ngo\n` +
-      `Rahul Verma, @rahul.initiatives\n` +
-      `Ananya Patel, @ananya_volunteer\n` +
-      `Vikram Singh, @vikram.socialwork\n` +
-      `Sneha Kulkarni, @sneha_community`
+      `Anurag Yadav, @socialistt_anuragyadav\n` +
+      `Youth with Akhilesh, @Youthwithakhilesh\n` +
+      `Cycle with Akhilesh, @cyclewithakhilesh\n` +
+      `Pravind Yadav, @sp_pravind\n` +
+      `Monu Ahir, @Monuahir.100\n` +
+      `Aman Yadav, @yadav_aman_official_\n` +
+      `Shivam Kashyap, @shivamkashyapsp\n` +
+      `Pranshul Yadav, @yadav_pranshul\n` +
+      `Saurabh Anand, @saurabh.anand91\n` +
+      `Lokbandhu Live, @lokbandhulive1\n` +
+      `Samajwadi Lucknow, @samajwadi_lucknow`
     );
   };
 

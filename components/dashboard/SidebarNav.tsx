@@ -34,6 +34,11 @@ export function SidebarNav({ onNavigate }: SidebarNavProps) {
   useEffect(() => {
     let isMounted = true;
     const fetchPendingCount = async () => {
+      // Don't poll when the browser tab is hidden/minimized
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+
       try {
         const res = await fetch("/api/review-queue/count");
         if (res.ok) {
@@ -48,10 +53,21 @@ export function SidebarNav({ onNavigate }: SidebarNavProps) {
     };
 
     fetchPendingCount();
-    const interval = setInterval(fetchPendingCount, 30000); // 30s poll
+
+    // Poll every 60s only when active, plus immediate refresh on tab focus
+    const interval = setInterval(fetchPendingCount, 60000);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        fetchPendingCount();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
     return () => {
       isMounted = false;
       clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, []);
 

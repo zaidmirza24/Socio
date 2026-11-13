@@ -73,73 +73,123 @@ async function cleanDatabase() {
 
 async function seedRealData() {
   console.log("=================================================================");
-  console.log("  SEEDING 100% REAL LIVE INSTAGRAM POSTS & PUBLIC ACCOUNTS       ");
+  console.log("  SEEDING MONITORED PUBLIC PERSONAL & SUPPORTER ACCOUNTS         ");
   console.log("=================================================================\n");
 
   await cleanDatabase();
 
-  // 1. REAL PUBLIC ACCOUNTS
-  console.log("1. Seeding Real Public Accounts & Followers...");
+  // 1. SPECIFIED PUBLIC PERSONAL & SUPPORTER ACCOUNTS
+  console.log("1. Seeding Specified Public Accounts & Followers...");
   const accountsData = [
     {
-      handle: "narendramodi",
-      volunteer_name: "Narendra Modi",
+      handle: "socialistt_anuragyadav",
+      volunteer_name: "Anurag Yadav",
       platform: "instagram",
       status: "active",
       is_visible: true,
-      followers: 93200000,
-      following: 0,
-      post_count: 6140,
+      followers: 124000,
+      following: 480,
+      post_count: 890,
     },
     {
-      handle: "devendra_fadnavis",
-      volunteer_name: "Devendra Fadnavis",
+      handle: "youthwithakhilesh",
+      volunteer_name: "Youth with Akhilesh",
       platform: "instagram",
       status: "active",
       is_visible: true,
-      followers: 2850000,
-      following: 112,
-      post_count: 3420,
+      followers: 340000,
+      following: 120,
+      post_count: 1450,
     },
     {
-      handle: "myogi_adityanath",
-      volunteer_name: "Yogi Adityanath",
+      handle: "cyclewithakhilesh",
+      volunteer_name: "Cycle with Akhilesh",
       platform: "instagram",
       status: "active",
       is_visible: true,
-      followers: 11400000,
-      following: 4,
-      post_count: 4150,
-    },
-    {
-      handle: "shashitharoor",
-      volunteer_name: "Shashi Tharoor",
-      platform: "instagram",
-      status: "active",
-      is_visible: true,
-      followers: 1480000,
-      following: 280,
-      post_count: 2890,
-    },
-    {
-      handle: "mkstalin",
-      volunteer_name: "M. K. Stalin",
-      platform: "instagram",
-      status: "active",
-      is_visible: true,
-      followers: 3100000,
-      following: 48,
-      post_count: 2450,
-    },
-    {
-      handle: "priyankagandhivadra",
-      volunteer_name: "Priyanka Gandhi Vadra",
-      platform: "instagram",
-      status: "active",
-      is_visible: true,
-      followers: 2900000,
+      followers: 185000,
       following: 85,
-      post_count: 1280,
+      post_count: 1120,
+    },
+    {
+      handle: "sp_pravind",
+      volunteer_name: "Pravind Yadav",
+      platform: "instagram",
+      status: "active",
+      is_visible: true,
+      followers: 68000,
+      following: 320,
+      post_count: 640,
+    },
+    {
+      handle: "monuahir.100",
+      volunteer_name: "Monu Ahir",
+      platform: "instagram",
+      status: "active",
+      is_visible: true,
+      followers: 45000,
+      following: 260,
+      post_count: 510,
+    },
+    {
+      handle: "yadav_aman_official_",
+      volunteer_name: "Aman Yadav",
+      platform: "instagram",
+      status: "active",
+      is_visible: true,
+      followers: 52000,
+      following: 340,
+      post_count: 420,
+    },
+    {
+      handle: "shivamkashyapsp",
+      volunteer_name: "Shivam Kashyap",
+      platform: "instagram",
+      status: "active",
+      is_visible: true,
+      followers: 38000,
+      following: 290,
+      post_count: 380,
+    },
+    {
+      handle: "yadav_pranshul",
+      volunteer_name: "Pranshul Yadav",
+      platform: "instagram",
+      status: "active",
+      is_visible: true,
+      followers: 61000,
+      following: 410,
+      post_count: 560,
+    },
+    {
+      handle: "saurabh.anand91",
+      volunteer_name: "Saurabh Anand",
+      platform: "instagram",
+      status: "active",
+      is_visible: true,
+      followers: 29000,
+      following: 180,
+      post_count: 290,
+    },
+    {
+      handle: "lokbandhulive1",
+      volunteer_name: "Lokbandhu Live",
+      platform: "instagram",
+      status: "active",
+      is_visible: true,
+      followers: 95000,
+      following: 150,
+      post_count: 820,
+    },
+    {
+      handle: "samajwadi_lucknow",
+      volunteer_name: "Samajwadi Lucknow",
+      platform: "instagram",
+      status: "active",
+      is_visible: true,
+      followers: 110000,
+      following: 220,
+      post_count: 980,
     },
   ];
 
@@ -179,13 +229,13 @@ async function seedRealData() {
       const d = new Date();
       d.setDate(d.getDate() - dayOffset);
       const dateStr = d.toISOString().split("T")[0];
-      const drift = (3 - dayOffset) * Math.round(acc.followers * 0.0008);
+      const drift = (3 - dayOffset) * Math.round(acc.followers * 0.003);
 
       await supabase.from("account_snapshots").upsert(
         {
           account_id: data.id,
           snapshot_date: dateStr,
-          followers: acc.followers - (Math.round(acc.followers * 0.0024) - drift),
+          followers: acc.followers - (Math.round(acc.followers * 0.01) - drift),
           following: acc.following,
           post_count: acc.post_count - (dayOffset > 0 ? 1 : 0),
         },
@@ -193,28 +243,28 @@ async function seedRealData() {
       );
     }
   }
-  console.log(`✓ Inserted ${accountsMap.size} verified public accounts.`);
+  console.log(`✓ Inserted ${accountsMap.size} public personal & supporter accounts.`);
 
-  // 2. OFFICIAL CAMPAIGN CAPTIONS (Aligned with the real distributed statements)
+  // 2. OFFICIAL CAMPAIGN CAPTIONS
   console.log("\n2. Seeding Official Campaign Captions...");
   const rawCampaigns = [
     {
-      title: "Govardhan Puja & Prosperity Campaign",
+      title: "Jan Samvad & Samajik Nyay Campaign",
       released_days_ago: 3,
       canonical:
-        "On the auspicious occasion of Govardhan Puja, may everyone be blessed with peace, happiness and abundance.\n\n(A few moments from earlier occasions.)",
+        "सामाजिक न्याय और युवाओं के उज्ज्वल भविष्य के लिए हम सब साथ मिलकर आगे बढ़ेंगे। #Samajwadi #YuvaShakti #JanSamvad",
     },
     {
-      title: "National Unity & Festival of Lights 2026",
+      title: "Vikas & Rozgar Youth Rally 2026",
       released_days_ago: 4,
       canonical:
-        "Wishing everyone a very Happy Diwali! 🪔 May the radiance of this joyous festival illuminate our lives and inspire us to carry its spirit of hope and goodwill into the year ahead.\n\nआप सभी को दीपावली की हार्दिक शुभकामनाएँ!",
+        "Excited to announce the Rozgar & Vikas Youth Initiative 2026. Register today at https://rozgaryuva.org/register and join the movement for progress and youth empowerment. #RozgarFirst #YouthPower",
     },
     {
-      title: "Deepotsav Spiritual Traditions Initiative",
+      title: "Kisan & Gramin Vikas Abhiyan",
       released_days_ago: 3,
       canonical:
-        "दीपोत्सव-2026\n\nहमारी पुरातन परंपराओं का आध्यात्मिक अनुष्ठान...",
+        "हम सभी किसानों, मज़दूरों और युवाओं की खुशहाली और अधिकार के लिए पूरी निष्ठा के साथ काम करने के लिए संकल्पित हैं। जय हिन्द!",
     },
   ];
 
@@ -250,78 +300,93 @@ async function seedRealData() {
   }
   console.log(`✓ Inserted ${campaignMap.size} official campaign captions.`);
 
-  // 3. MATCHED POSTS (100% REAL LIVE INSTAGRAM POSTS SCRAPED VIA APIFY)
-  console.log("\n3. Seeding Real Live Instagram Posts with Live URLs & Engagement...");
-  const camp1 = campaignMap.get("Govardhan Puja & Prosperity Campaign");
-  const camp2 = campaignMap.get("National Unity & Festival of Lights 2026");
-  const camp3 = campaignMap.get("Deepotsav Spiritual Traditions Initiative");
+  // 3. MATCHED POSTS
+  console.log("\n3. Seeding Matched Posts with Engagement...");
+  const camp1 = campaignMap.get("Jan Samvad & Samajik Nyay Campaign");
+  const camp2 = campaignMap.get("Vikas & Rozgar Youth Rally 2026");
+  const camp3 = campaignMap.get("Kisan & Gramin Vikas Abhiyan");
 
   const realMatchedPosts = [
     {
       campaign: camp1,
-      account: accountsMap.get("narendramodi"),
+      account: accountsMap.get("socialistt_anuragyadav"),
       postId: "4027108254485064479",
       shortCode: "DfjKZ70oCsf",
       url: "https://www.instagram.com/p/DfjKZ70oCsf/",
       postedAt: "2026-11-10T05:32:15.000Z",
       mediaType: "carousel",
-      liveLikes: 2025603,
-      liveComments: 21765,
-      liveViews: 14200000,
+      liveLikes: 8420,
+      liveComments: 312,
+      liveViews: 65000,
       history: [
-        { dayOffset: 2, likes: 980000, comments: 11400, views: 6800000, dL: 980000, dC: 11400, dV: 6800000 },
-        { dayOffset: 1, likes: 1650000, comments: 18200, views: 11500000, dL: 670000, dC: 6800, dV: 4700000 },
-        { dayOffset: 0, likes: 2025603, comments: 21765, views: 14200000, dL: 375603, dC: 3565, dV: 2700000 },
+        { dayOffset: 2, likes: 3800, comments: 140, views: 28000, dL: 3800, dC: 140, dV: 28000 },
+        { dayOffset: 1, likes: 6700, comments: 245, views: 49000, dL: 2900, dC: 105, dV: 21000 },
+        { dayOffset: 0, likes: 8420, comments: 312, views: 65000, dL: 1720, dC: 67, dV: 16000 },
       ],
     },
     {
       campaign: camp2,
-      account: accountsMap.get("shashitharoor"),
+      account: accountsMap.get("youthwithakhilesh"),
       postId: "4025800000000000001",
       shortCode: "DfeotvlmiHk",
       url: "https://www.instagram.com/p/DfeotvlmiHk/",
       postedAt: "2026-11-08T11:20:54.000Z",
       mediaType: "photo",
-      liveLikes: 27639,
-      liveComments: 204,
-      liveViews: 185000,
+      liveLikes: 14500,
+      liveComments: 580,
+      liveViews: 112000,
       history: [
-        { dayOffset: 3, likes: 12400, comments: 95, views: 82000, dL: 12400, dC: 95, dV: 82000 },
-        { dayOffset: 2, likes: 19800, comments: 148, views: 132000, dL: 7400, dC: 53, dV: 50000 },
-        { dayOffset: 1, likes: 24900, comments: 184, views: 168000, dL: 5100, dC: 36, dV: 36000 },
-        { dayOffset: 0, likes: 27639, comments: 204, views: 185000, dL: 2739, dC: 20, dV: 17000 },
+        { dayOffset: 3, likes: 5800, comments: 210, views: 42000, dL: 5800, dC: 210, dV: 42000 },
+        { dayOffset: 2, likes: 9800, comments: 390, views: 76000, dL: 4000, dC: 180, dV: 34000 },
+        { dayOffset: 1, likes: 12800, comments: 505, views: 98000, dL: 3000, dC: 115, dV: 22000 },
+        { dayOffset: 0, likes: 14500, comments: 580, views: 112000, dL: 1700, dC: 75, dV: 14000 },
       ],
     },
     {
-      campaign: camp3,
-      account: accountsMap.get("myogi_adityanath"),
+      campaign: camp2,
+      account: accountsMap.get("cyclewithakhilesh"),
       postId: "4026600000000000002",
       shortCode: "DfhnDkVALTi",
       url: "https://www.instagram.com/p/DfhnDkVALTi/",
       postedAt: "2026-11-09T15:08:12.000Z",
       mediaType: "video",
-      liveLikes: 208037,
-      liveComments: 2046,
-      liveViews: 1650000,
+      liveLikes: 9840,
+      liveComments: 365,
+      liveViews: 88000,
       history: [
-        { dayOffset: 2, likes: 98000, comments: 1120, views: 780000, dL: 98000, dC: 1120, dV: 780000 },
-        { dayOffset: 1, likes: 168000, comments: 1690, views: 1340000, dL: 70000, dC: 570, dV: 560000 },
-        { dayOffset: 0, likes: 208037, comments: 2046, views: 1650000, dL: 40037, dC: 356, dV: 310000 },
+        { dayOffset: 2, likes: 4500, comments: 160, views: 39000, dL: 4500, dC: 160, dV: 39000 },
+        { dayOffset: 1, likes: 7800, comments: 285, views: 69000, dL: 3300, dC: 125, dV: 30000 },
+        { dayOffset: 0, likes: 9840, comments: 365, views: 88000, dL: 2040, dC: 80, dV: 19000 },
       ],
     },
     {
-      campaign: camp2,
-      account: accountsMap.get("devendra_fadnavis"),
+      campaign: camp3,
+      account: accountsMap.get("sp_pravind"),
       postId: "4027748889893071307",
       shortCode: "DflcEaCjOnL",
       url: "https://www.instagram.com/p/DflcEaCjOnL/",
       postedAt: "2026-11-11T02:45:05.000Z",
       mediaType: "carousel",
-      liveLikes: 2343,
-      liveComments: 94,
-      liveViews: 38000,
+      liveLikes: 4320,
+      liveComments: 185,
+      liveViews: 34000,
       history: [
-        { dayOffset: 0, likes: 2343, comments: 94, views: 38000, dL: 2343, dC: 94, dV: 38000 },
+        { dayOffset: 0, likes: 4320, comments: 185, views: 34000, dL: 4320, dC: 185, dV: 34000 },
+      ],
+    },
+    {
+      campaign: camp1,
+      account: accountsMap.get("yadav_aman_official_"),
+      postId: "4027750000000000008",
+      shortCode: "Dfm89aBcdEf",
+      url: "https://www.instagram.com/p/Dfm89aBcdEf/",
+      postedAt: "2026-11-11T04:15:00.000Z",
+      mediaType: "photo",
+      liveLikes: 3890,
+      liveComments: 142,
+      liveViews: 28000,
+      history: [
+        { dayOffset: 0, likes: 3890, comments: 142, views: 28000, dL: 3890, dC: 142, dV: 28000 },
       ],
     },
   ];
@@ -415,31 +480,29 @@ async function seedRealData() {
       totalSnapshots++;
     }
   }
-  console.log(`✓ Inserted ${realMatchedPosts.length} real live matched posts and ${totalSnapshots} engagement snapshots.`);
+  console.log(`✓ Inserted ${realMatchedPosts.length} matched public posts and ${totalSnapshots} engagement snapshots.`);
 
-  // 4. REAL REVIEW QUEUE POSTS (REAL LIVE INSTAGRAM POST URLS!)
-  console.log("\n4. Seeding Real Live Instagram Posts in Review Queue...");
+  // 4. REVIEW QUEUE POSTS
+  console.log("\n4. Seeding Review Queue Posts...");
 
   const reviewItems = [
     {
       caption: camp2,
-      account: accountsMap.get("devendra_fadnavis"),
+      account: accountsMap.get("monuahir.100"),
       postId: "4027227526648056815",
-      // REAL LIVE POST URL: Devendra Fadnavis meeting Governor Jishnu Dev Varma at Lok Bhavan on Diwali
       url: "https://www.instagram.com/p/DfjlhkriEvv/",
-      similarity: 0.932,
+      similarity: 0.935,
       candidateText:
-        "Wishing everyone a very Happy Diwali! It was a pleasure to meet Hon Governor Jishnu Dev Varma ji at Lok Bhavan, Mumbai, and extend my wishes to him on the auspicious occasion of Diwali.\n\n@lokbhavanmaharashtra #Maharashtra #Diwali2026",
+        "Excited to announce the Rozgar & Vikas Youth Initiative 2026. Register today at https://rozgaryuva.org/register and join the movement for progress and youth empowerment. सभी साथी जुड़ें और आवाज़ बुलंद करें! #RozgarFirst #YouthPower #YuvaEkta",
     },
     {
       caption: camp1,
-      account: accountsMap.get("mkstalin"),
+      account: accountsMap.get("shivamkashyapsp"),
       postId: "4026300000000000004",
-      // REAL LIVE POST URL: M. K. Stalin live state rights statement
       url: "https://www.instagram.com/p/DfhW7rilFKb/",
-      similarity: 0.915,
+      similarity: 0.925,
       candidateText:
-        "வணக்கம்! On the auspicious occasion of Govardhan Puja, may everyone be blessed with peace, happiness and abundance.\n\n#StateRights #Federalism",
+        "जय हिन्द साथियों! सामाजिक न्याय और युवाओं के उज्ज्वल भविष्य के लिए हम सब साथ मिलकर आगे बढ़ेंगे। #Samajwadi #YuvaShakti #JanSamvad #SamajwadiParty",
     },
   ];
 
@@ -463,7 +526,7 @@ async function seedRealData() {
       console.error(`Failed to insert review item:`, error.message);
     }
   }
-  console.log(`✓ Inserted ${reviewItems.length} real live review queue items with authentic Instagram URLs.`);
+  console.log(`✓ Inserted ${reviewItems.length} review queue items.`);
 
   // 5. AUDIT LOGS FOR HEALTH PAGE
   console.log("\n5. Seeding Ingestion Audit Runs for System Health Page...");
@@ -480,17 +543,17 @@ async function seedRealData() {
       started_at: runDate.toISOString(),
       completed_at: compDate.toISOString(),
       status: "success",
-      accounts_targeted: 6,
-      posts_found: 6 + (3 - i) * 2,
-      posts_upserted: 6 + (3 - i) * 2,
-      snapshots_created: 6 + (3 - i) * 2,
+      accounts_targeted: accountsData.length,
+      posts_found: accountsData.length + (3 - i) * 2,
+      posts_upserted: accountsData.length + (3 - i) * 2,
+      snapshots_created: accountsData.length + (3 - i) * 2,
       error: null,
     });
   }
   console.log("✓ Inserted 4 successful daily collection runs in audit log.");
 
   console.log("\n=================================================================");
-  console.log("  100% REAL LIVE INSTAGRAM DATA SEEDING COMPLETE!               ");
+  console.log("  ALL MONITORED ACCOUNTS DATA SEEDING COMPLETE!                  ");
   console.log("=================================================================");
 }
 
