@@ -22,7 +22,7 @@ export interface VolunteerEngagementData {
 export function EngagementPerVolunteerChart({ data }: { data: VolunteerEngagementData[] }) {
   if (!data || data.length === 0) {
     return (
-      <div className="flex h-64 items-center justify-center text-sm text-slate-400">
+      <div className="flex h-64 items-center justify-center text-sm text-slate-500">
         No volunteer engagement data available yet.
       </div>
     );

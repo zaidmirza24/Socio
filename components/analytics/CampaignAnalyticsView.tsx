@@ -262,9 +262,9 @@ export function CampaignAnalyticsView({
       {/* ── Top Header & Tab Navigation ── */}
       <div className="flex flex-col gap-4 border-b border-slate-200 pb-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Campaign Analytics</h1>
+          <h2 className="text-lg font-bold tracking-tight text-slate-900">Trends &amp; rankings</h2>
           <p className="mt-0.5 text-xs text-slate-500 sm:text-sm">
-            {platform === "all" ? "All platforms" : platformLabel(platform)} · {kpi.totalAccounts} accounts monitored · {kpi.totalPosts} posts with activity
+            {platform === "all" ? "All platforms" : platformLabel(platform)} · {kpi.totalAccounts} accounts · {kpi.totalPosts} posts with activity in this period
           </p>
         </div>
 
@@ -276,7 +276,7 @@ export function CampaignAnalyticsView({
 
       {/* ── Tab Switcher Strip (Progressive Disclosure) ── */}
       <div className="flex border-b border-slate-200">
-        <nav className="-mb-px flex space-x-6" aria-label="Tabs">
+        <nav className="-mb-px flex space-x-6" aria-label="Dashboard sections">
           <button
             onClick={() => handleSubtabSelect("overview")}
             className={`flex items-center gap-2 pb-3 pt-1 text-sm font-medium border-b-2 transition-colors cursor-pointer ${
@@ -286,7 +286,7 @@ export function CampaignAnalyticsView({
             }`}
           >
             <Compass className="h-4 w-4" />
-            Campaign Overview
+            Overview
           </button>
 
           <button
@@ -298,7 +298,7 @@ export function CampaignAnalyticsView({
             }`}
           >
             <Users className="h-4 w-4" />
-            Volunteer Leaderboard
+            Volunteer ranking
             <span
               className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
                 activeTab === "volunteers"
@@ -319,7 +319,7 @@ export function CampaignAnalyticsView({
             }`}
           >
             <Sparkles className="h-4 w-4" />
-            Content & Creatives
+            Top posts
             <span
               className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
                 activeTab === "content"
@@ -353,7 +353,7 @@ export function CampaignAnalyticsView({
                 <span className="text-3xl font-bold text-slate-900">{kpi.totalAccounts}</span>
                 <span className="text-xs font-medium text-emerald-600">{activePct}% active</span>
               </div>
-              <span className="mt-1 block text-xs text-slate-400">Monitored volunteer accounts</span>
+              <span className="mt-1 block text-xs text-slate-500">Monitored volunteer accounts</span>
             </div>
 
             <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs">
@@ -369,7 +369,7 @@ export function CampaignAnalyticsView({
                 <span className="text-3xl font-bold text-slate-900">{kpi.totalPosts}</span>
                 
               </div>
-              <span className="mt-1 block text-xs text-slate-400">
+              <span className="mt-1 block text-xs text-slate-500">
                 {currentRange === "today"
                   ? "Recorded today"
                   : currentRange === "7d"
@@ -396,7 +396,7 @@ export function CampaignAnalyticsView({
                   {formatNumber(kpi.totalLikes)}
                 </span>
               </div>
-              <span className="mt-1 block text-xs text-slate-400">Across monitored posts</span>
+              <span className="mt-1 block text-xs text-slate-500">Across monitored posts</span>
             </div>
 
             <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs">
@@ -413,7 +413,7 @@ export function CampaignAnalyticsView({
                   {formatNumber(kpi.totalComments)}
                 </span>
               </div>
-              <span className="mt-1 block text-xs text-slate-400">Direct conversations</span>
+              <span className="mt-1 block text-xs text-slate-500">Direct conversations</span>
             </div>
           </div>
 
@@ -471,7 +471,7 @@ export function CampaignAnalyticsView({
                 <p className="text-sm font-bold text-slate-900">
                   {kpi.activeAccounts} of {kpi.totalAccounts} Active
                 </p>
-                <p className="text-xs text-emerald-800">Updated when the admin runs the scraper</p>
+                <p className="text-xs text-emerald-800">Updated each time someone runs “Collect data”</p>
               </div>
             </div>
           </div>
@@ -608,13 +608,13 @@ export function CampaignAnalyticsView({
                 </div>
                 <div className="mt-4 grid grid-cols-2 gap-2 border-t border-amber-100 pt-3 text-xs">
                   <div>
-                    <span className="text-slate-400">Total Engagement</span>
+                    <span className="text-slate-500">Total Engagement</span>
                     <p className="text-base font-bold text-slate-900">
                       {formatNumber(leaderboard[0].totalEngagement)}
                     </p>
                   </div>
                   <div>
-                    <span className="text-slate-400">Posts / Followers</span>
+                    <span className="text-slate-500">Posts / Followers</span>
                     <p className="font-semibold text-slate-700">
                       {leaderboard[0].posts} · {formatNumber(leaderboard[0].followers)}
                     </p>
@@ -641,13 +641,13 @@ export function CampaignAnalyticsView({
                 </div>
                 <div className="mt-4 grid grid-cols-2 gap-2 border-t border-slate-200 pt-3 text-xs">
                   <div>
-                    <span className="text-slate-400">Total Engagement</span>
+                    <span className="text-slate-500">Total Engagement</span>
                     <p className="text-base font-bold text-slate-900">
                       {formatNumber(leaderboard[1].totalEngagement)}
                     </p>
                   </div>
                   <div>
-                    <span className="text-slate-400">Posts / Followers</span>
+                    <span className="text-slate-500">Posts / Followers</span>
                     <p className="font-semibold text-slate-700">
                       {leaderboard[1].posts} · {formatNumber(leaderboard[1].followers)}
                     </p>
@@ -674,13 +674,13 @@ export function CampaignAnalyticsView({
                 </div>
                 <div className="mt-4 grid grid-cols-2 gap-2 border-t border-orange-100 pt-3 text-xs">
                   <div>
-                    <span className="text-slate-400">Total Engagement</span>
+                    <span className="text-slate-500">Total Engagement</span>
                     <p className="text-base font-bold text-slate-900">
                       {formatNumber(leaderboard[2].totalEngagement)}
                     </p>
                   </div>
                   <div>
-                    <span className="text-slate-400">Posts / Followers</span>
+                    <span className="text-slate-500">Posts / Followers</span>
                     <p className="font-semibold text-slate-700">
                       {leaderboard[2].posts} · {formatNumber(leaderboard[2].followers)}
                     </p>
@@ -693,7 +693,7 @@ export function CampaignAnalyticsView({
           {/* Filter, Search & View Controls */}
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="relative flex-1 max-w-sm">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+              <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
               <input
                 type="text"
                 value={searchVolunteer}
@@ -708,7 +708,7 @@ export function CampaignAnalyticsView({
 
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-1.5 text-xs">
-                <Filter className="h-3.5 w-3.5 text-slate-400" />
+                <Filter className="h-3.5 w-3.5 text-slate-500" />
                 <span className="text-slate-500 font-medium">Sort by:</span>
                 <select
                   value={sortLeaderboardBy}
@@ -783,7 +783,7 @@ export function CampaignAnalyticsView({
                   <tbody className="divide-y divide-slate-100">
                     {filteredLeaderboard.length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="px-6 py-12 text-center text-sm text-slate-400">
+                        <td colSpan={9} className="px-6 py-12 text-center text-sm text-slate-500">
                           No volunteers found matching &quot;{searchVolunteer}&quot;.
                         </td>
                       </tr>
@@ -812,7 +812,7 @@ export function CampaignAnalyticsView({
                                 ))}
                                 <span className="text-xs font-mono text-blue-600">@{item.handle}</span>
                                 {item.accounts > 1 && (
-                                  <span className="text-[11px] text-slate-400">+{item.accounts - 1} more</span>
+                                  <span className="text-xs text-slate-500">+{item.accounts - 1} more</span>
                                 )}
                               </div>
                             </td>
@@ -839,7 +839,7 @@ export function CampaignAnalyticsView({
                                     style={{ width: `${relativePct}%` }}
                                   />
                                 </div>
-                                <span className="text-[11px] font-mono text-slate-400 w-8 text-right">
+                                <span className="text-xs font-mono text-slate-500 w-8 text-right">
                                   {relativePct}%
                                 </span>
                               </div>
@@ -907,7 +907,7 @@ export function CampaignAnalyticsView({
         <div className="space-y-6">
           {/* Top 10 Performing Posts Bar Chart */}
           <SectionCard
-            title="Top 10 Performing Posts by Total Engagement"
+            title="Top 10 posts by engagement"
             subtitle="Ranked across likes, comments, and video views"
           >
             <TopPostsChart data={topPosts} />
@@ -916,7 +916,7 @@ export function CampaignAnalyticsView({
           {/* Media Filter & Post Grid Header */}
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between pt-2">
             <div>
-              <h2 className="text-base font-semibold text-slate-900">Monitored Post Cards</h2>
+              <h2 className="text-base font-semibold text-slate-900">Posts in this period</h2>
               <p className="text-xs text-slate-500 mt-0.5">
                 Detailed view of creatives published by volunteers with live metrics
               </p>
@@ -945,7 +945,7 @@ export function CampaignAnalyticsView({
           {/* Visual Post Cards Grid */}
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
             {filteredPosts.length === 0 ? (
-              <div className="col-span-full rounded-xl border border-slate-200 bg-white p-12 text-center text-sm text-slate-400">
+              <div className="col-span-full rounded-xl border border-slate-200 bg-white p-12 text-center text-sm text-slate-500">
                 No posts found for the selected filter.
               </div>
             ) : (
@@ -973,13 +973,13 @@ export function CampaignAnalyticsView({
                           >
                             @{post.handle}
                           </Link>
-                          <span className="text-[11px] text-slate-400 truncate block">
+                          <span className="text-xs text-slate-500 truncate block">
                             {post.volunteerName}
                           </span>
                         </div>
                         <PlatformBadge platform={post.platform} compact />
                         <span
-                          className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold ${
+                          className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-semibold ${
                             isVideo
                               ? "bg-indigo-50 text-indigo-700 border border-indigo-200"
                               : isCarousel
@@ -996,7 +996,7 @@ export function CampaignAnalyticsView({
 
                       {/* Caption snippet */}
                       <p className="mt-3 text-xs text-slate-600 line-clamp-3 leading-relaxed">
-                        {post.caption || <span className="italic text-slate-400">No caption provided</span>}
+                        {post.caption || <span className="italic text-slate-500">No caption</span>}
                       </p>
                     </div>
 
@@ -1020,12 +1020,12 @@ export function CampaignAnalyticsView({
                           )}
                         </div>
 
-                        <span className="rounded bg-slate-100 px-1.5 py-0.5 font-bold text-slate-800 text-[11px]">
+                        <span className="rounded bg-slate-100 px-1.5 py-0.5 font-bold text-slate-800 text-xs">
                           {formatNumber(totalPostEngagement)} eng
                         </span>
                       </div>
 
-                      <div className="flex items-center justify-between pt-1 text-[11px] text-slate-400">
+                      <div className="flex items-center justify-between pt-1 text-xs text-slate-500">
                         <span>{post.postedAt || "Recently posted"}</span>
                         {post.url && (
                           <a

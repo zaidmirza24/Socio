@@ -1,5 +1,6 @@
 "use client";
 
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useCallback, useEffect, useState } from "react";
 import {
   AlertCircle,
@@ -42,7 +43,7 @@ const SOURCE_LABEL: Record<ValueSource, string> = {
   none: "Not set",
 };
 
-const PLATFORM_LABEL: Record<Platform, string> = { instagram: "Instagram", facebook: "Facebook", x: "Twitter / X" };
+const PLATFORM_LABEL: Record<Platform, string> = { instagram: "Instagram", facebook: "Facebook", x: "X" };
 
 function SourceBadge({ source }: { source: ValueSource }) {
   const styles: Record<ValueSource, string> = {
@@ -51,7 +52,7 @@ function SourceBadge({ source }: { source: ValueSource }) {
     none: "bg-amber-50 text-amber-700 border-amber-200",
   };
   return (
-    <span className={`px-2 py-0.5 text-[10px] font-semibold rounded-full border ${styles[source]}`}>
+    <span className={`px-2 py-0.5 text-xs font-semibold rounded-full border ${styles[source]}`}>
       {SOURCE_LABEL[source]}
     </span>
   );
@@ -61,6 +62,7 @@ export function IntegrationsCard() {
   const [status, setStatus] = useState<IntegrationStatus | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [pasted, setPasted] = useState("");
+  const [removeTarget, setRemoveTarget] = useState<"apify_api_token" | "apify_webhook_secret" | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [setup, setSetup] = useState<SetupResult | null>(null);
@@ -139,8 +141,12 @@ export function IntegrationsCard() {
     }
   };
 
-  const handleRemove = async (name: "apify_api_token" | "apify_webhook_secret") => {
-    if (!window.confirm("Remove this saved credential? Falls back to the environment variable if one exists.")) return;
+  const handleRemove = (name: "apify_api_token" | "apify_webhook_secret") => setRemoveTarget(name);
+
+  const confirmRemove = async () => {
+    const name = removeTarget;
+    setRemoveTarget(null);
+    if (!name) return;
     const data = await call("remove-secret", { name });
     if (data) setNotice({ type: "success", message: "Credential removed." });
   };
@@ -166,10 +172,10 @@ export function IntegrationsCard() {
     <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-5">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-100 pb-5">
         <div>
-          <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+          <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
             <Plug className="h-5 w-5 text-violet-600" />
-            Apify Connection &amp; Credentials
-          </h3>
+            Apify connection
+          </h2>
           <p className="text-xs text-slate-500 mt-1">
             Paste your token (or a whole .env snippet / Apify link). Socio detects what it needs, tests it against Apify, and stores it encrypted - no code or redeploy needed.
           </p>
@@ -206,7 +212,7 @@ export function IntegrationsCard() {
           className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs font-mono focus:border-violet-500 focus:outline-none"
         />
         <div className="flex items-center justify-between gap-3">
-          <span className="text-[11px] text-slate-500">
+          <span className="text-xs text-slate-500">
             Your text is parsed on the server only and is never sent to an AI model or any third party except Apify itself (to verify the token).
           </span>
           <button
@@ -277,7 +283,7 @@ export function IntegrationsCard() {
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-slate-700">Apify API token</span>
               {status.apifyToken.source === "database" && (
-                <button onClick={() => handleRemove("apify_api_token")} title="Remove saved token" className="text-slate-400 hover:text-red-600">
+                <button onClick={() => handleRemove("apify_api_token")} title="Remove saved token" className="text-slate-500 hover:text-red-600">
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
               )}
@@ -327,10 +333,20 @@ export function IntegrationsCard() {
       )}
 
       {status && (
-        <p className="text-[11px] text-slate-400">
+        <p className="text-xs text-slate-500">
           Credentials are encrypted with AES-256-GCM using {status.encryptionKeySource}. Set a dedicated <span className="font-mono">SETTINGS_ENCRYPTION_KEY</span> in Vercel to rotate it independently.
         </p>
       )}
+      <ConfirmDialog
+        open={removeTarget !== null}
+        title="Remove saved credential?"
+        confirmLabel="Remove"
+        danger
+        onConfirm={confirmRemove}
+        onCancel={() => setRemoveTarget(null)}
+      >
+        The saved {removeTarget === "apify_webhook_secret" ? "webhook secret" : "Apify token"} will be deleted. If the same value exists as an environment variable, the app falls back to that; otherwise collection stops working until you add a new one.
+      </ConfirmDialog>
     </div>
   );
 }

@@ -11,8 +11,6 @@ import {
   AlertCircle,
   Eye,
   EyeOff,
-  ShieldCheck,
-  Activity,
 } from "lucide-react";
 
 export default function LoginPage() {
@@ -66,12 +64,12 @@ export default function LoginPage() {
               Socio Monitor
             </h1>
             <p className="mt-1 text-xs text-slate-500 font-medium">
-              Campaign Engagement Intel &amp; Ingestion Platform
+              Sign in to view campaign engagement
             </p>
           </div>
 
           {errorMessage && (
-            <div className="mb-5 rounded-xl bg-red-50 p-3 text-xs text-red-700 border border-red-200 flex items-start gap-2.5 animate-in fade-in duration-150">
+            <div role="alert" className="mb-5 rounded-xl bg-red-50 p-3 text-xs text-red-700 border border-red-200 flex items-start gap-2.5 animate-in fade-in duration-150">
               <AlertCircle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
               <span className="font-medium">{errorMessage}</span>
             </div>
@@ -79,40 +77,45 @@ export default function LoginPage() {
 
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1.5">
-                Team Work Email
+              <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-1.5">
+                Email
               </label>
               <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
                 <input
+                  id="email"
                   type="email"
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="name@campaign.org"
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50/50 pl-9 pr-3 py-2.5 text-xs text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition"
+                  placeholder="you@example.org"
+                  autoComplete="email"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50/50 pl-9 pr-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1.5">
+              <label htmlFor="password" className="block text-sm font-medium text-slate-700 mb-1.5">
                 Password
               </label>
               <div className="relative">
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
                 <input
+                  id="password"
                   type={showPassword ? "text" : "password"}
+                  autoComplete="current-password"
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••••••"
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50/50 pl-9 pr-10 py-2.5 text-xs text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition"
+                  placeholder="Your password"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50/50 pl-9 pr-10 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-600"
                 >
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
@@ -122,38 +125,26 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full mt-2 inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-2.5 text-xs font-bold text-white transition focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 shadow-sm shadow-blue-500/20"
+              className="w-full mt-2 inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white transition focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 shadow-sm shadow-blue-500/20"
             >
               {loading ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>Verifying credentials...</span>
+                  <span>Signing in...</span>
                 </>
               ) : (
                 <>
-                  <span>Sign In to Workspace</span>
+                  <span>Sign in</span>
                   <ArrowRight className="h-4 w-4" />
                 </>
               )}
             </button>
           </form>
 
-          {/* Security & RLS badge strip */}
-          <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-center gap-4 text-[10px] text-slate-400">
-            <span className="flex items-center gap-1 font-medium">
-              <ShieldCheck className="h-3 w-3 text-emerald-500" />
-              Supabase RLS Protected
-            </span>
-            <span>&bull;</span>
-            <span className="flex items-center gap-1 font-medium">
-              <Activity className="h-3 w-3 text-blue-500" />
-              Automated 8 AM Scrape
-            </span>
-          </div>
         </div>
 
-        <div className="mt-4 text-center text-[11px] text-slate-400">
-          Private organization portal. Unauthorized access is monitored.
+        <div className="mt-4 text-center text-xs text-slate-500">
+          Private portal for the campaign team. Forgot your password? Ask an admin to reset it.
         </div>
       </div>
     </div>

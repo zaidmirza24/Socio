@@ -28,7 +28,7 @@ const COLORS = [
 export function TopPostsChart({ data }: { data: TopPostData[] }) {
   if (!data || data.length === 0) {
     return (
-      <div className="flex h-64 items-center justify-center text-sm text-slate-400">
+      <div className="flex h-64 items-center justify-center text-sm text-slate-500">
         No top-post data available yet.
       </div>
     );

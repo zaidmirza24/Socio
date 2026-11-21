@@ -5,6 +5,8 @@ import { getPostsPage, type PostsPageResult, type DateRangePreset } from "@/lib/
 import { DateRangeFilter } from "@/components/analytics/DateRangeFilter";
 import { PlatformFilter } from "@/components/analytics/PlatformFilter";
 import { PlatformBadge } from "@/components/ui/PlatformBadge";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Pagination } from "@/components/ui/Pagination";
 import { parsePlatformFilter } from "@/lib/platform";
 
 export const dynamic = "force-dynamic";
@@ -77,20 +79,11 @@ export default async function PostsPage({ searchParams }: PostsPageProps) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 border-b border-slate-200/80 pb-5">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900">Recent Monitored Posts</h1>
-            <span className="text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200/60 px-2 py-0.5 rounded-full tabular-nums">
-              {total.toLocaleString("en-IN")} posts
-            </span>
-          </div>
-          <p className="text-sm text-slate-500 mt-1">
-            Posts published {RANGE_TEXT[range]} across monitored volunteer profiles (Instagram, Facebook, X), showing
-            their latest engagement.
-          </p>
-        </div>
-
+      <PageHeader
+        title="Posts"
+        badge={`${total.toLocaleString("en-IN")} posts`}
+        description={`Posts published ${RANGE_TEXT[range]} on Instagram, Facebook and X, with their latest likes, comments and views.`}
+      >
         <div className="flex flex-wrap items-center gap-2.5">
           <PlatformFilter value={platform} />
 
@@ -124,16 +117,17 @@ export default async function PostsPage({ searchParams }: PostsPageProps) {
           {platform !== "all" && <input type="hidden" name="platform" value={platform} />}
           {view !== "all" && <input type="hidden" name="view" value={view} />}
           {sort !== "recent" && <input type="hidden" name="sort" value={sort} />}
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+          <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
           <input
             type="search"
             name="q"
             defaultValue={search}
             placeholder="Search caption, volunteer or handle..."
+            aria-label="Search posts"
             className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-4 text-sm placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
         </form>
-      </div>
+      </PageHeader>
 
       {loadError && (
         <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
@@ -151,26 +145,26 @@ export default async function PostsPage({ searchParams }: PostsPageProps) {
       <div className="rounded-xl border border-slate-200/90 bg-white shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs text-slate-600">
-            <thead className="bg-slate-50/90 text-[11px] uppercase font-bold text-slate-500 border-b border-slate-200">
+            <thead className="bg-slate-50/90 text-xs uppercase font-bold text-slate-500 border-b border-slate-200">
               <tr>
                 <th className="px-5 py-3.5">Volunteer</th>
                 <th className="px-5 py-3.5">Platform</th>
-                <th className="px-5 py-3.5">Caption Snippet</th>
+                <th className="px-5 py-3.5">Caption</th>
                 <th className="px-5 py-3.5">Format</th>
-                <th className="px-5 py-3.5">Published (UTC)</th>
+                <th className="px-5 py-3.5">Published</th>
                 <th className="px-5 py-3.5 text-right">Likes</th>
                 <th className="px-5 py-3.5 text-right">Comments</th>
                 <th className="px-5 py-3.5 text-right">Views</th>
-                <th className="px-5 py-3.5 text-right">Action</th>
+                <th className="px-5 py-3.5 text-right"><span className="sr-only">Link</span></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200/80">
               {posts.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-6 py-16 text-center text-slate-400">
+                  <td colSpan={9} className="px-6 py-16 text-center text-slate-500">
                     <p className="text-sm font-medium text-slate-700">No posts found for this filter.</p>
-                    <p className="text-xs text-slate-400 mt-1">
-                      Try another platform, date range or search. Posts appear after the admin runs the scraper.
+                    <p className="text-xs text-slate-500 mt-1">
+                      Try another platform, date range or search. New posts appear after someone runs “Collect data”.
                     </p>
                   </td>
                 </tr>
@@ -185,7 +179,7 @@ export default async function PostsPage({ searchParams }: PostsPageProps) {
                         @{post.handle}
                       </Link>
                       {post.volunteerName && post.volunteerName !== post.handle && (
-                        <div className="text-[11px] text-slate-400 truncate max-w-[160px]">{post.volunteerName}</div>
+                        <div className="text-xs text-slate-500 truncate max-w-[160px]">{post.volunteerName}</div>
                       )}
                     </td>
                     <td className="px-5 py-3.5">
@@ -193,22 +187,22 @@ export default async function PostsPage({ searchParams }: PostsPageProps) {
                     </td>
                     <td className="px-5 py-3.5 text-slate-700 max-w-xs truncate" title={post.caption || ""}>
                       {post.matchStatus === "matched" && (
-                        <span className="mr-1.5 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 border border-emerald-200">
+                        <span className="mr-1.5 rounded bg-emerald-50 px-1.5 py-0.5 text-xs font-semibold text-emerald-700 border border-emerald-200">
                           Campaign
                         </span>
                       )}
                       {post.matchStatus === "needs_review" && (
                         <Link
                           href="/dashboard/review"
-                          className="mr-1.5 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 border border-amber-200 hover:bg-amber-100"
+                          className="mr-1.5 rounded bg-amber-50 px-1.5 py-0.5 text-xs font-semibold text-amber-700 border border-amber-200 hover:bg-amber-100"
                         >
                           Needs review
                         </Link>
                       )}
-                      {post.caption || <span className="text-slate-400 italic">No caption</span>}
+                      {post.caption || <span className="text-slate-500 italic">No caption</span>}
                     </td>
                     <td className="px-5 py-3.5">
-                      <span className="text-[10px] px-2 py-0.5 rounded-md bg-slate-100 font-semibold uppercase text-slate-600">
+                      <span className="text-xs px-2 py-0.5 rounded-md bg-slate-100 font-semibold uppercase text-slate-600">
                         {post.mediaType}
                       </span>
                     </td>
@@ -239,11 +233,11 @@ export default async function PostsPage({ searchParams }: PostsPageProps) {
                           rel="noopener noreferrer"
                           className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-800 transition"
                         >
-                          <span>Open</span>
+                          <span>Open post</span>
                           <ExternalLink className="h-3 w-3" />
                         </a>
                       ) : (
-                        <span className="text-xs text-slate-300">n/a</span>
+                        <span className="text-xs text-slate-500">n/a</span>
                       )}
                     </td>
                   </tr>
@@ -253,41 +247,7 @@ export default async function PostsPage({ searchParams }: PostsPageProps) {
           </table>
         </div>
 
-        <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50/60 px-5 py-3 text-xs text-slate-500">
-          <span>
-            {total === 0 ? 0 : (pageNum - 1) * PAGE_SIZE + 1}–{Math.min(pageNum * PAGE_SIZE, total)} of{" "}
-            {total.toLocaleString("en-IN")}
-          </span>
-          <div className="flex items-center gap-2">
-            {pageNum > 1 ? (
-              <Link
-                href={buildUrl({ page: pageNum - 1 })}
-                className="rounded-md border border-slate-200 bg-white px-2.5 py-1 font-medium text-slate-700"
-              >
-                Previous
-              </Link>
-            ) : (
-              <span className="rounded-md border border-slate-200 bg-white px-2.5 py-1 font-medium text-slate-300">
-                Previous
-              </span>
-            )}
-            <span>
-              Page {Math.min(pageNum, totalPages)} / {totalPages}
-            </span>
-            {pageNum < totalPages ? (
-              <Link
-                href={buildUrl({ page: pageNum + 1 })}
-                className="rounded-md border border-slate-200 bg-white px-2.5 py-1 font-medium text-slate-700"
-              >
-                Next
-              </Link>
-            ) : (
-              <span className="rounded-md border border-slate-200 bg-white px-2.5 py-1 font-medium text-slate-300">
-                Next
-              </span>
-            )}
-          </div>
-        </div>
+        <Pagination page={pageNum} pageSize={PAGE_SIZE} total={total} hrefFor={(n) => buildUrl({ page: n })} />
       </div>
     </div>
   );

@@ -1,5 +1,7 @@
 "use client";
 
+import { Notice } from "@/components/ui/Notice";
+import { PageHeader } from "@/components/ui/PageHeader";
 import React, { useState, useEffect, useTransition } from "react";
 import {
   FileText,
@@ -50,6 +52,7 @@ function rematchStoredPosts(): void {
 
 export function CaptionManagementView({ initialCaptions }: CaptionManagementViewProps) {
   const [captions, setCaptions] = useState<CaptionWithStats[]>(initialCaptions);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [canonicalCaption, setCanonicalCaption] = useState("");
   const [isSubmitting, startSubmitting] = useTransition();
@@ -129,9 +132,10 @@ export function CaptionManagementView({ initialCaptions }: CaptionManagementView
       setCaptions((prev) =>
         prev.map((c) => (c.id === id ? { ...c, status: nextStatus } : c))
       );
+      setActionError(null);
       rematchStoredPosts();
     } else {
-      alert(`Failed to update caption status: ${result.error}`);
+      setActionError(`Could not update the caption: ${result.error}`);
     }
   };
 
@@ -239,25 +243,23 @@ export function CaptionManagementView({ initialCaptions }: CaptionManagementView
   };
 
   return (
-    <div className="max-w-7xl mx-auto space-y-8">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-            <FileText className="h-6 w-6 text-blue-600" />
-            Campaign Caption Registry
-          </h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Register official canonical captions. The ingestion engine matches volunteers’ posts against these texts.
-          </p>
-        </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Campaign Captions"
+        description="Add the official captions you want to detect. When the caption filter is on, stored posts are compared against these texts."
+        actions={
+          <div className="inline-flex shrink-0 items-center gap-2 rounded-full border border-amber-200/80 bg-amber-50 px-3.5 py-1.5 text-xs font-medium text-amber-800">
+            <Clock className="h-4 w-4 text-amber-600" />
+            <span>Changes apply the next time posts are collected</span>
+          </div>
+        }
+      />
 
-        {/* Schedule Notice Badge */}
-        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-medium bg-amber-50 text-amber-800 border border-amber-200/80 shrink-0">
-          <Clock className="h-4 w-4 text-amber-600" />
-          <span>Takes effect on the next scraper run</span>
-        </div>
-      </div>
+      {actionError && (
+        <Notice tone="error" onDismiss={() => setActionError(null)}>
+          {actionError}
+        </Notice>
+      )}
 
       {/* Registration Card */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
@@ -426,7 +428,7 @@ export function CaptionManagementView({ initialCaptions }: CaptionManagementView
                     onChange={handleCSVUpload}
                     className="hidden"
                   />
-                  <UploadCloud className="h-10 w-10 text-slate-400 mx-auto mb-2" />
+                  <UploadCloud className="h-10 w-10 text-slate-500 mx-auto mb-2" />
                   <p className="text-sm font-semibold text-slate-700">
                     {csvFileName ? `Selected: ${csvFileName}` : "Click or drag & drop a .CSV / Excel file here"}
                   </p>
@@ -516,15 +518,15 @@ export function CaptionManagementView({ initialCaptions }: CaptionManagementView
                           <span className="font-semibold text-slate-800 truncate">
                             #{idx + 1}. {item.title}
                           </span>
-                          <span className="text-[11px] text-slate-400">
+                          <span className="text-xs text-slate-500">
                             ({item.wordCount} words)
                           </span>
                         </div>
-                        <p className="text-slate-600 line-clamp-2 font-mono text-[11px]">
+                        <p className="text-slate-600 line-clamp-2 font-mono text-xs">
                           {item.canonicalCaption}
                         </p>
                         {item.errorMessage && (
-                          <p className="text-[11px] text-amber-700 mt-1 flex items-center gap-1">
+                          <p className="text-xs text-amber-700 mt-1 flex items-center gap-1">
                             <AlertTriangle className="h-3 w-3 shrink-0" />
                             {item.errorMessage}
                           </p>
@@ -532,7 +534,7 @@ export function CaptionManagementView({ initialCaptions }: CaptionManagementView
                       </div>
 
                       <span
-                        className={`shrink-0 px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
+                        className={`shrink-0 px-2 py-0.5 rounded text-xs font-semibold uppercase tracking-wider ${
                           item.status === "valid"
                             ? "bg-emerald-100 text-emerald-800"
                             : item.status === "duplicate_in_batch"
@@ -581,7 +583,7 @@ export function CaptionManagementView({ initialCaptions }: CaptionManagementView
           <div className="bg-white rounded-xl border border-slate-200 p-12 text-center text-slate-500">
             <FileText className="h-10 w-10 text-slate-300 mx-auto mb-3" />
             <p className="text-sm font-medium text-slate-700">No campaign captions registered yet</p>
-            <p className="text-xs text-slate-400 mt-1">
+            <p className="text-xs text-slate-500 mt-1">
               Add your first canonical caption above to begin tracking volunteer publications.
             </p>
           </div>
@@ -614,7 +616,7 @@ export function CaptionManagementView({ initialCaptions }: CaptionManagementView
                     </div>
 
                     <div className="flex items-center gap-2">
-                      <span suppressHydrationWarning className="text-xs text-slate-400">
+                      <span suppressHydrationWarning className="text-xs text-slate-500">
                         Released: {formatDisplayDate(caption.released_at)}
                       </span>
                       <button
@@ -657,7 +659,7 @@ export function CaptionManagementView({ initialCaptions }: CaptionManagementView
                       <span>{formatNumber(caption.totalViews)} Views</span>
                     </div>
 
-                    <div className="flex items-center gap-1 text-slate-400 ml-auto font-mono text-[11px]">
+                    <div className="flex items-center gap-1 text-slate-500 ml-auto font-mono text-xs">
                       <Hash className="h-3.5 w-3.5" />
                       <span title={caption.caption_hash}>
                         {caption.caption_hash.slice(0, 12)}...

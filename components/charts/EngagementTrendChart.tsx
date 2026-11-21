@@ -25,7 +25,7 @@ export interface EngagementTrendChartProps {
 export function EngagementTrendChart({ data, metricFilter = "all" }: EngagementTrendChartProps) {
   if (!data || data.length === 0) {
     return (
-      <div className="flex h-64 items-center justify-center text-sm text-slate-400">
+      <div className="flex h-64 items-center justify-center text-sm text-slate-500">
         No engagement trend data available yet.
       </div>
     );

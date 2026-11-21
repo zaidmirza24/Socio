@@ -5,6 +5,8 @@ import { fetchAllPages } from "@/lib/supabase/metrics-data";
 import { formatMetric, formatDisplayDate } from "@/lib/utils";
 import { PlatformFilter } from "@/components/analytics/PlatformFilter";
 import { PlatformBadge } from "@/components/ui/PlatformBadge";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Pagination } from "@/components/ui/Pagination";
 import { parsePlatformFilter } from "@/lib/platform";
 import type { PlatformType, VolunteerTotals } from "@/types/database";
 
@@ -121,35 +123,27 @@ export default async function VolunteersPage({ searchParams }: Props) {
 
   return (
     <div className="space-y-6">
-      <div className="border-b border-slate-200/80 pb-5 space-y-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-xl font-bold tracking-tight text-slate-900">Volunteers</h2>
-            <span className="text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200/60 px-2 py-0.5 rounded-full tabular-nums">
-              {sorted.length.toLocaleString("en-IN")}
-            </span>
-          </div>
-          <p className="mt-1 text-sm text-slate-500">
-            One row per volunteer, combining their Instagram, Facebook and X accounts. Totals are the latest count on
-            each stored post (lifetime), summed across platforms; for gains in a date range use the Analytics tab.
-            &quot;n/a&quot; means the platform did not report it.
-          </p>
-        </div>
-
+      <PageHeader
+        title="Volunteers"
+        badge={sorted.length.toLocaleString("en-IN")}
+        description="One row per volunteer, combining their Instagram, Facebook and X accounts. Totals are lifetime counts on stored posts; to see growth in a date range, use the Dashboard. “n/a” means the platform does not report that number."
+      >
         <form method="get" action="/dashboard/volunteers" className="flex flex-wrap items-center gap-2.5">
           {platform !== "all" && <input type="hidden" name="platform" value={platform} />}
           <div className="relative w-full max-w-sm">
-            <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
             <input
               type="search"
               name="q"
               defaultValue={search}
               placeholder="Search name or handle..."
+              aria-label="Search volunteers"
               className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-4 text-sm placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
           </div>
           <select
             name="sort"
+            aria-label="Sort by"
             defaultValue={sort}
             className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm text-slate-700"
           >
@@ -163,15 +157,15 @@ export default async function VolunteersPage({ searchParams }: Props) {
             type="submit"
             className="rounded-lg bg-slate-900 px-3.5 py-2 text-sm font-semibold text-white hover:bg-slate-800"
           >
-            Apply
+            Search
           </button>
           <PlatformFilter value={platform} />
         </form>
-      </div>
+      </PageHeader>
 
       {loadError && (
         <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-          Could not load volunteers: {loadError}. Make sure migration 20261122_volunteers.sql is applied.
+          Could not load volunteers: {loadError}. Ask a developer to check that the volunteers database migration has been applied.
         </div>
       )}
 
@@ -179,11 +173,11 @@ export default async function VolunteersPage({ searchParams }: Props) {
         <div className="rounded-xl border border-dashed border-slate-300 p-10 text-center text-sm text-slate-500">
           {all.length === 0 ? (
             <>
-              No volunteers yet. Add accounts in{" "}
+              No volunteers yet. Add some on the{" "}
               <Link href="/dashboard/accounts" className="text-blue-600 underline">
                 Accounts
-              </Link>
-              .
+              </Link>{" "}
+              page.
             </>
           ) : (
             "No volunteers match these filters."
@@ -230,7 +224,7 @@ export default async function VolunteersPage({ searchParams }: Props) {
                     <td className="px-4 py-3 text-right tabular-nums">{formatMetric(v.total_shares)}</td>
                     <td className="px-4 py-3 text-right tabular-nums">{formatMetric(v.total_views)}</td>
                     <td className="px-4 py-3 text-slate-500">
-                      {v.last_posted_at ? formatDisplayDate(v.last_posted_at) : "-"}
+                      {v.last_posted_at ? formatDisplayDate(v.last_posted_at) : "n/a"}
                     </td>
                   </tr>
                 ))}
@@ -238,31 +232,7 @@ export default async function VolunteersPage({ searchParams }: Props) {
             </table>
           </div>
 
-          <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50/60 px-4 py-3 text-xs text-slate-500">
-            <span>
-              {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, sorted.length)} of{" "}
-              {sorted.length.toLocaleString("en-IN")}
-            </span>
-            <div className="flex items-center gap-2">
-              {page > 1 ? (
-                <Link href={buildUrl(page - 1)} className="rounded-md border border-slate-200 bg-white px-2.5 py-1 font-medium text-slate-700">
-                  Previous
-                </Link>
-              ) : (
-                <span className="rounded-md border border-slate-200 bg-white px-2.5 py-1 font-medium text-slate-300">Previous</span>
-              )}
-              <span>
-                Page {page} / {totalPages}
-              </span>
-              {page < totalPages ? (
-                <Link href={buildUrl(page + 1)} className="rounded-md border border-slate-200 bg-white px-2.5 py-1 font-medium text-slate-700">
-                  Next
-                </Link>
-              ) : (
-                <span className="rounded-md border border-slate-200 bg-white px-2.5 py-1 font-medium text-slate-300">Next</span>
-              )}
-            </div>
-          </div>
+          <Pagination page={page} pageSize={PAGE_SIZE} total={sorted.length} hrefFor={buildUrl} />
         </div>
       )}
     </div>

@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { SidebarNav } from "./SidebarNav";
 import { SignOutButton } from "@/components/SignOutButton";
-import { X, ShieldCheck } from "lucide-react";
+import { X } from "lucide-react";
 
 interface MobileSidebarProps {
   isOpen: boolean;
@@ -46,16 +46,14 @@ export function MobileSidebar({ isOpen, onClose }: MobileSidebarProps) {
                 <span className="font-bold text-slate-900 text-sm tracking-tight block">
                   Socio Monitor
                 </span>
-                <span className="text-[10px] text-slate-400 block">
-                  Instagram Campaign Intel
-                </span>
+                <span className="text-xs text-slate-500 block">Campaign engagement tracker</span>
               </div>
             </div>
 
             <button
               onClick={onClose}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
-              aria-label="Close navigation"
+              className="p-1.5 rounded-lg text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition"
+              aria-label="Close navigation menu"
             >
               <X className="h-5 w-5" />
             </button>
@@ -68,10 +66,6 @@ export function MobileSidebar({ isOpen, onClose }: MobileSidebarProps) {
         {/* Drawer Footer */}
         <div className="p-4 border-t border-slate-200/80 bg-slate-50/40 space-y-3">
           <SignOutButton variant="sidebar" />
-          <div className="flex items-center justify-center gap-1.5 text-[10px] text-slate-400">
-            <ShieldCheck className="h-3 w-3 text-slate-400" />
-            <span>Private Vercel Cloud Build</span>
-          </div>
         </div>
       </div>
     </div>

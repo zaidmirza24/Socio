@@ -8,6 +8,8 @@ import type { PlatformType } from "@/types/database";
 const payloadSchema = z.object({
   jobType: z.enum(["discovery", "refresh"]).default("discovery"),
   postLimit: z.number().int().min(1).max(50).optional(),
+  /** Limit the run to one platform. Omit to run every enabled platform. */
+  platform: z.enum(["instagram", "facebook", "x"]).optional(),
 });
 
 interface PlatformRunResult {
@@ -37,12 +39,24 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   }
-  const { jobType, postLimit } = parsed.data;
+  const { jobType, postLimit, platform: onlyPlatform } = parsed.data;
 
   const platformSettings = await getPlatformSettings();
   const platforms: PlatformType[] = ["instagram"];
   if (platformSettings.facebook?.enabled) platforms.push("facebook");
   if (platformSettings.x?.enabled) platforms.push("x");
+  if (onlyPlatform) {
+    // Only honour an explicit platform when it is enabled in Settings.
+    const allowed = platforms.filter((p) => p === onlyPlatform);
+    platforms.length = 0;
+    platforms.push(...allowed);
+    if (platforms.length === 0) {
+      return NextResponse.json(
+        { error: `${onlyPlatform} is turned off. Enable it in Settings first.` },
+        { status: 400 }
+      );
+    }
+  }
 
   const results: PlatformRunResult[] = [];
   for (const platform of platforms) {
@@ -51,7 +65,7 @@ export async function POST(request: NextRequest) {
         const res = await triggerWeeklyRefresh({ platform });
         results.push({
           platform,
-          ok: res.success && res.jobIds.length > 0,
+          ok: res.success, // success with no runIds = nothing was due
           runIds: res.jobIds,
           message: res.message,
         });

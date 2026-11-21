@@ -68,7 +68,7 @@ export function DateRangeFilter({
       role="group"
       aria-label="Date Range Filter"
     >
-      <div className="flex items-center gap-1.5 pl-2 pr-1 text-slate-400">
+      <div className="flex items-center gap-1.5 pl-2 pr-1 text-slate-500">
         {isPending ? (
           <Loader2 className={`${isSmall ? "h-3.5 w-3.5" : "h-4 w-4"} animate-spin text-blue-600`} />
         ) : (

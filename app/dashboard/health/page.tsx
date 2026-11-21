@@ -14,6 +14,7 @@ import {
   Loader2,
   RefreshCw,
 } from "lucide-react";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { DateRangeFilter } from "@/components/analytics/DateRangeFilter";
 import { PlatformBadge } from "@/components/ui/PlatformBadge";
 import { formatDisplayDateTime } from "@/lib/utils";
@@ -126,12 +127,12 @@ export default function SystemHealthPage() {
         text:
           data.message ??
           (data.status === "SUCCEEDED"
-            ? `Ingested ${data.postsUpserted ?? 0} posts (safe to repeat: no duplicates are created).`
+            ? `Saved ${data.postsUpserted ?? 0} posts (safe to repeat: no duplicates are created).`
             : `Run is ${data.status ?? "still running"}.`),
       });
       await fetchRuns();
     } catch (err: unknown) {
-      setNotice({ tone: "error", text: err instanceof Error ? err.message : "Ingest failed" });
+      setNotice({ tone: "error", text: err instanceof Error ? err.message : "Could not save results" });
     } finally {
       setBusyRun(null);
     }
@@ -152,26 +153,19 @@ export default function SystemHealthPage() {
 
   return (
     <div className="space-y-8">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
-            <Activity className="h-6 w-6 text-blue-600" />
-            System Health & Execution Logs
-          </h1>
-          <p className="text-sm text-slate-500 mt-0.5">
-            Every scraper run the admin has started, with what it collected and what it cost. Start new runs from the
-            buttons in the top bar.
-          </p>
-        </div>
-        <button
-          onClick={() => void fetchRuns()}
-          className="inline-flex items-center gap-2 self-start rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 transition"
-          title="Refresh logs"
-        >
-          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-          Refresh
-        </button>
-      </div>
+      <PageHeader
+        title="Collection Runs"
+        description="Every data collection that has been started: what it collected, how long it took and what it cost. Start a new one with “Collect data” in the top bar."
+        actions={
+          <button
+            onClick={() => void fetchRuns()}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 transition hover:bg-slate-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            Reload
+          </button>
+        }
+      />
 
       {notice && (
         <div
@@ -241,10 +235,10 @@ export default function SystemHealthPage() {
           <div>
             <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
               <Database className="h-5 w-5 text-indigo-600" />
-              Collection Runs
+              Run history
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Showing {runs.length} runs (latest 200 max). Re-ingesting a run is idempotent: it never duplicates posts.
+              Showing {runs.length} run{runs.length === 1 ? "" : "s"} (latest 200 at most). “Save results” is safe to repeat; it never creates duplicate posts.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -270,7 +264,7 @@ export default function SystemHealthPage() {
 
         <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
           {loading ? (
-            <div className="p-10 flex flex-col items-center justify-center text-slate-400">
+            <div className="p-10 flex flex-col items-center justify-center text-slate-500">
               <Loader2 className="h-7 w-7 animate-spin text-blue-600 mb-2" />
               <span className="text-sm">Fetching run audit logs...</span>
             </div>
@@ -280,10 +274,10 @@ export default function SystemHealthPage() {
               <p className="text-sm font-semibold">{error}</p>
             </div>
           ) : runs.length === 0 ? (
-            <div className="p-10 text-center text-slate-400">
+            <div className="p-10 text-center text-slate-500">
               <Clock className="h-9 w-9 mx-auto mb-2 text-slate-300" />
               <p className="text-sm font-medium text-slate-600">No runs match these filters</p>
-              <p className="text-xs text-slate-400 mt-1">Try &quot;All Time&quot; or start a run from the top bar.</p>
+              <p className="text-xs text-slate-500 mt-1">Try &quot;All Time&quot; or start a run from the top bar.</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -317,7 +311,7 @@ export default function SystemHealthPage() {
                             {hasError && (
                               <button
                                 onClick={() => setExpanded(isOpen ? null : run.id)}
-                                className="text-slate-400 hover:text-slate-700"
+                                className="text-slate-500 hover:text-slate-700"
                                 aria-label={isOpen ? "Hide error details" : "Show error details"}
                               >
                                 {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
@@ -357,14 +351,14 @@ export default function SystemHealthPage() {
                                 onClick={() => void ingestNow(run)}
                                 disabled={busyRun === run.id}
                                 className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50"
-                                title="Check the Apify run and ingest its results (safe to repeat)"
+                                title="Check the Apify run and save its results (safe to repeat)"
                               >
                                 {busyRun === run.id ? (
                                   <Loader2 className="h-3 w-3 animate-spin" />
                                 ) : (
                                   <Download className="h-3 w-3" />
                                 )}
-                                {run.status === "failed" ? "Retry ingest" : "Ingest now"}
+                                {run.status === "failed" ? "Retry saving" : "Save results"}
                               </button>
                             ) : (
                               <span className="text-xs text-slate-300">-</span>
@@ -375,7 +369,7 @@ export default function SystemHealthPage() {
                           <tr className="bg-red-50/40">
                             <td />
                             <td colSpan={12} className="px-4 py-3">
-                              <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border border-red-200 bg-white p-3 text-[11px] text-red-800">
+                              <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border border-red-200 bg-white p-3 text-xs text-red-800">
                                 {errorText(run.error)}
                               </pre>
                             </td>

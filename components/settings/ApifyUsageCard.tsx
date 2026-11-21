@@ -10,16 +10,16 @@ const usd = (n: number | null | undefined, dp?: number): string => {
   return `$${n.toFixed(digits)}`;
 };
 
-const PLATFORM_LABEL: Record<string, string> = { instagram: "Instagram", facebook: "Facebook", x: "Twitter / X" };
+const PLATFORM_LABEL: Record<string, string> = { instagram: "Instagram", facebook: "Facebook", x: "X" };
 const JOB_LABEL: Record<string, string> = { discovery: "Daily discovery", refresh: "Weekly refresh", direct_url: "Single-post lookups" };
 
 function Tile({ label, value, hint, tone }: { label: string; value: string; hint?: string; tone?: "warn" | "bad" }) {
   const color = tone === "bad" ? "text-red-700" : tone === "warn" ? "text-amber-700" : "text-slate-900";
   return (
     <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3.5">
-      <div className="text-[11px] font-medium text-slate-500">{label}</div>
+      <div className="text-xs font-medium text-slate-500">{label}</div>
       <div className={`text-xl font-bold mt-0.5 ${color}`}>{value}</div>
-      {hint && <div className="text-[11px] text-slate-500 mt-0.5">{hint}</div>}
+      {hint && <div className="text-xs text-slate-500 mt-0.5">{hint}</div>}
     </div>
   );
 }
@@ -34,7 +34,7 @@ function BarList({ rows }: { rows: Array<{ label: string; usd: number; sub?: str
           <div className="flex justify-between text-xs">
             <span className="text-slate-700">{r.label}</span>
             <span className="font-mono text-slate-900">
-              {usd(r.usd)} {r.sub && <span className="text-slate-400">· {r.sub}</span>}
+              {usd(r.usd)} {r.sub && <span className="text-slate-500">· {r.sub}</span>}
             </span>
           </div>
           <div className="h-1.5 rounded-full bg-slate-100 mt-1">
@@ -128,10 +128,10 @@ export function ApifyUsageCard() {
     <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-5">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-100 pb-5">
         <div>
-          <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+          <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
             <Coins className="h-5 w-5 text-amber-600" />
-            Apify Credit Usage
-          </h3>
+            Apify usage and cost
+          </h2>
           <p className="text-xs text-slate-500 mt-1">
             Real cost of every scrape this platform started, pulled from Apify after each run. Billing cycle starts {s?.cycleStart ?? "…"}.
           </p>
@@ -148,7 +148,7 @@ export function ApifyUsageCard() {
       </div>
 
       {loading && !report && (
-        <div className="py-6 flex items-center justify-center gap-2 text-slate-400 text-xs">
+        <div className="py-6 flex items-center justify-center gap-2 text-slate-500 text-xs">
           <Loader2 className="h-4 w-4 animate-spin" /> Loading usage…
         </div>
       )}
@@ -209,7 +209,7 @@ export function ApifyUsageCard() {
                 <div className="text-slate-700">
                   Socio&apos;s share: <span className="font-mono font-semibold">{acct.socioSharePct ?? 0}%</span>
                   {" · "}Not logged by Socio: <span className="font-mono">{usd(acct.untrackedUsd, 2)}</span>
-                  <span className="text-slate-400"> (manual runs, other projects, storage)</span>
+                  <span className="text-slate-500"> (manual runs, other projects, storage)</span>
                 </div>
               </>
             ) : (
@@ -243,7 +243,7 @@ export function ApifyUsageCard() {
                 />
               ))}
             </div>
-            <div className="flex justify-between text-[10px] text-slate-400 mt-1">
+            <div className="flex justify-between text-xs text-slate-500 mt-1">
               <span>{s.daily[0]?.date}</span>
               <span>{s.daily[s.daily.length - 1]?.date}</span>
             </div>

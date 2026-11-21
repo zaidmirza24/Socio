@@ -14,7 +14,7 @@ export default async function CaptionsPage() {
     return (
       <div className="max-w-xl rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-2">
         <h1 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-          <FileText className="h-5 w-5 text-slate-400" />
+          <FileText className="h-5 w-5 text-slate-500" />
           Campaign Captions is turned off
         </h1>
         <p className="text-sm text-slate-500">

@@ -1,5 +1,6 @@
 "use client";
 
+import { Modal } from "@/components/ui/Modal";
 import React, { useMemo } from "react";
 import {
   X,
@@ -50,8 +51,8 @@ export function CaptionDiffModal({
   const similarityPercent = Math.round(item.similarityScore * 100);
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-4xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+    <Modal size="4xl" labelledBy="diff-title" className="overflow-hidden">
+      <div>
         {/* Modal Header */}
         <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50/70">
           <div className="flex items-center gap-3">
@@ -59,7 +60,7 @@ export function CaptionDiffModal({
               <Split className="h-5 w-5" />
             </div>
             <div>
-              <h3 className="font-bold text-slate-900 text-base">
+              <h3 id="diff-title" className="font-bold text-slate-900 text-base">
                 Side-by-Side Caption Review
               </h3>
               <p className="text-xs text-slate-500">
@@ -77,7 +78,7 @@ export function CaptionDiffModal({
             <button
               onClick={onClose}
               disabled={isProcessing}
-              className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-200/60 transition"
+              className="text-slate-500 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-200/60 transition"
             >
               <X className="h-5 w-5" />
             </button>
@@ -114,7 +115,7 @@ export function CaptionDiffModal({
               <span className="text-xs font-bold uppercase tracking-wider text-slate-700">
                 Official Canonical Caption
               </span>
-              <span className="text-[11px] text-red-600 font-medium">
+              <span className="text-xs text-red-600 font-medium">
                 Omissions in Red
               </span>
             </div>
@@ -142,7 +143,7 @@ export function CaptionDiffModal({
               <span className="text-xs font-bold uppercase tracking-wider text-slate-700">
                 Volunteer&apos;s Actual Post Caption
               </span>
-              <span className="text-[11px] text-emerald-600 font-medium">
+              <span className="text-xs text-emerald-600 font-medium">
                 Additions in Green
               </span>
             </div>
@@ -192,6 +193,6 @@ export function CaptionDiffModal({
           </div>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

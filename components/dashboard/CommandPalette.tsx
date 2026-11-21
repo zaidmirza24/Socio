@@ -3,26 +3,12 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useFeatureSettings } from "@/hooks/useFeatureSettings";
-import {
-  Search,
-  BarChart3,
-  FileText,
-  CheckSquare,
-  Users,
-  Layers,
-  Activity,
-  Settings,
-  Download,
-  Play,
-  ArrowRight,
-  ExternalLink,
-  X,
-  Sparkles,
-} from "lucide-react";
+import { Search, Users, Download, ArrowRight, X } from "lucide-react";
+import { NAV_ROUTES } from "./nav-config";
 
 interface NavOption {
   id: string;
-  category: "Navigation" | "Quick Actions" | "Volunteers";
+  category: "Pages" | "Actions" | "Volunteers";
   title: string;
   subtitle?: string;
   href?: string;
@@ -31,67 +17,21 @@ interface NavOption {
 }
 
 const STATIC_NAV_OPTIONS: NavOption[] = [
-  {
-    id: "nav-matrix",
-    category: "Navigation",
-    title: "Matrix & Overview",
-    subtitle: "Real-time volunteer x caption monitoring matrix",
-    href: "/dashboard",
-    icon: BarChart3,
-  },
-  {
-    id: "nav-captions",
-    category: "Navigation",
-    title: "Campaign Captions Registry",
-    subtitle: "Manage canonical campaign copy and imports",
-    href: "/dashboard/captions",
-    icon: FileText,
-  },
-  {
-    id: "nav-review",
-    category: "Navigation",
-    title: "Review Queue",
-    subtitle: "Approve or reject candidate post matches",
-    href: "/dashboard/review",
-    icon: CheckSquare,
-  },
-  {
-    id: "nav-accounts",
-    category: "Navigation",
-    title: "Volunteer Accounts Directory",
-    subtitle: "Manage monitored accounts and bulk import",
-    href: "/dashboard/accounts",
-    icon: Users,
-  },
-  {
-    id: "nav-posts",
-    category: "Navigation",
-    title: "Recent Monitored Posts",
-    subtitle: "Browse all ingested Instagram posts",
-    href: "/dashboard/posts",
-    icon: Layers,
-  },
-  {
-    id: "nav-health",
-    category: "Navigation",
-    title: "System Health & Run Audits",
-    subtitle: "Inspect Apify scraping runs and error logs",
-    href: "/dashboard/health",
-    icon: Activity,
-  },
-  {
-    id: "nav-settings",
-    category: "Navigation",
-    title: "Settings & Team Access",
-    subtitle: "Credentials, connections, and user management",
-    href: "/dashboard/settings",
-    icon: Settings,
-  },
+  ...NAV_ROUTES.map(
+    (r): NavOption => ({
+      id: `nav-${r.id}`,
+      category: "Pages",
+      title: r.label,
+      subtitle: r.description,
+      href: r.href,
+      icon: r.icon,
+    })
+  ),
   {
     id: "action-export",
-    category: "Quick Actions",
-    title: "Export Engagement Snapshots (CSV)",
-    subtitle: "Download all historical point-in-time metrics",
+    category: "Actions",
+    title: "Export engagement snapshots (CSV)",
+    subtitle: "Download every daily engagement record",
     href: "/api/export/snapshots",
     icon: Download,
   },
@@ -223,34 +163,39 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:p-6 md:p-20 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-100"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Search"
+      className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-[10vh] sm:pt-[14vh] bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-100"
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[80vh] animate-in zoom-in-95 duration-150"
+        className="relative w-full max-w-xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[75dvh] animate-in zoom-in-95 duration-150"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Search Input Bar */}
         <div className="relative flex items-center px-4 border-b border-slate-200">
-          <Search className="h-5 w-5 text-slate-400 shrink-0" />
+          <Search className="h-5 w-5 text-slate-500 shrink-0" />
           <input
             ref={inputRef}
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleInputKeyDown}
-            placeholder="Type a page, command, or search volunteer @handle..."
+            placeholder="Search pages, or a volunteer name or @handle..."
+            aria-label="Search pages and volunteers"
             className="w-full py-4 pl-3 pr-8 text-sm text-slate-900 placeholder:text-slate-400 bg-transparent focus:outline-none"
           />
           {query ? (
             <button
               onClick={() => setQuery("")}
-              className="text-slate-400 hover:text-slate-600 p-1"
+              aria-label="Clear search"
+              className="text-slate-500 hover:text-slate-600 p-1"
             >
               <X className="h-4 w-4" />
             </button>
           ) : (
-            <kbd className="hidden sm:inline-block text-[10px] font-mono text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+            <kbd className="hidden sm:inline-block text-xs font-mono text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
               ESC
             </kbd>
           )}
@@ -259,11 +204,11 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         {/* Results List */}
         <div className="overflow-y-auto p-2 divide-y divide-slate-100">
           {filteredOptions.length === 0 ? (
-            <div className="p-8 text-center text-slate-400">
+            <div className="p-8 text-center text-slate-500">
               <Search className="h-8 w-8 mx-auto mb-2 text-slate-300" />
-              <p className="text-xs font-semibold text-slate-700">No matching destinations found</p>
-              <p className="text-[11px] text-slate-400 mt-0.5">
-                Try searching for &quot;Matrix&quot;, &quot;Captions&quot;, &quot;Review&quot;, or a volunteer name.
+              <p className="text-xs font-semibold text-slate-700">Nothing found</p>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Try a page name like &quot;Posts&quot; or &quot;Settings&quot;, or a volunteer name or @handle.
               </p>
             </div>
           ) : (
@@ -300,7 +245,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
                             {opt.title}
                           </span>
                           <span
-                            className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.2 rounded ${
+                            className={`text-xs font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
                               isSelected
                                 ? "bg-blue-200/80 text-blue-800"
                                 : "bg-slate-100 text-slate-500"
@@ -310,7 +255,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
                           </span>
                         </div>
                         {opt.subtitle && (
-                          <div className="text-[11px] text-slate-400 truncate">
+                          <div className="text-xs text-slate-500 truncate">
                             {opt.subtitle}
                           </div>
                         )}
@@ -330,7 +275,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         </div>
 
         {/* Footer with tips */}
-        <div className="px-4 py-2 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
+        <div className="px-4 py-2 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
           <div className="flex items-center gap-3">
             <span>
               <kbd className="font-mono bg-white px-1 py-0.5 rounded border border-slate-200">↑</kbd>
@@ -340,7 +285,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
               <kbd className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">↵</kbd> to select
             </span>
           </div>
-          <span>Socio Fast Jump</span>
+          <span>Esc to close</span>
         </div>
       </div>
     </div>

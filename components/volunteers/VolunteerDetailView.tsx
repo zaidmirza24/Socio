@@ -70,7 +70,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
     platform === "facebook"
       ? "Facebook"
       : platform === "x"
-      ? "X / Twitter"
+      ? "X"
       : "Instagram";
 
   const platformProfileUrl =
@@ -221,7 +221,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
               className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50/80 hover:bg-white text-slate-600 hover:text-blue-600 text-xs font-semibold transition"
               title="View this volunteer's post cells across active campaigns in the Matrix"
             >
-              <Grid className="h-3.5 w-3.5 text-slate-400" />
+              <Grid className="h-3.5 w-3.5 text-slate-500" />
               <span>View in Matrix</span>
             </Link>
           ) : (
@@ -230,7 +230,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
               className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50/80 hover:bg-white text-slate-600 hover:text-blue-600 text-xs font-semibold transition"
               title="View ranking and comparison in Volunteer Leaderboard"
             >
-              <BarChart3 className="h-3.5 w-3.5 text-slate-400" />
+              <BarChart3 className="h-3.5 w-3.5 text-slate-500" />
               <span>View Leaderboard</span>
             </Link>
           )}
@@ -239,7 +239,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
             href="/dashboard/accounts"
             className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50/80 hover:bg-white text-slate-600 hover:text-blue-600 text-xs font-semibold transition"
           >
-            <Users className="h-3.5 w-3.5 text-slate-400" />
+            <Users className="h-3.5 w-3.5 text-slate-500" />
             <span>Directory</span>
           </Link>
         </div>
@@ -274,7 +274,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
                       account.status === "active" ? "bg-emerald-500" : "bg-amber-500"
                     }`}
                   />
-                  {account.status.toUpperCase()}
+                  {account.status === "active" ? "Active" : "Paused"}
                 </span>
               </div>
 
@@ -288,7 +288,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
                   {copiedHandle ? (
                     <Check className="h-3.5 w-3.5 text-emerald-600" />
                   ) : (
-                    <Copy className="h-3 w-3 text-slate-400" />
+                    <Copy className="h-3 w-3 text-slate-500" />
                   )}
                 </button>
                 <span>·</span>
@@ -348,7 +348,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
               {metrics.totalMonitoredPosts}
             </span>
           </div>
-          <span className="mt-1 block text-xs text-slate-400">
+          <span className="mt-1 block text-xs text-slate-500">
             {dateFilter === "today"
               ? "Recorded today"
               : dateFilter === "7d"
@@ -376,7 +376,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
               {formatNumber(metrics.totalLikes)}
             </span>
           </div>
-          <span className="mt-1 block text-xs text-slate-400">Aggregated across posts</span>
+          <span className="mt-1 block text-xs text-slate-500">Aggregated across posts</span>
         </div>
 
         {/* Total Comments */}
@@ -394,7 +394,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
               {formatNumber(metrics.totalComments)}
             </span>
           </div>
-          <span className="mt-1 block text-xs text-slate-400">Audience replies & discussions</span>
+          <span className="mt-1 block text-xs text-slate-500">Audience replies & discussions</span>
         </div>
 
         {/* Avg Engagement / Post */}
@@ -412,7 +412,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
               {formatNumber(metrics.avgEngagementPerPost)}
             </span>
           </div>
-          <span className="mt-1 block text-xs text-slate-400">Likes + comments / post</span>
+          <span className="mt-1 block text-xs text-slate-500">Likes + comments / post</span>
         </div>
       </div>
 
@@ -453,7 +453,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
           <div className="flex flex-wrap items-center gap-3">
             {/* Search */}
             <div className="relative">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+              <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
               <input
                 type="text"
                 placeholder="Search caption..."
@@ -507,7 +507,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
         {viewMode === "grid" && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
             {filteredPosts.length === 0 ? (
-              <div className="col-span-full rounded-xl border border-slate-200 bg-white p-12 text-center text-sm text-slate-400">
+              <div className="col-span-full rounded-xl border border-slate-200 bg-white p-12 text-center text-sm text-slate-500">
                 No posts match the filter.
               </div>
             ) : (
@@ -518,7 +518,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
                 >
                   <div>
                     {/* Top row: Media type tag + Posted Date */}
-                    <div className="flex items-center justify-between text-xs text-slate-400 mb-3">
+                    <div className="flex items-center justify-between text-xs text-slate-500 mb-3">
                       <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-medium">
                         {post.mediaType}
                       </span>
@@ -530,7 +530,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
 
                     {/* Caption Preview */}
                     <p className="text-sm text-slate-800 font-normal leading-relaxed line-clamp-3 mb-4">
-                      {post.caption || <span className="text-slate-400 italic">No caption provided</span>}
+                      {post.caption || <span className="text-slate-500 italic">No caption provided</span>}
                     </p>
                   </div>
 
@@ -538,7 +538,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
                     {/* Metrics Bar */}
                     <div className="grid grid-cols-3 gap-2 py-3 px-3 rounded-xl bg-slate-50 border border-slate-100 mb-4 text-center">
                       <div>
-                        <span className="flex items-center justify-center gap-1 text-[11px] font-medium text-slate-500">
+                        <span className="flex items-center justify-center gap-1 text-xs font-medium text-slate-500">
                           <Heart className="h-3 w-3 text-rose-500" /> Likes
                         </span>
                         <span className="text-sm font-bold text-slate-900">
@@ -546,7 +546,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
                         </span>
                       </div>
                       <div>
-                        <span className="flex items-center justify-center gap-1 text-[11px] font-medium text-slate-500">
+                        <span className="flex items-center justify-center gap-1 text-xs font-medium text-slate-500">
                           <MessageCircle className="h-3 w-3 text-teal-600" /> Comments
                         </span>
                         <span className="text-sm font-bold text-slate-900">
@@ -554,7 +554,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
                         </span>
                       </div>
                       <div>
-                        <span className="flex items-center justify-center gap-1 text-[11px] font-medium text-slate-500">
+                        <span className="flex items-center justify-center gap-1 text-xs font-medium text-slate-500">
                           <Eye className="h-3 w-3 text-amber-500" /> Views
                         </span>
                         <span className="text-sm font-bold text-slate-900">
@@ -577,7 +577,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
                           <ExternalLink className="h-3 w-3 opacity-70" />
                         </a>
                       ) : (
-                        <span className="flex-1 text-center text-xs text-slate-400 py-2">
+                        <span className="flex-1 text-center text-xs text-slate-500 py-2">
                           Link unavailable
                         </span>
                       )}
@@ -622,7 +622,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
                 <tbody className="divide-y divide-slate-100">
                   {filteredPosts.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-6 py-10 text-center text-sm text-slate-400">
+                      <td colSpan={7} className="px-6 py-10 text-center text-sm text-slate-500">
                         No posts found matching filter.
                       </td>
                     </tr>
@@ -630,7 +630,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
                     filteredPosts.map((post) => (
                       <tr key={post.id} className="hover:bg-slate-50 transition">
                         <td className="px-6 py-3.5 max-w-sm truncate text-slate-900 font-normal" title={post.caption || ""}>
-                          {post.caption || <span className="text-slate-400 italic">No caption</span>}
+                          {post.caption || <span className="text-slate-500 italic">No caption</span>}
                         </td>
                         <td className="px-6 py-3.5">
                           <span className="text-xs px-2 py-0.5 rounded bg-slate-100 font-medium text-slate-600">
@@ -665,7 +665,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
                             {post.url && (
                               <button
                                 onClick={() => handleCopy(post.url, post.id)}
-                                className="p-1 rounded text-slate-400 hover:text-slate-700 transition"
+                                className="p-1 rounded text-slate-500 hover:text-slate-700 transition"
                                 title="Copy link"
                               >
                                 {copiedLink === post.id ? (

@@ -1,5 +1,9 @@
 "use client";
 
+import { platformLabel } from "@/lib/platform";
+import { Modal } from "@/components/ui/Modal";
+import { Notice } from "@/components/ui/Notice";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useState, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import {
@@ -24,7 +28,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { TriggerScraperButton } from "@/components/TriggerScraperButton";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { formatNumber, formatMetric } from "@/lib/utils";
 
 interface AccountItem {
@@ -61,6 +65,9 @@ interface GridRow {
 export default function AccountsPage() {
   const [accounts, setAccounts] = useState<AccountItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [pageError, setPageError] = useState<string | null>(null);
+  const [accountToDelete, setAccountToDelete] = useState<AccountItem | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Search & Filter state
@@ -115,6 +122,10 @@ export default function AccountsPage() {
   useEffect(() => {
     fetchAccounts();
   }, []);
+
+  const closeAddModal = () => setIsAddModalOpen(false);
+  const closeEditModal = () => setEditingAccount(null);
+  const closeBulkModal = () => setIsBulkModalOpen(false);
 
   const openAddModal = () => {
     setVolunteerNameInput("");
@@ -255,27 +266,35 @@ export default function AccountsPage() {
         }),
       });
       if (res.ok) {
+        setPageError(null);
         fetchAccounts();
+      } else {
+        setPageError(`Could not ${newStatus === "paused" ? "pause" : "resume"} @${acc.handle}. Please try again.`);
       }
     } catch {
-      // Handled silently
+      setPageError(`Could not reach the server to update @${acc.handle}.`);
     }
   };
 
-  const handleDeleteAccount = async (acc: AccountItem) => {
-    if (!window.confirm(`Are you sure you want to remove @${acc.handle} (${acc.platform})? Associated posts and snapshot history will be deleted.`)) {
-      return;
-    }
+  const handleDeleteAccount = (acc: AccountItem) => setAccountToDelete(acc);
 
+  const confirmDeleteAccount = async () => {
+    const acc = accountToDelete;
+    if (!acc) return;
+    setDeleting(true);
     try {
-      const res = await fetch(`/api/accounts?id=${acc.id}`, {
-        method: "DELETE",
-      });
+      const res = await fetch(`/api/accounts?id=${acc.id}`, { method: "DELETE" });
       if (res.ok) {
+        setPageError(null);
         fetchAccounts();
+      } else {
+        setPageError(`Could not delete @${acc.handle}. Please try again.`);
       }
     } catch {
-      // Handled silently
+      setPageError(`Could not reach the server to delete @${acc.handle}.`);
+    } finally {
+      setDeleting(false);
+      setAccountToDelete(null);
     }
   };
 
@@ -552,56 +571,63 @@ export default function AccountsPage() {
 
   return (
     <div className="space-y-6">
-      {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
-            <Users className="h-6 w-6 text-blue-600" />
-            Monitored Accounts
-          </h1>
-          <p className="text-sm text-slate-500 mt-0.5">
-            Manage volunteer profiles (Instagram, Facebook, Twitter / X) tracked by the scraper.
-          </p>
-        </div>
-        <div className="flex items-center gap-2.5">
-          {/* Bulk Add Button */}
-          <button
-            onClick={openBulkModal}
-            className="inline-flex items-center gap-2 rounded-lg bg-blue-50 border border-blue-200 px-3.5 py-2 text-sm font-semibold text-blue-700 shadow-sm hover:bg-blue-100 transition"
-          >
-            <UploadCloud className="h-4 w-4" />
-            Bulk Add Volunteers
-          </button>
+      <PageHeader
+        title="Accounts"
+        description="The social media accounts collected on every run. Add accounts one at a time or import many at once; pause an account to skip it without losing its history."
+        actions={
+          <>
+            <button
+              onClick={openBulkModal}
+              className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3.5 py-2 text-sm font-semibold text-blue-700 shadow-sm transition hover:bg-blue-100"
+            >
+              <UploadCloud className="h-4 w-4" />
+              Import many
+            </button>
+            <button
+              onClick={openAddModal}
+              className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+            >
+              <Plus className="h-4 w-4" />
+              Add account
+            </button>
+          </>
+        }
+      />
 
-          {/* Single Add Button */}
-          <button
-            onClick={openAddModal}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition"
-          >
-            <Plus className="h-4 w-4" />
-            Add Single
-          </button>
+      {pageError && (
+        <Notice tone="error" onDismiss={() => setPageError(null)}>
+          {pageError}
+        </Notice>
+      )}
 
-          <TriggerScraperButton onCompleted={fetchAccounts} />
-        </div>
-      </div>
+      <ConfirmDialog
+        open={accountToDelete !== null}
+        title="Delete this account?"
+        confirmLabel="Delete account"
+        danger
+        busy={deleting}
+        onConfirm={confirmDeleteAccount}
+        onCancel={() => setAccountToDelete(null)}
+      >
+        <strong>@{accountToDelete?.handle}</strong> on {accountToDelete ? platformLabel(accountToDelete.platform) : ""} will be removed, along with all of its collected posts and engagement history. This can&apos;t be undone. To keep the history, pause the account instead.
+      </ConfirmDialog>
 
       {/* Summary KPI Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Accounts</span>
+          <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Accounts</span>
           <div className="mt-1 text-2xl font-bold text-slate-900">{totalAccounts}</div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Active Targets</span>
+          <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Active</span>
           <div className="mt-1 text-2xl font-bold text-emerald-600">{activeCount}</div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Posts Tracked</span>
+          <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Posts collected</span>
           <div className="mt-1 text-2xl font-bold text-blue-600">{totalPostsTracked}</div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Audience</span>
+          <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total followers</span>
           <div suppressHydrationWarning className="mt-1 text-2xl font-bold text-slate-900">{formatNumber(totalFollowers)}</div>
         </div>
       </div>
@@ -609,7 +635,7 @@ export default function AccountsPage() {
       {/* Filter and Search Bar */}
       <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
         <div className="relative w-full md:w-80">
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+          <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
           <input
             type="text"
             placeholder="Search by volunteer or handle..."
@@ -630,7 +656,7 @@ export default function AccountsPage() {
                   : "text-slate-600 hover:text-slate-900"
               }`}
             >
-              All Platforms
+              All platforms
             </button>
             <button
               onClick={() => setPlatformFilter("instagram")}
@@ -641,7 +667,7 @@ export default function AccountsPage() {
               }`}
             >
               <Instagram className="h-3 w-3" />
-              IG
+              Instagram
             </button>
             <button
               onClick={() => setPlatformFilter("facebook")}
@@ -652,7 +678,7 @@ export default function AccountsPage() {
               }`}
             >
               <Facebook className="h-3 w-3" />
-              FB
+              Facebook
             </button>
             <button
               onClick={() => setPlatformFilter("x")}
@@ -686,8 +712,8 @@ export default function AccountsPage() {
 
           <button
             onClick={fetchAccounts}
-            className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-            title="Refresh accounts"
+            className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-600"
+            title="Reload accounts" aria-label="Reload accounts"
           >
             <RefreshCw className="h-4 w-4" />
           </button>
@@ -697,7 +723,7 @@ export default function AccountsPage() {
       {/* Main Table */}
       <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
         {loading ? (
-          <div className="p-12 flex flex-col items-center justify-center text-slate-400">
+          <div className="p-12 flex flex-col items-center justify-center text-slate-500">
             <Loader2 className="h-8 w-8 animate-spin text-blue-600 mb-2" />
             <span className="text-sm">Loading accounts from database...</span>
           </div>
@@ -713,13 +739,13 @@ export default function AccountsPage() {
             </button>
           </div>
         ) : filteredAccounts.length === 0 ? (
-          <div className="p-12 text-center text-slate-400">
+          <div className="p-12 text-center text-slate-500">
             <Users className="h-10 w-10 mx-auto mb-2 text-slate-300" />
             <p className="text-sm font-medium text-slate-600">No accounts found</p>
-            <p className="text-xs text-slate-400 mt-1">
+            <p className="text-xs text-slate-500 mt-1">
               {searchQuery || platformFilter !== "all" || statusFilter !== "all"
                 ? "Try refining your search or filter criteria."
-                : "Click 'Bulk Add Volunteers' or 'Add Single' to enroll profiles."}
+                : "Use “Add account” or “Import many” to start monitoring profiles."}
             </p>
           </div>
         ) : (
@@ -728,12 +754,12 @@ export default function AccountsPage() {
               <thead className="bg-slate-50 text-xs uppercase font-semibold text-slate-500 border-b border-slate-200">
                 <tr>
                   <th className="px-6 py-3.5">Volunteer</th>
-                  <th className="px-6 py-3.5">Account Handle</th>
+                  <th className="px-6 py-3.5">Handle</th>
                   <th className="px-6 py-3.5">Platform</th>
-                  <th className="px-6 py-3.5">Scraper Status</th>
-                  <th className="px-6 py-3.5 text-right">Posts Tracked</th>
+                  <th className="px-6 py-3.5">Collection</th>
+                  <th className="px-6 py-3.5 text-right">Posts</th>
                   <th className="px-6 py-3.5 text-right">Followers</th>
-                  <th className="px-6 py-3.5 text-right">Actions</th>
+                  <th className="px-6 py-3.5 text-right"><span className="sr-only">Actions</span></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
@@ -744,7 +770,7 @@ export default function AccountsPage() {
                         href={`/dashboard/volunteers/${account.handle}?platform=${account.platform}`}
                         className="flex items-center gap-2 hover:text-blue-600 hover:underline"
                       >
-                        <UserCheck className="h-4 w-4 text-slate-400 shrink-0" />
+                        <UserCheck className="h-4 w-4 text-slate-500 shrink-0" />
                         {account.volunteer_name}
                       </Link>
                     </td>
@@ -765,7 +791,7 @@ export default function AccountsPage() {
                       ) : account.platform === "x" ? (
                         <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-slate-900 text-white font-medium border border-slate-700">
                           <Twitter className="h-3 w-3" />
-                          Twitter / X
+                          X
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-pink-50 text-pink-700 font-medium border border-pink-200">
@@ -793,11 +819,11 @@ export default function AccountsPage() {
                       <div className="flex items-center justify-end gap-1.5">
                         <button
                           onClick={() => handleToggleStatus(account)}
-                          title={account.status === "active" ? "Pause scraping" : "Activate scraping"}
+                          title={account.status === "active" ? "Pause (skip on collection runs)" : "Resume collection"}
                           className={`p-1.5 rounded-lg transition ${
                             account.status === "active"
-                              ? "text-slate-400 hover:text-amber-600 hover:bg-amber-50"
-                              : "text-slate-400 hover:text-emerald-600 hover:bg-emerald-50"
+                              ? "text-slate-500 hover:text-amber-600 hover:bg-amber-50"
+                              : "text-slate-500 hover:text-emerald-600 hover:bg-emerald-50"
                           }`}
                         >
                           {account.status === "active" ? (
@@ -808,15 +834,15 @@ export default function AccountsPage() {
                         </button>
                         <button
                           onClick={() => openEditModal(account)}
-                          title="Edit Account"
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition"
+                          title="Edit account" aria-label={`Edit @${account.handle}`}
+                          className="p-1.5 rounded-lg text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition"
                         >
                           <Edit2 className="h-4 w-4" />
                         </button>
                         <button
                           onClick={() => handleDeleteAccount(account)}
-                          title="Delete Account"
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition"
+                          title="Delete account" aria-label={`Delete @${account.handle}`}
+                          className="p-1.5 rounded-lg text-slate-500 hover:text-red-600 hover:bg-red-50 transition"
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>
@@ -834,8 +860,8 @@ export default function AccountsPage() {
       {/* BULK ADD VOLUNTEERS MODAL - Best-in-Class UI/UX                          */}
       {/* ========================================================================= */}
       {isBulkModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className="w-full max-w-3xl rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden my-8 flex flex-col max-h-[90vh]">
+        <Modal size="3xl" labelledBy="bulk-title" onClose={closeBulkModal} className="flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden">
+          <div className="flex min-h-0 flex-1 flex-col">
             {/* Modal Header */}
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
               <div className="flex items-center gap-3">
@@ -843,8 +869,8 @@ export default function AccountsPage() {
                   <UploadCloud className="h-5 w-5" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-slate-900">
-                    Bulk Import Volunteers
+                  <h3 id="bulk-title" className="text-lg font-bold text-slate-900">
+                    Import many accounts
                   </h3>
                   <p className="text-xs text-slate-500">
                     Paste from Google Sheets / Excel, upload a CSV, or use the interactive grid.
@@ -853,7 +879,7 @@ export default function AccountsPage() {
               </div>
               <button
                 onClick={() => setIsBulkModalOpen(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition"
+                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-600 hover:bg-slate-100 transition"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -917,12 +943,12 @@ export default function AccountsPage() {
                       }`}
                     >
                       <Twitter className="h-3.5 w-3.5" />
-                      Twitter / X
+                      X
                     </button>
                   </div>
                 </div>
 
-                <div className="text-[11px] text-slate-500 italic">
+                <div className="text-xs text-slate-500 italic">
                   💡 URLs like <span className="font-mono text-slate-700">facebook.com/...</span> or <span className="font-mono text-slate-700">x.com/...</span> auto-detect platform
                 </div>
               </div>
@@ -1026,7 +1052,7 @@ export default function AccountsPage() {
               {bulkMode === "grid" && (
                 <div className="border border-slate-200 rounded-xl overflow-hidden max-h-56 overflow-y-auto">
                   <table className="w-full text-left text-xs">
-                    <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200 uppercase tracking-wider text-[10px]">
+                    <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200 uppercase tracking-wider text-xs">
                       <tr>
                         <th className="px-3 py-2">Volunteer Name</th>
                         <th className="px-3 py-2">Platform</th>
@@ -1063,12 +1089,12 @@ export default function AccountsPage() {
                             >
                               <option value="instagram">Instagram</option>
                               <option value="facebook">Facebook</option>
-                              <option value="x">Twitter / X</option>
+                              <option value="x">X</option>
                             </select>
                           </td>
                           <td className="p-2">
                             <div className="relative">
-                              <span className="absolute left-2 top-1 text-slate-400">@</span>
+                              <span className="absolute left-2 top-1 text-slate-500">@</span>
                               <input
                                 type="text"
                                 placeholder="handle or URL"
@@ -1100,7 +1126,7 @@ export default function AccountsPage() {
                             <button
                               type="button"
                               onClick={() => handleDeleteGridRow(row.id)}
-                              className="text-slate-400 hover:text-red-500 p-1"
+                              className="text-slate-500 hover:text-red-500 p-1"
                               title="Delete row"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
@@ -1125,20 +1151,20 @@ export default function AccountsPage() {
                     </span>
                   </div>
                   {parsedVolunteers.some((p) => p.isExisting) && (
-                    <span className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
+                    <span className="text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
                       Existing handles will be refreshed (idempotent upsert)
                     </span>
                   )}
                 </div>
 
                 {parsedVolunteers.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-xs text-slate-400">
+                  <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-xs text-slate-500">
                     No accounts parsed yet. Paste lines above or fill in the grid to preview.
                   </div>
                 ) : (
                   <div className="rounded-xl border border-slate-200 overflow-hidden max-h-48 overflow-y-auto">
                     <table className="w-full text-left text-xs">
-                      <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200 uppercase tracking-wider text-[10px]">
+                      <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200 uppercase tracking-wider text-xs">
                         <tr>
                           <th className="px-3 py-2">Volunteer</th>
                           <th className="px-3 py-2">Platform</th>
@@ -1155,15 +1181,15 @@ export default function AccountsPage() {
                             </td>
                             <td className="px-3 py-2">
                               {item.platform === "facebook" ? (
-                                <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 font-medium border border-blue-200">
+                                <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 font-medium border border-blue-200">
                                   <Facebook className="h-2.5 w-2.5" /> Facebook
                                 </span>
                               ) : item.platform === "x" ? (
-                                <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-slate-900 text-white font-medium border border-slate-700">
-                                  <Twitter className="h-2.5 w-2.5" /> Twitter / X
+                                <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-slate-900 text-white font-medium border border-slate-700">
+                                  <Twitter className="h-2.5 w-2.5" /> X
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-pink-50 text-pink-700 font-medium border border-pink-200">
+                                <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-pink-50 text-pink-700 font-medium border border-pink-200">
                                   <Instagram className="h-2.5 w-2.5" /> Instagram
                                 </span>
                               )}
@@ -1173,7 +1199,7 @@ export default function AccountsPage() {
                             </td>
                             <td className="px-3 py-2">
                               <span
-                                className={`inline-block px-1.5 py-0.5 text-[10px] rounded font-semibold uppercase ${
+                                className={`inline-block px-1.5 py-0.5 text-xs rounded font-semibold uppercase ${
                                   item.status === "active"
                                     ? "bg-emerald-50 text-emerald-700"
                                     : "bg-slate-100 text-slate-600"
@@ -1184,22 +1210,22 @@ export default function AccountsPage() {
                             </td>
                             <td className="px-3 py-2 text-right">
                               {item.isDuplicateInBatch ? (
-                                <span className="inline-flex items-center gap-1 text-[11px] text-amber-600 font-medium">
+                                <span className="inline-flex items-center gap-1 text-xs text-amber-600 font-medium">
                                   <AlertCircle className="h-3 w-3" />
                                   Duplicate in batch
                                 </span>
                               ) : item.isExisting ? (
-                                <span className="inline-flex items-center gap-1 text-[11px] text-blue-600 font-medium">
+                                <span className="inline-flex items-center gap-1 text-xs text-blue-600 font-medium">
                                   <RefreshCw className="h-3 w-3" />
                                   Updates existing
                                 </span>
                               ) : item.isValid ? (
-                                <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 font-medium">
+                                <span className="inline-flex items-center gap-1 text-xs text-emerald-600 font-medium">
                                   <CheckCircle2 className="h-3 w-3" />
                                   New account
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center gap-1 text-[11px] text-red-500 font-medium">
+                                <span className="inline-flex items-center gap-1 text-xs text-red-500 font-medium">
                                   <AlertCircle className="h-3 w-3" />
                                   Invalid
                                 </span>
@@ -1250,19 +1276,19 @@ export default function AccountsPage() {
               </div>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {/* Single Add Account Modal */}
       {isAddModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-slate-100">
-            <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+        <Modal size="md" labelledBy="account-add-title" onClose={closeAddModal} className="p-6">
+          <div>
+            <h3 id="account-add-title" className="text-lg font-bold text-slate-900 flex items-center gap-2">
               <Plus className="h-5 w-5 text-blue-600" />
-              Add Monitored Account
+              Add account
             </h3>
             <p className="text-xs text-slate-500 mt-1">
-              Add a volunteer profile. The on-demand scraper will target this account when you run the scraper.
+              Add a volunteer’s profile. It is collected the next time you run “Collect data”.
             </p>
 
             <form onSubmit={handleCreateAccount} className="mt-5 space-y-4">
@@ -1313,7 +1339,7 @@ export default function AccountsPage() {
                     }`}
                   >
                     <Twitter className="h-3.5 w-3.5" />
-                    Twitter / X
+                    X
                   </button>
                 </div>
               </div>
@@ -1337,11 +1363,11 @@ export default function AccountsPage() {
                   {platformInput === "facebook"
                     ? "Facebook Profile / Page Handle"
                     : platformInput === "x"
-                    ? "Twitter / X Handle"
+                    ? "X Handle"
                     : "Instagram Handle"}
                 </label>
                 <div className="relative">
-                  <span className="absolute left-3 top-2 text-sm text-slate-400">@</span>
+                  <span className="absolute left-3 top-2 text-sm text-slate-500">@</span>
                   <input
                     type="text"
                     required
@@ -1357,7 +1383,7 @@ export default function AccountsPage() {
                     className="w-full rounded-lg border border-slate-300 pl-7 pr-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
                   />
                 </div>
-                <p className="text-[11px] text-slate-400 mt-1">
+                <p className="text-xs text-slate-500 mt-1">
                   Pasting full URLs like <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-600">https://{platformInput === "facebook" ? "facebook.com/username" : platformInput === "x" ? "x.com/username" : "instagram.com/username"}</code> will automatically normalize the handle.
                 </p>
               </div>
@@ -1371,8 +1397,8 @@ export default function AccountsPage() {
                   onChange={(e) => setStatusInput(e.target.value as "active" | "paused")}
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 >
-                  <option value="active">Active (Targeted by scraper)</option>
-                  <option value="paused">Paused (Skipped by scraper)</option>
+                  <option value="active">Active (collected on every run)</option>
+                  <option value="paused">Paused (skipped, history is kept)</option>
                 </select>
               </div>
 
@@ -1395,16 +1421,16 @@ export default function AccountsPage() {
               </div>
             </form>
           </div>
-        </div>
+        </Modal>
       )}
 
       {/* Edit Account Modal */}
       {editingAccount && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-slate-100">
-            <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+        <Modal size="md" labelledBy="account-edit-title" onClose={closeEditModal} className="p-6">
+          <div>
+            <h3 id="account-edit-title" className="text-lg font-bold text-slate-900 flex items-center gap-2">
               <Edit2 className="h-5 w-5 text-blue-600" />
-              Edit Account
+              Edit account
             </h3>
 
             <form onSubmit={handleUpdateAccount} className="mt-5 space-y-4">
@@ -1429,7 +1455,7 @@ export default function AccountsPage() {
                   ) : editingAccount.platform === "x" ? (
                     <>
                       <Twitter className="h-4 w-4 text-slate-800" />
-                      <span className="text-xs font-semibold text-slate-800">Twitter / X Account</span>
+                      <span className="text-xs font-semibold text-slate-800">X Account</span>
                     </>
                   ) : (
                     <>
@@ -1458,7 +1484,7 @@ export default function AccountsPage() {
                   Account Handle
                 </label>
                 <div className="relative">
-                  <span className="absolute left-3 top-2 text-sm text-slate-400">@</span>
+                  <span className="absolute left-3 top-2 text-sm text-slate-500">@</span>
                   <input
                     type="text"
                     required
@@ -1478,8 +1504,8 @@ export default function AccountsPage() {
                   onChange={(e) => setStatusInput(e.target.value as "active" | "paused")}
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 >
-                  <option value="active">Active (Targeted by scraper)</option>
-                  <option value="paused">Paused (Skipped by scraper)</option>
+                  <option value="active">Active (collected on every run)</option>
+                  <option value="paused">Paused (skipped, history is kept)</option>
                 </select>
               </div>
 
@@ -1502,7 +1528,7 @@ export default function AccountsPage() {
               </div>
             </form>
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   );
