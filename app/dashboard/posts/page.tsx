@@ -1,61 +1,152 @@
 import Link from "next/link";
 import { formatMetric } from "@/lib/utils";
-import { ExternalLink, Heart, MessageCircle, Eye } from "lucide-react";
-import { getRecentMonitoredPosts, type RecentPostItem, type DateRangePreset } from "@/lib/supabase/queries";
+import { ExternalLink, Heart, MessageCircle, Eye, Search } from "lucide-react";
+import { getPostsPage, type PostsPageResult, type DateRangePreset } from "@/lib/supabase/queries";
 import { DateRangeFilter } from "@/components/analytics/DateRangeFilter";
+import { PlatformFilter } from "@/components/analytics/PlatformFilter";
+import { PlatformBadge } from "@/components/ui/PlatformBadge";
+import { parsePlatformFilter } from "@/lib/platform";
 
 export const dynamic = "force-dynamic";
 
+const PAGE_SIZE = 50;
+
+type View = "all" | "campaign" | "review";
+type Sort = "recent" | "engagement";
+
 interface PostsPageProps {
-  searchParams: Promise<{ range?: string }>;
+  searchParams: Promise<{
+    range?: string;
+    platform?: string;
+    view?: string;
+    q?: string;
+    sort?: string;
+    page?: string;
+  }>;
 }
 
-export default async function PostsPage({ searchParams }: PostsPageProps) {
-  const resolvedParams = await searchParams;
-  const rawRange = resolvedParams?.range;
-  const range: DateRangePreset =
-    rawRange === "today" || rawRange === "7d" || rawRange === "30d" || rawRange === "180d" || rawRange === "all"
-      ? rawRange
-      : "today";
+const RANGE_TEXT: Record<DateRangePreset, string> = {
+  today: "today",
+  "7d": "the last 7 days",
+  "30d": "the last 30-day window",
+  "180d": "the last 6 months",
+  all: "all time",
+};
 
-  let posts: RecentPostItem[] = [];
+export default async function PostsPage({ searchParams }: PostsPageProps) {
+  const sp = await searchParams;
+  const platform = parsePlatformFilter(sp?.platform);
+  const range: DateRangePreset =
+    sp?.range === "today" || sp?.range === "7d" || sp?.range === "30d" || sp?.range === "180d" || sp?.range === "all"
+      ? sp.range
+      : "today";
+  const view: View = sp?.view === "campaign" || sp?.view === "review" ? sp.view : "all";
+  const sort: Sort = sp?.sort === "engagement" ? "engagement" : "recent";
+  const search = (sp?.q ?? "").trim().slice(0, 80);
+  const pageNum = Math.max(parseInt(sp?.page ?? "1", 10) || 1, 1);
+
+  let result: PostsPageResult = { posts: [], total: 0, page: pageNum, pageSize: PAGE_SIZE, sortCapped: false };
+  let loadError: string | null = null;
   try {
-    posts = await getRecentMonitoredPosts(100, range);
+    result = await getPostsPage({ range, platform, view, search, sort, page: pageNum, pageSize: PAGE_SIZE });
   } catch (err) {
     console.error("[PostsPage] Failed to fetch posts:", err);
+    loadError = err instanceof Error ? err.message : "Failed to load posts";
   }
 
-  const rangeText =
-    range === "today"
-      ? "today"
-      : range === "7d"
-      ? "the last 7 days"
-      : range === "180d"
-      ? "the last 6 months"
-      : range === "all"
-      ? "all time"
-      : "the last 30-day window";
+  const { posts, total } = result;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  const buildUrl = (overrides: Partial<{ view: View; sort: Sort; page: number }>) => {
+    const params = new URLSearchParams();
+    if (range !== "today") params.set("range", range);
+    if (platform !== "all") params.set("platform", platform);
+    const v = overrides.view ?? view;
+    if (v !== "all") params.set("view", v);
+    const so = overrides.sort ?? sort;
+    if (so !== "recent") params.set("sort", so);
+    if (search) params.set("q", search);
+    const pg = overrides.page ?? 1;
+    if (pg > 1) params.set("page", String(pg));
+    const qs = params.toString();
+    return `/dashboard/posts${qs ? `?${qs}` : ""}`;
+  };
+
+  const pill = (active: boolean, tone = "text-slate-900") =>
+    `px-2.5 py-1 rounded-md transition ${active ? `bg-white ${tone} shadow-sm font-semibold` : "text-slate-600 hover:text-slate-900"}`;
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-200/80 pb-5">
+      <div className="flex flex-col gap-4 border-b border-slate-200/80 pb-5">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-              Recent Monitored Posts
-            </h1>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">Recent Monitored Posts</h1>
             <span className="text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200/60 px-2 py-0.5 rounded-full tabular-nums">
-              {posts.length} Posts
+              {total.toLocaleString("en-IN")} posts
             </span>
           </div>
           <p className="text-sm text-slate-500 mt-1">
-            Posts published within {rangeText} (up to 10 per account) across monitored volunteer profiles.
+            Posts published {RANGE_TEXT[range]} across monitored volunteer profiles (Instagram, Facebook, X), showing
+            their latest engagement.
           </p>
         </div>
-        <div className="flex items-center">
+
+        <div className="flex flex-wrap items-center gap-2.5">
+          <PlatformFilter value={platform} />
+
+          <div className="inline-flex rounded-lg bg-slate-100 p-0.5 text-xs font-medium">
+            <Link href={buildUrl({ view: "all" })} className={pill(view === "all")}>
+              All posts
+            </Link>
+            <Link href={buildUrl({ view: "campaign" })} className={pill(view === "campaign", "text-emerald-700")}>
+              Campaign posts
+            </Link>
+            <Link href={buildUrl({ view: "review" })} className={pill(view === "review", "text-amber-700")}>
+              Needs review
+            </Link>
+          </div>
+
+          <div className="inline-flex rounded-lg bg-slate-100 p-0.5 text-xs font-medium">
+            <Link href={buildUrl({ sort: "recent" })} className={pill(sort === "recent")}>
+              Newest
+            </Link>
+            <Link href={buildUrl({ sort: "engagement" })} className={pill(sort === "engagement")}>
+              Most engagement
+            </Link>
+          </div>
+
           <DateRangeFilter value={range} />
         </div>
+
+        {/* Search (plain GET form so it works without client JS and keeps the other filters) */}
+        <form method="get" action="/dashboard/posts" className="relative max-w-md">
+          {range !== "today" && <input type="hidden" name="range" value={range} />}
+          {platform !== "all" && <input type="hidden" name="platform" value={platform} />}
+          {view !== "all" && <input type="hidden" name="view" value={view} />}
+          {sort !== "recent" && <input type="hidden" name="sort" value={sort} />}
+          <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+          <input
+            type="search"
+            name="q"
+            defaultValue={search}
+            placeholder="Search caption, volunteer or handle..."
+            className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-4 text-sm placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+        </form>
       </div>
+
+      {loadError && (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+          Could not load posts: {loadError}
+        </div>
+      )}
+
+      {result.sortCapped && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">
+          Engagement sorting covers the newest 1,000 matching posts. Narrow the date range or platform to rank all of
+          them.
+        </div>
+      )}
 
       <div className="rounded-xl border border-slate-200/90 bg-white shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
@@ -63,9 +154,10 @@ export default async function PostsPage({ searchParams }: PostsPageProps) {
             <thead className="bg-slate-50/90 text-[11px] uppercase font-bold text-slate-500 border-b border-slate-200">
               <tr>
                 <th className="px-5 py-3.5">Volunteer</th>
+                <th className="px-5 py-3.5">Platform</th>
                 <th className="px-5 py-3.5">Caption Snippet</th>
                 <th className="px-5 py-3.5">Format</th>
-                <th className="px-5 py-3.5">Published Date</th>
+                <th className="px-5 py-3.5">Published (UTC)</th>
                 <th className="px-5 py-3.5 text-right">Likes</th>
                 <th className="px-5 py-3.5 text-right">Comments</th>
                 <th className="px-5 py-3.5 text-right">Views</th>
@@ -75,9 +167,11 @@ export default async function PostsPage({ searchParams }: PostsPageProps) {
             <tbody className="divide-y divide-slate-200/80">
               {posts.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-6 py-16 text-center text-slate-400">
-                    <p className="text-sm font-medium text-slate-700">No posts found in database yet.</p>
-                    <p className="text-xs text-slate-400 mt-1">Trigger a scrape to populate posts from active volunteer accounts.</p>
+                  <td colSpan={9} className="px-6 py-16 text-center text-slate-400">
+                    <p className="text-sm font-medium text-slate-700">No posts found for this filter.</p>
+                    <p className="text-xs text-slate-400 mt-1">
+                      Try another platform, date range or search. Posts appear after the admin runs the scraper.
+                    </p>
                   </td>
                 </tr>
               ) : (
@@ -85,7 +179,7 @@ export default async function PostsPage({ searchParams }: PostsPageProps) {
                   <tr key={post.id} className="hover:bg-blue-50/20 transition-colors">
                     <td className="px-5 py-3.5">
                       <Link
-                        href={`/dashboard/volunteers/${post.handle}`}
+                        href={`/dashboard/volunteers/${encodeURIComponent(post.handle)}?platform=${post.platform}`}
                         className="font-semibold text-slate-900 hover:text-blue-600 text-xs block transition"
                       >
                         @{post.handle}
@@ -94,7 +188,23 @@ export default async function PostsPage({ searchParams }: PostsPageProps) {
                         <div className="text-[11px] text-slate-400 truncate max-w-[160px]">{post.volunteerName}</div>
                       )}
                     </td>
+                    <td className="px-5 py-3.5">
+                      <PlatformBadge platform={post.platform} />
+                    </td>
                     <td className="px-5 py-3.5 text-slate-700 max-w-xs truncate" title={post.caption || ""}>
+                      {post.matchStatus === "matched" && (
+                        <span className="mr-1.5 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 border border-emerald-200">
+                          Campaign
+                        </span>
+                      )}
+                      {post.matchStatus === "needs_review" && (
+                        <Link
+                          href="/dashboard/review"
+                          className="mr-1.5 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 border border-amber-200 hover:bg-amber-100"
+                        >
+                          Needs review
+                        </Link>
+                      )}
                       {post.caption || <span className="text-slate-400 italic">No caption</span>}
                     </td>
                     <td className="px-5 py-3.5">
@@ -141,6 +251,42 @@ export default async function PostsPage({ searchParams }: PostsPageProps) {
               )}
             </tbody>
           </table>
+        </div>
+
+        <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50/60 px-5 py-3 text-xs text-slate-500">
+          <span>
+            {total === 0 ? 0 : (pageNum - 1) * PAGE_SIZE + 1}–{Math.min(pageNum * PAGE_SIZE, total)} of{" "}
+            {total.toLocaleString("en-IN")}
+          </span>
+          <div className="flex items-center gap-2">
+            {pageNum > 1 ? (
+              <Link
+                href={buildUrl({ page: pageNum - 1 })}
+                className="rounded-md border border-slate-200 bg-white px-2.5 py-1 font-medium text-slate-700"
+              >
+                Previous
+              </Link>
+            ) : (
+              <span className="rounded-md border border-slate-200 bg-white px-2.5 py-1 font-medium text-slate-300">
+                Previous
+              </span>
+            )}
+            <span>
+              Page {Math.min(pageNum, totalPages)} / {totalPages}
+            </span>
+            {pageNum < totalPages ? (
+              <Link
+                href={buildUrl({ page: pageNum + 1 })}
+                className="rounded-md border border-slate-200 bg-white px-2.5 py-1 font-medium text-slate-700"
+              >
+                Next
+              </Link>
+            ) : (
+              <span className="rounded-md border border-slate-200 bg-white px-2.5 py-1 font-medium text-slate-300">
+                Next
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </div>

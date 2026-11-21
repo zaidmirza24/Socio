@@ -24,6 +24,7 @@ async function cleanDatabase() {
     "campaign_captions",
     "post_snapshots",
     "posts",
+    "account_snapshots",
     "collection_runs",
     "accounts",
   ];

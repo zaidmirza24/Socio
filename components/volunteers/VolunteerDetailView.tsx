@@ -12,6 +12,8 @@ import {
   MessageCircle,
   Eye,
   Instagram,
+  Twitter,
+  Facebook,
   Layers,
   LayoutGrid,
   List,
@@ -46,6 +48,45 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
   const [searchQuery, setSearchQuery] = useState("");
   const [mediaFilter, setMediaFilter] = useState<string>("all");
+
+  // ── Platform-aware helpers ──────────────────────────────────────────────
+  const platform = account.platform ?? "instagram";
+
+  const PlatformIcon =
+    platform === "facebook"
+      ? Facebook
+      : platform === "x"
+      ? Twitter
+      : Instagram;
+
+  const platformIconColor =
+    platform === "facebook"
+      ? "text-blue-600"
+      : platform === "x"
+      ? "text-sky-500"
+      : "text-rose-500";
+
+  const platformLabel =
+    platform === "facebook"
+      ? "Facebook"
+      : platform === "x"
+      ? "X / Twitter"
+      : "Instagram";
+
+  const platformProfileUrl =
+    platform === "facebook"
+      ? `https://www.facebook.com/${account.handle}/`
+      : platform === "x"
+      ? `https://x.com/${account.handle}`
+      : `https://www.instagram.com/${account.handle}/`;
+
+  const profileButtonStyle =
+    platform === "facebook"
+      ? "bg-gradient-to-r from-blue-600 to-blue-700"
+      : platform === "x"
+      ? "bg-gradient-to-r from-slate-800 to-sky-600"
+      : "bg-gradient-to-r from-rose-500 to-indigo-600";
+  // ───────────────────────────────────────────────────────────────────────
 
   const handleCopy = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
@@ -212,7 +253,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
             <div className="relative flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 text-white shadow-md text-2xl font-bold">
               {account.volunteerName.charAt(0).toUpperCase()}
               <div className="absolute -bottom-1 -right-1 rounded-full bg-white p-1 shadow-sm">
-                <Instagram className="h-4 w-4 text-rose-500" />
+                <PlatformIcon className={`h-4 w-4 ${platformIconColor}`} />
               </div>
             </div>
 
@@ -266,7 +307,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
                 {account.totalPostsOnPlatform !== null && (
                   <>
                     <span>·</span>
-                    <span>Total IG Posts: {formatMetric(account.totalPostsOnPlatform)}</span>
+                    <span>Total {platformLabel} Posts: {formatMetric(account.totalPostsOnPlatform)}</span>
                   </>
                 )}
               </div>
@@ -277,13 +318,13 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
           <div className="flex flex-wrap items-center gap-3">
             <DateRangeFilter value={dateFilter} onChange={setDateFilter} size="sm" />
             <a
-              href={`https://www.instagram.com/${account.handle}/`}
+              href={platformProfileUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-rose-500 to-indigo-600 text-white font-medium text-sm shadow-sm hover:opacity-95 transition"
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl ${profileButtonStyle} text-white font-medium text-sm shadow-sm hover:opacity-95 transition`}
             >
-              <Instagram className="h-4 w-4" />
-              View IG Profile
+              <PlatformIcon className="h-4 w-4" />
+              View {platformLabel} Profile
               <ExternalLink className="h-3.5 w-3.5 opacity-80" />
             </a>
           </div>
@@ -531,8 +572,8 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
                           rel="noopener noreferrer"
                           className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-semibold transition"
                         >
-                          <Instagram className="h-3.5 w-3.5" />
-                          View on Instagram
+                          <PlatformIcon className="h-3.5 w-3.5" />
+                          View on {platformLabel}
                           <ExternalLink className="h-3 w-3 opacity-70" />
                         </a>
                       ) : (

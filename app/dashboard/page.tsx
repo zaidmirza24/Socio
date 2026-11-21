@@ -18,12 +18,13 @@ import {
   type RecentPostItem,
 } from "@/lib/supabase/queries";
 import { getMatrixData, type MatrixData } from "@/lib/supabase/matrix";
+import { parsePlatformFilter } from "@/lib/platform";
 import { DashboardTabs } from "@/components/dashboard/DashboardTabs";
 
 export const dynamic = "force-dynamic";
 
 interface DashboardPageProps {
-  searchParams: Promise<{ range?: string }>;
+  searchParams: Promise<{ range?: string; platform?: string }>;
 }
 
 export default async function DashboardPage({ searchParams }: DashboardPageProps) {
@@ -33,6 +34,8 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     rawRange === "today" || rawRange === "7d" || rawRange === "30d" || rawRange === "180d" || rawRange === "all"
       ? rawRange
       : "today";
+
+  const platform = parsePlatformFilter(resolvedParams?.platform);
 
   // Load Matrix Data and Analytics Data in parallel from Supabase
   let matrixData: MatrixData = {
@@ -78,14 +81,14 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
       posts,
     ] = await Promise.all([
       getMatrixData(),
-      getDailyEngagementTrend(range),
-      getTopPosts(range),
-      getVolunteerEngagement(range),
-      getVolunteerRanking(range),
-      getAccountComparison(range),
-      getVolunteerLeaderboard(range),
-      getKPISummary(range),
-      getRecentMonitoredPosts(60, range),
+      getDailyEngagementTrend(range, platform),
+      getTopPosts(range, platform),
+      getVolunteerEngagement(range, platform),
+      getVolunteerRanking(range, platform),
+      getAccountComparison(range, platform),
+      getVolunteerLeaderboard(range, platform),
+      getKPISummary(range, platform),
+      getRecentMonitoredPosts(60, range, platform),
     ]);
 
     matrixData = matrix;
@@ -106,6 +109,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
       matrixData={matrixData}
       analyticsData={{
         currentRange: range,
+        platform,
         trendData,
         topPosts,
         volunteerEngagement,

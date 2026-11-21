@@ -7,34 +7,34 @@
 - **Strict Environment Validation**: Use `.env.local` with strict environment variable validation schemas (`env.ts` or `env.mjs`) to guarantee runtime safety.
 - **Upsert, Never Insert**: All ingestion pipelines must be strictly idempotent. Rerunning a collection task or receiving duplicate webhook deliveries for the same day or same posts must update existing records or ignore duplicates without failing or inflating counts.
 - **Forbidden Automation & Hosting**:
-  - DO NOT use Netlify Cron Jobs, Vercel Cron Jobs, Next.js scheduled functions, or external cron services. Apify Schedules is the single authoritative daily automation engine.
-  - DO NOT configure local-only hosting, VPNs, or Tailscale tunnels for production access. Production hosting is on Vercel, accessible across different networks and locations via private, login-protected authentication (Supabase Auth).
+  - DO NOT use Netlify Cron Jobs, Vercel Cron Jobs, Next.js scheduled functions, or external cron services.
+  - Collection is **admin-triggered**: the admin clicks "Run all platforms" (or one platform) in the app each day. There is no Apify Schedule and no webhook; the app polls the run status and ingests the dataset itself (`/api/scraper/status` -> `ingestCompletedJob`).
+  - The scraper is run from the admin's own (locally run) copy of the app against the shared Supabase project. DO NOT configure VPNs or Tailscale tunnels. Team members view the dashboard through login-protected Supabase Auth.
 
 ---
 
 ## 2. Data Ingestion & Collector Rules
-- **Scope (Initial Version)**:
-  - Instagram only (30 active accounts, up to 10 recent posts per account).
-  - Facebook scraping is postponed until a later phase.
-- **Daily Automation Workflow**:
-  1. Apify Schedule triggers the Instagram scraping Task daily at 8:00 AM IST (02:30 UTC).
-  2. The scraper collects up to 10 recent posts from each active account.
-  3. When the Apify run succeeds, Apify sends a webhook POST request to our Next.js API endpoint (`/api/webhooks/apify`).
-  4. The webhook endpoint validates the request using a secure webhook secret / signature verification (`APIFY_WEBHOOK_SECRET`) and retrieves the completed dataset using the server-side Apify client.
-  5. The application processes and normalizes the collected information via the Instagram adapter (`lib/collectors/instagram.ts`).
-  6. New posts are inserted without duplicates (`ON CONFLICT (platform, platform_post_id) DO UPDATE`).
-  7. Existing posts are updated with fresh metadata.
-  8. Daily engagement snapshots are saved in Supabase (`ON CONFLICT (post_id, snapshot_date) DO UPDATE`).
-  9. The dashboard displays updated information.
+- **Scope**:
+  - Instagram, Facebook and X. About 500-600 volunteers; one volunteer has up to 3 accounts (one per platform). Facebook and X are switched on in Settings.
+  - Campaign length is roughly 5-6 months.
+- **Daily Workflow (admin-triggered)**:
+  1. The admin runs the scraper ("Run all platforms" or per platform). Discovery collects only posts made **today (IST)**, capped per account per day (`discovery_post_limit`, Settings; 6-8 typical).
+  2. The app polls the Apify run; when it finishes, `ingestCompletedJob` fetches the dataset with the server-side Apify client.
+  3. Platform adapters (`lib/scrapers/**`) normalize raw data into domain models.
+  4. Every post is stored (`ON CONFLICT (platform, platform_post_id) DO UPDATE`) with a daily engagement snapshot (`ON CONFLICT (post_id, snapshot_date) DO UPDATE`). Nothing is discarded.
+  5. If the caption filter is ON, each post is labelled `matched` / `needs_review` / `unmatched` (`posts.match_status`). Exact matches also go to `matched_posts`; fuzzy matches go to the review queue. If OFF, no matching is done.
+  6. Turning the filter ON, or changing captions, labels already-stored posts (`lib/services/match-stored-posts.ts`). Stored posts keep being refreshed (engagement) in both states.
+  7. The dashboard shows every post and its engagement over time; "Campaign posts only" is an optional view, never a deletion.
+- **Caption filter**: OFF early (content sent without captions) so all posts are kept; ON later to identify posts that carry the supplied captions.
 - **Adapter Pattern**:
   - Direct vendor API schemas (e.g., Apify Instagram actor output) must never leak into dashboard UI or core business logic.
-  - All collectors must map raw data into standardized domain models via dedicated adapters (`lib/collectors/instagram.ts`).
+  - All collectors must map raw data into standardized domain models via dedicated adapters (`lib/scrapers/apify/adapter.ts` for Instagram, `lib/scrapers/facebook/adapter.ts`, `lib/scrapers/twitter/adapter.ts`; registry in `lib/scrapers/platform-adapter.ts`).
 - **Metric Integrity**:
   - If a metric is hidden, unavailable, or unsupported on a platform (e.g. Instagram shares or private likes), record it as `null`.
   - **Never default unavailable metrics to `0`**; `0` means zero engagements occurred, whereas `null` represents unmeasured/hidden. The UI displays `"n/a"` for `null`.
 - **Active Post Tracking Window**:
-  - Daily scraper collects up to 10 recent posts per active account to capture new posts and refresh ongoing engagement.
-  - Posts older than 30 days are frozen to manage vendor costs.
+  - Daily discovery collects today's posts (IST) per active account, up to the configured cap.
+  - Older stored posts are refreshed by the admin-run engagement refresh (default every 7 days). Posts older than the cutoff (default 30 days) are frozen to manage vendor costs.
 - **Audit Logging & Error Handling**:
   - Every scrape or webhook processing event must record an entry in `collection_runs` with start time, completed time, status (`success`, `failed`, `partial`), posts count, and structured error payloads.
   - Failed runs must be logged and handled gracefully without breaking the ingestion pipeline.
@@ -43,6 +43,7 @@
 
 ## 3. Database & SQL Rules (Supabase Postgres)
 - **Core Tables**:
+  - `volunteers`: The person. One volunteer owns up to 3 `accounts` (one per platform); `volunteer_totals` is the cross-platform roll-up view.
   - `accounts`: Monitored volunteer social media accounts.
   - `posts`: Monitored post items across platforms.
   - `post_snapshots`: Daily point-in-time engagement records per post.
@@ -62,9 +63,9 @@
 
 ## 4. Authentication & Hosting Rules
 - **Hosting**:
-  - Hosted on Vercel with serverless compute and edge routing.
-  - Accessible to authorized team members through a private, login-protected application URL.
-  - Multiple team members can access the application from different networks and locations over standard HTTPS.
+  - The scraper is run from the admin's locally run app (see section 1). The dashboard may be deployed (e.g. Vercel) behind Supabase Auth for the wider team.
+  - Any deployed copy must stay login-protected; there are no cron jobs or webhooks to configure.
+  - The first admin is the first user created in Supabase Auth (trigger), or via `/api/admin/users` with the `BOOTSTRAP_TOKEN` header.
 - **Authentication**:
   - Team authentication powered by Supabase Auth (email/password or magic links).
   - Next.js middleware guards all dashboard pages and protected API endpoints.

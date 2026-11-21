@@ -40,6 +40,14 @@ interface CaptionManagementViewProps {
   initialCaptions: CaptionWithStats[];
 }
 
+/**
+ * After the caption list changes, label already-stored posts against the new list.
+ * Fire-and-forget: the server skips it when the filter is OFF and it is idempotent.
+ */
+function rematchStoredPosts(): void {
+  fetch("/api/admin/match-stored", { method: "POST" }).catch(() => undefined);
+}
+
 export function CaptionManagementView({ initialCaptions }: CaptionManagementViewProps) {
   const [captions, setCaptions] = useState<CaptionWithStats[]>(initialCaptions);
   const [title, setTitle] = useState("");
@@ -94,6 +102,7 @@ export function CaptionManagementView({ initialCaptions }: CaptionManagementView
         setError(result.error || "Failed to create caption.");
       } else {
         setSuccess(`Caption "${title}" registered successfully!`);
+        rematchStoredPosts();
         setTitle("");
         setCanonicalCaption("");
 
@@ -120,6 +129,7 @@ export function CaptionManagementView({ initialCaptions }: CaptionManagementView
       setCaptions((prev) =>
         prev.map((c) => (c.id === id ? { ...c, status: nextStatus } : c))
       );
+      rematchStoredPosts();
     } else {
       alert(`Failed to update caption status: ${result.error}`);
     }
@@ -207,6 +217,7 @@ export function CaptionManagementView({ initialCaptions }: CaptionManagementView
             : ""
         }`;
         setSuccess(msg);
+        rematchStoredPosts();
         setParsedBatch([]);
         setBulkText("");
         setCsvFileName(null);
@@ -244,7 +255,7 @@ export function CaptionManagementView({ initialCaptions }: CaptionManagementView
         {/* Schedule Notice Badge */}
         <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-medium bg-amber-50 text-amber-800 border border-amber-200/80 shrink-0">
           <Clock className="h-4 w-4 text-amber-600" />
-          <span>Takes effect on the next scheduled run at 08:00 AM IST</span>
+          <span>Takes effect on the next scraper run</span>
         </div>
       </div>
 

@@ -29,6 +29,9 @@ import { TopPostsChart, type TopPostData } from "@/components/charts/TopPostsCha
 import { DailyVolunteerRankingChart, type VolunteerRankingPoint } from "@/components/charts/DailyVolunteerRankingChart";
 import { InstagramAccountComparisonChart, type AccountPerformance } from "@/components/charts/InstagramAccountComparisonChart";
 import { DateRangeFilter } from "@/components/analytics/DateRangeFilter";
+import { PlatformFilter } from "@/components/analytics/PlatformFilter";
+import { PlatformBadge } from "@/components/ui/PlatformBadge";
+import { platformLabel } from "@/lib/platform";
 import { formatMetric, formatNumber } from "@/lib/utils";
 import type {
   KPISummary,
@@ -36,10 +39,12 @@ import type {
   RecentPostItem,
   VolunteerEngagementData,
   DateRangePreset,
+  PlatformFilter as PlatformValue,
 } from "@/lib/supabase/queries";
 
 export interface CampaignAnalyticsViewProps {
   currentRange?: DateRangePreset;
+  platform?: PlatformValue;
   trendData: TrendDataPoint[];
   topPosts: TopPostData[];
   volunteerEngagement: VolunteerEngagementData[];
@@ -109,6 +114,7 @@ function SectionCard({
 
 export function CampaignAnalyticsView({
   currentRange = "today",
+  platform = "all",
   trendData,
   topPosts,
   volunteerRanking,
@@ -146,6 +152,7 @@ export function CampaignAnalyticsView({
   >("rank");
   const [volunteerDisplayMode, setVolunteerDisplayMode] = useState<"table" | "comparison">("table");
   const [mediaTypeFilter, setMediaTypeFilter] = useState<string>("all");
+  const [leaderboardPage, setLeaderboardPage] = useState(1);
 
   const activePct =
     kpi.totalAccounts > 0
@@ -183,6 +190,14 @@ export function CampaignAnalyticsView({
     return list;
   }, [leaderboard, searchVolunteer, sortLeaderboardBy]);
 
+  const LEADERBOARD_PAGE_SIZE = 25;
+  const leaderboardPages = Math.max(1, Math.ceil(filteredLeaderboard.length / LEADERBOARD_PAGE_SIZE));
+  const safeLeaderboardPage = Math.min(leaderboardPage, leaderboardPages);
+  const pagedLeaderboard = filteredLeaderboard.slice(
+    (safeLeaderboardPage - 1) * LEADERBOARD_PAGE_SIZE,
+    safeLeaderboardPage * LEADERBOARD_PAGE_SIZE
+  );
+
   const maxLeaderboardEngagement = useMemo(() => {
     return leaderboard.length > 0 ? Math.max(...leaderboard.map((e) => e.totalEngagement), 1) : 1;
   }, [leaderboard]);
@@ -218,6 +233,12 @@ export function CampaignAnalyticsView({
     });
   }, [recentPosts]);
 
+  const bestFormat = useMemo(() => {
+    const withPosts = mediaFormatStats.filter((f) => f.count > 0);
+    if (withPosts.length === 0) return null;
+    return withPosts.reduce((a, b) => (b.avgEngagement > a.avgEngagement ? b : a));
+  }, [mediaFormatStats]);
+
   // Filtered recent posts for Content tab
   const filteredPosts = useMemo(() => {
     let list = recentPosts;
@@ -243,16 +264,13 @@ export function CampaignAnalyticsView({
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">Campaign Analytics</h1>
           <p className="mt-0.5 text-xs text-slate-500 sm:text-sm">
-            Phase 1 · Instagram · {kpi.totalAccounts} accounts monitored · {kpi.totalPosts} active posts
+            {platform === "all" ? "All platforms" : platformLabel(platform)} · {kpi.totalAccounts} accounts monitored · {kpi.totalPosts} posts with activity
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          <PlatformFilter value={platform} />
           <DateRangeFilter value={currentRange} />
-          <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            Daily Ingestion Active
-          </span>
         </div>
       </div>
 
@@ -335,7 +353,7 @@ export function CampaignAnalyticsView({
                 <span className="text-3xl font-bold text-slate-900">{kpi.totalAccounts}</span>
                 <span className="text-xs font-medium text-emerald-600">{activePct}% active</span>
               </div>
-              <span className="mt-1 block text-xs text-slate-400">Instagram volunteers</span>
+              <span className="mt-1 block text-xs text-slate-400">Monitored volunteer accounts</span>
             </div>
 
             <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs">
@@ -349,7 +367,7 @@ export function CampaignAnalyticsView({
               </div>
               <div className="mt-3 flex items-baseline gap-2">
                 <span className="text-3xl font-bold text-slate-900">{kpi.totalPosts}</span>
-                <span className="text-xs font-medium text-slate-400">≤10 / account</span>
+                
               </div>
               <span className="mt-1 block text-xs text-slate-400">
                 {currentRange === "today"
@@ -412,7 +430,7 @@ export function CampaignAnalyticsView({
                 <p className="truncate text-sm font-bold text-slate-900">
                   {topVolunteer ? (
                     <Link
-                      href={`/dashboard/volunteers/${topVolunteer.handle}?from=leaderboard`}
+                      href={`/dashboard/volunteers/${topVolunteer.handle}?platform=${topVolunteer.platform}&from=leaderboard`}
                       className="hover:underline"
                     >
                       @{topVolunteer.handle} ({topVolunteer.volunteerName})
@@ -453,7 +471,7 @@ export function CampaignAnalyticsView({
                 <p className="text-sm font-bold text-slate-900">
                   {kpi.activeAccounts} of {kpi.totalAccounts} Active
                 </p>
-                <p className="text-xs text-emerald-800">100% automated via Apify</p>
+                <p className="text-xs text-emerald-800">Updated when the admin runs the scraper</p>
               </div>
             </div>
           </div>
@@ -461,7 +479,7 @@ export function CampaignAnalyticsView({
           {/* Daily Engagement Trend Chart with Interactive Filter */}
           <SectionCard
             title="Daily Engagement Trend"
-            subtitle="Aggregated interaction volume over the past 30 days"
+            subtitle="Likes and comments gained each day in the selected period"
             action={
               <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 text-xs">
                 <button
@@ -504,7 +522,7 @@ export function CampaignAnalyticsView({
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <SectionCard
               title="Content Format Breakdown"
-              subtitle="Distribution and average engagement by Instagram media type"
+              subtitle="Distribution and average engagement by media type"
             >
               <div className="space-y-4 pt-1">
                 {mediaFormatStats.map((item) => (
@@ -541,14 +559,21 @@ export function CampaignAnalyticsView({
                 ))}
 
                 <div className="mt-4 rounded-lg bg-slate-50 p-3 text-xs text-slate-500 border border-slate-100">
-                  💡 <strong>Insight:</strong> Reels & video posts typically drive higher viral reach, while carousels generate higher saves and comment depth.
+                  {bestFormat ? (
+                    <>
+                      💡 <strong>Insight:</strong> {bestFormat.type}s have the highest average engagement here (
+                      {bestFormat.avgEngagement} per post across {bestFormat.count} posts).
+                    </>
+                  ) : (
+                    <>No posts in this period yet.</>
+                  )}
                 </div>
               </div>
             </SectionCard>
 
             <SectionCard
-              title="Daily Top Volunteer Ranking"
-              subtitle="Rank position of the top performer over time (inverted: #1 at top)"
+              title="Top Volunteer Each Day"
+              subtitle="Engagement gained by the best-performing volunteer each day (hover for the name)"
             >
               <DailyVolunteerRankingChart data={volunteerRanking} />
             </SectionCard>
@@ -574,7 +599,7 @@ export function CampaignAnalyticsView({
                 </div>
                 <div className="mt-3">
                   <Link
-                    href={`/dashboard/volunteers/${leaderboard[0].handle}?from=leaderboard`}
+                    href={`/dashboard/volunteers/${leaderboard[0].handle}?platform=${leaderboard[0].platform}&from=leaderboard`}
                     className="text-base font-bold text-slate-900 hover:text-blue-600 hover:underline block truncate"
                   >
                     {leaderboard[0].volunteerName}
@@ -607,7 +632,7 @@ export function CampaignAnalyticsView({
                 </div>
                 <div className="mt-3">
                   <Link
-                    href={`/dashboard/volunteers/${leaderboard[1].handle}?from=leaderboard`}
+                    href={`/dashboard/volunteers/${leaderboard[1].handle}?platform=${leaderboard[1].platform}&from=leaderboard`}
                     className="text-base font-bold text-slate-900 hover:text-blue-600 hover:underline block truncate"
                   >
                     {leaderboard[1].volunteerName}
@@ -640,7 +665,7 @@ export function CampaignAnalyticsView({
                 </div>
                 <div className="mt-3">
                   <Link
-                    href={`/dashboard/volunteers/${leaderboard[2].handle}?from=leaderboard`}
+                    href={`/dashboard/volunteers/${leaderboard[2].handle}?platform=${leaderboard[2].platform}&from=leaderboard`}
                     className="text-base font-bold text-slate-900 hover:text-blue-600 hover:underline block truncate"
                   >
                     {leaderboard[2].volunteerName}
@@ -672,7 +697,10 @@ export function CampaignAnalyticsView({
               <input
                 type="text"
                 value={searchVolunteer}
-                onChange={(e) => setSearchVolunteer(e.target.value)}
+                onChange={(e) => {
+                  setSearchVolunteer(e.target.value);
+                  setLeaderboardPage(1);
+                }}
                 placeholder="Search volunteer name or handle..."
                 className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-4 text-xs text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
               />
@@ -684,11 +712,12 @@ export function CampaignAnalyticsView({
                 <span className="text-slate-500 font-medium">Sort by:</span>
                 <select
                   value={sortLeaderboardBy}
-                  onChange={(e) =>
+                  onChange={(e) => {
                     setSortLeaderboardBy(
                       e.target.value as "rank" | "engagement" | "likes" | "comments" | "posts" | "followers"
-                    )
-                  }
+                    );
+                    setLeaderboardPage(1);
+                  }}
                   className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 focus:outline-hidden"
                 >
                   <option value="rank">Rank (#1 first)</option>
@@ -759,7 +788,7 @@ export function CampaignAnalyticsView({
                         </td>
                       </tr>
                     ) : (
-                      filteredLeaderboard.map((item) => {
+                      pagedLeaderboard.map((item) => {
                         const relativePct = Math.round(
                           (item.totalEngagement / maxLeaderboardEngagement) * 100
                         );
@@ -771,13 +800,21 @@ export function CampaignAnalyticsView({
                             <td className="px-5 py-3.5">
                               <div className="font-semibold text-slate-900">
                                 <Link
-                                  href={`/dashboard/volunteers/${item.handle}?from=leaderboard`}
+                                  href={`/dashboard/volunteers/${item.handle}?platform=${item.platform}&from=leaderboard`}
                                   className="hover:text-blue-600 hover:underline"
                                 >
                                   {item.volunteerName}
                                 </Link>
                               </div>
-                              <span className="text-xs font-mono text-blue-600">@{item.handle}</span>
+                              <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                                {item.platforms.map((pl) => (
+                                  <PlatformBadge key={pl} platform={pl} compact />
+                                ))}
+                                <span className="text-xs font-mono text-blue-600">@{item.handle}</span>
+                                {item.accounts > 1 && (
+                                  <span className="text-[11px] text-slate-400">+{item.accounts - 1} more</span>
+                                )}
+                              </div>
                             </td>
                             <td className="px-5 py-3.5 text-right font-medium text-slate-800">
                               {item.posts}
@@ -809,7 +846,7 @@ export function CampaignAnalyticsView({
                             </td>
                             <td className="px-5 py-3.5 text-right">
                               <Link
-                                href={`/dashboard/volunteers/${item.handle}?from=leaderboard`}
+                                href={`/dashboard/volunteers/${item.handle}?platform=${item.platform}&from=leaderboard`}
                                 className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 hover:text-blue-600 transition"
                               >
                                 View
@@ -823,10 +860,38 @@ export function CampaignAnalyticsView({
                   </tbody>
                 </table>
               </div>
+              <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50/60 px-5 py-3 text-xs text-slate-500">
+                <span>
+                  Showing {filteredLeaderboard.length === 0 ? 0 : (safeLeaderboardPage - 1) * LEADERBOARD_PAGE_SIZE + 1}
+                  –{Math.min(safeLeaderboardPage * LEADERBOARD_PAGE_SIZE, filteredLeaderboard.length)} of{" "}
+                  {filteredLeaderboard.length} volunteers
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setLeaderboardPage(Math.max(1, safeLeaderboardPage - 1))}
+                    disabled={safeLeaderboardPage <= 1}
+                    className="rounded-md border border-slate-200 bg-white px-2.5 py-1 font-medium text-slate-700 disabled:opacity-40"
+                  >
+                    Previous
+                  </button>
+                  <span>
+                    Page {safeLeaderboardPage} / {leaderboardPages}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setLeaderboardPage(Math.min(leaderboardPages, safeLeaderboardPage + 1))}
+                    disabled={safeLeaderboardPage >= leaderboardPages}
+                    className="rounded-md border border-slate-200 bg-white px-2.5 py-1 font-medium text-slate-700 disabled:opacity-40"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
             </div>
           ) : (
             <SectionCard
-              title="Instagram Account Comparison"
+              title="Account Comparison"
               subtitle="Comparison of posts, likes, comments, and views across top performing accounts"
             >
               <InstagramAccountComparisonChart data={accountComparison} />
@@ -903,7 +968,7 @@ export function CampaignAnalyticsView({
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <Link
-                            href={`/dashboard/volunteers/${post.handle}?from=leaderboard`}
+                            href={`/dashboard/volunteers/${post.handle}?platform=${post.platform}&from=leaderboard`}
                             className="font-bold text-slate-900 hover:text-blue-600 hover:underline block truncate text-sm"
                           >
                             @{post.handle}
@@ -912,6 +977,7 @@ export function CampaignAnalyticsView({
                             {post.volunteerName}
                           </span>
                         </div>
+                        <PlatformBadge platform={post.platform} compact />
                         <span
                           className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold ${
                             isVideo
@@ -968,7 +1034,7 @@ export function CampaignAnalyticsView({
                             rel="noopener noreferrer"
                             className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 font-medium"
                           >
-                            Open Instagram
+                            Open on {platformLabel(post.platform)}
                             <ExternalLink className="h-3 w-3" />
                           </a>
                         )}

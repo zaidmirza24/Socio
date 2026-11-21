@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { useFeatureSettings } from "@/hooks/useFeatureSettings";
 import {
   Search,
   BarChart3,
@@ -103,10 +104,11 @@ interface CommandPaletteProps {
 
 export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
   const router = useRouter();
+  const { campaign_captions_enabled } = useFeatureSettings();
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [volunteerAccounts, setVolunteerAccounts] = useState<
-    { handle: string; volunteer_name: string }[]
+    { handle: string; volunteer_name: string; platform: string }[]
   >([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -122,9 +124,10 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         .then((data) => {
           if (Array.isArray(data?.accounts)) {
             setVolunteerAccounts(
-              data.accounts.map((a: { handle: string; volunteer_name: string }) => ({
+              data.accounts.map((a: { handle: string; volunteer_name: string; platform: string }) => ({
                 handle: a.handle,
                 volunteer_name: a.volunteer_name,
+                platform: a.platform ?? "instagram",
               }))
             );
           }
@@ -152,6 +155,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
     const q = query.trim().toLowerCase();
 
     const matchedStatic = STATIC_NAV_OPTIONS.filter((opt) => {
+      if (opt.id === "nav-captions" && !campaign_captions_enabled) return false;
       if (!q) return true;
       return (
         opt.title.toLowerCase().includes(q) ||
@@ -169,17 +173,17 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         )
         .slice(0, 5)
         .map((v) => ({
-          id: `vol-${v.handle}`,
+          id: `vol-${v.handle}-${v.platform}`,
           category: "Volunteers" as const,
           title: `@${v.handle}`,
           subtitle: v.volunteer_name,
-          href: `/dashboard/volunteers/${v.handle}`,
+          href: `/dashboard/volunteers/${v.handle}?platform=${v.platform}`,
           icon: Users,
         }));
     }
 
     return [...matchedStatic, ...matchedVolunteers];
-  }, [query, volunteerAccounts]);
+  }, [query, volunteerAccounts, campaign_captions_enabled]);
 
   // Clamp selection index
   useEffect(() => {

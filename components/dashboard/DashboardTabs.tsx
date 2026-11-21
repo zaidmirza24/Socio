@@ -16,12 +16,14 @@ import type {
   KPISummary,
   RecentPostItem,
   DateRangePreset,
+  PlatformFilter,
 } from "@/lib/supabase/queries";
 
 interface DashboardTabsProps {
   matrixData: MatrixData;
   analyticsData: {
     currentRange: DateRangePreset;
+    platform: PlatformFilter;
     trendData: TrendDataPoint[];
     topPosts: TopPostData[];
     volunteerEngagement: VolunteerEngagementData[];
@@ -68,7 +70,7 @@ export function DashboardTabs({ matrixData, analyticsData }: DashboardTabsProps)
             </span>
           </div>
           <p className="text-sm text-slate-500 mt-1">
-            Real-time tracking of canonical campaign content published by verified volunteer accounts.
+            Every post from monitored volunteer accounts on Instagram, Facebook and X, with engagement over time.
           </p>
         </div>
 
@@ -106,6 +108,7 @@ export function DashboardTabs({ matrixData, analyticsData }: DashboardTabsProps)
       ) : (
         <CampaignAnalyticsView
           currentRange={analyticsData.currentRange}
+          platform={analyticsData.platform}
           trendData={analyticsData.trendData}
           topPosts={analyticsData.topPosts}
           volunteerEngagement={analyticsData.volunteerEngagement}

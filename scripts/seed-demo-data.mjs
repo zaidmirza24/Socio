@@ -191,6 +191,48 @@ async function seedRealData() {
       following: 220,
       post_count: 980,
     },
+    // Facebook volunteers
+    {
+      handle: "pravind.yadav.sp",
+      volunteer_name: "Pravind Yadav FB",
+      platform: "facebook",
+      status: "active",
+      is_visible: true,
+      followers: 84000,
+      following: 120,
+      post_count: 430,
+    },
+    {
+      handle: "samajwadi.live",
+      volunteer_name: "Samajwadi Live FB",
+      platform: "facebook",
+      status: "active",
+      is_visible: true,
+      followers: 145000,
+      following: 80,
+      post_count: 670,
+    },
+    // Twitter / X volunteers
+    {
+      handle: "MediaCellSP",
+      volunteer_name: "SP Media Cell",
+      platform: "x",
+      status: "active",
+      is_visible: true,
+      followers: 290000,
+      following: 450,
+      post_count: 3200,
+    },
+    {
+      handle: "samajwadi_voice",
+      volunteer_name: "Akhilesh Voice X",
+      platform: "x",
+      status: "active",
+      is_visible: true,
+      followers: 72000,
+      following: 210,
+      post_count: 1150,
+    },
   ];
 
   const accountsMap = new Map();

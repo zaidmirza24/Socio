@@ -17,8 +17,15 @@ import {
   Lock,
   Mail,
   User,
+  Clock,
+  Sliders,
+  Sparkles,
+  Zap,
 } from "lucide-react";
 import { formatDisplayDate } from "@/lib/utils";
+import { IntegrationsCard } from "@/components/settings/IntegrationsCard";
+import { ApifyUsageCard } from "@/components/settings/ApifyUsageCard";
+import { setFeatureFlags } from "@/hooks/useFeatureSettings";
 
 interface TestResult {
   success: boolean;
@@ -69,6 +76,172 @@ export default function SettingsPage() {
   const [userFormError, setUserFormError] = useState<string | null>(null);
   const [userFormSuccess, setUserFormSuccess] = useState<string | null>(null);
 
+  // Scraper Refresh Strategy state (Default: 30-day cutoff, 7-day interval)
+  const [strategy, setStrategy] = useState<{
+    mode: "30_day_cutoff" | "continuous";
+    refresh_interval_days: number;
+    cutoff_days: number;
+    discovery_post_limit: number;
+  }>({
+    mode: "30_day_cutoff",
+    refresh_interval_days: 7,
+    cutoff_days: 30,
+    discovery_post_limit: 10,
+  });
+  const [strategyStats, setStrategyStats] = useState<{
+    totalTrackedPosts: number;
+    eligibleForRefresh: number;
+  } | null>(null);
+  const [loadingStrategy, setLoadingStrategy] = useState(false);
+  const [savingStrategy, setSavingStrategy] = useState(false);
+  const [strategyNotice, setStrategyNotice] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const [triggeringRefresh, setTriggeringRefresh] = useState(false);
+  const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
+
+  // Multi-platform enablement state (Default: Instagram active, Facebook/X disabled)
+  const [platformSettings, setPlatformSettings] = useState<{
+    instagram: { enabled: boolean };
+    facebook: { enabled: boolean };
+    x: { enabled: boolean };
+  }>({
+    instagram: { enabled: true },
+    facebook: { enabled: false },
+    x: { enabled: false },
+  });
+  const [savingPlatform, setSavingPlatform] = useState(false);
+  const [platformNotice, setPlatformNotice] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  // Feature toggles (Campaign Captions on/off)
+  const [captionsEnabled, setCaptionsEnabled] = useState(true);
+  const [savingFeature, setSavingFeature] = useState(false);
+  const [featureNotice, setFeatureNotice] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  const handleToggleCaptions = async (enabled: boolean) => {
+    setSavingFeature(true);
+    setFeatureNotice(null);
+    try {
+      const res = await fetch("/api/admin/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ features: { campaign_captions_enabled: enabled } }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to update feature setting");
+      const next = Boolean(data.featureSettings?.campaign_captions_enabled);
+      setCaptionsEnabled(next);
+      setFeatureFlags({ campaign_captions_enabled: next });
+      setFeatureNotice({
+        type: "success",
+        message: `Campaign Captions has been turned ${next ? "on" : "off"}.`,
+      });
+    } catch (err: unknown) {
+      setFeatureNotice({
+        type: "error",
+        message: err instanceof Error ? err.message : "Error updating feature setting",
+      });
+    } finally {
+      setSavingFeature(false);
+    }
+  };
+
+  const fetchStrategy = useCallback(async () => {
+    setLoadingStrategy(true);
+    try {
+      const res = await fetch("/api/admin/settings");
+      if (res.ok) {
+        const data = await res.json();
+        if (data.strategy) setStrategy(data.strategy);
+        if (data.platformSettings) setPlatformSettings(data.platformSettings);
+        if (data.featureSettings) setCaptionsEnabled(data.featureSettings.campaign_captions_enabled);
+        if (data.stats) setStrategyStats(data.stats);
+      }
+    } catch {
+      // Ignored
+    } finally {
+      setLoadingStrategy(false);
+    }
+  }, []);
+
+  const handleTogglePlatform = async (platformKey: "instagram" | "facebook" | "x", newEnabled: boolean) => {
+    if (platformKey === "instagram" && !newEnabled) {
+      alert("Instagram is the primary baseline monitoring platform and cannot be disabled.");
+      return;
+    }
+    setSavingPlatform(true);
+    setPlatformNotice(null);
+    const updated = {
+      ...platformSettings,
+      [platformKey]: { enabled: newEnabled },
+    };
+    try {
+      const res = await fetch("/api/admin/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platforms: updated }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to update platform settings");
+      if (data.platformSettings) setPlatformSettings(data.platformSettings);
+      const name = platformKey === "facebook" ? "Facebook" : "Twitter / X";
+      setPlatformNotice({
+        type: "success",
+        message: `${name} monitoring has been ${newEnabled ? "enabled" : "disabled"} successfully!`,
+      });
+    } catch (err: unknown) {
+      setPlatformNotice({
+        type: "error",
+        message: err instanceof Error ? err.message : "Error updating platform setting",
+      });
+    } finally {
+      setSavingPlatform(false);
+    }
+  };
+
+  const handleSaveStrategy = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingStrategy(true);
+    setStrategyNotice(null);
+    try {
+      const res = await fetch("/api/admin/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(strategy),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to update strategy");
+      setStrategy(data.strategy);
+      if (data.stats) setStrategyStats(data.stats);
+      setStrategyNotice({ type: "success", message: "Scraper refresh strategy updated successfully!" });
+    } catch (err: unknown) {
+      setStrategyNotice({
+        type: "error",
+        message: err instanceof Error ? err.message : "Error saving strategy",
+      });
+    } finally {
+      setSavingStrategy(false);
+    }
+  };
+
+  const handleTriggerRefreshNow = async () => {
+    setTriggeringRefresh(true);
+    setRefreshMessage(null);
+    try {
+      const res = await fetch("/api/scraper/trigger", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobType: "refresh" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to trigger refresh run");
+      setRefreshMessage(data.message || `Dispatched refresh for ${data.eligiblePostsCount || 0} posts.`);
+      fetchStrategy();
+    } catch (err: unknown) {
+      setRefreshMessage(err instanceof Error ? err.message : "Error starting refresh job");
+    } finally {
+      setTriggeringRefresh(false);
+    }
+  };
+
   const fetchTeamMembers = useCallback(async () => {
     setLoadingMembers(true);
     try {
@@ -100,6 +273,9 @@ export default function SettingsPage() {
           });
           setIsAdmin(data.isAdmin);
 
+          // Load strategy
+          fetchStrategy();
+
           // If admin, load team members
           if (data.isAdmin) {
             fetchTeamMembers();
@@ -111,7 +287,7 @@ export default function SettingsPage() {
     } finally {
       setLoadingUser(false);
     }
-  }, [fetchTeamMembers]);
+  }, [fetchTeamMembers, fetchStrategy]);
 
   useEffect(() => {
     fetchCurrentUser();
@@ -244,6 +420,446 @@ export default function SettingsPage() {
             {isAdmin
               ? "Full privileges: Can manage accounts, trigger scrapes, and add team members."
               : "Standard privileges: Read-only access to team management."}
+          </div>
+        </div>
+      </div>
+
+      {/* Apify connection: paste token, auto-detect task, register webhook (admin only) */}
+      {isAdmin && <IntegrationsCard />}
+
+      {/* Feature Toggles */}
+      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h3 className="text-base font-bold text-slate-900">Campaign Captions</h3>
+            <p className="text-xs text-slate-500 mt-1">
+              <strong>On:</strong> new posts are filtered by your campaign captions (only matches are
+              kept). Posts already captured while Off keep refreshing.
+              <br />
+              <strong>Off:</strong> every post from monitored accounts is captured and refreshed,
+              matching or not (see Recent Posts), and the Captions page is hidden. Nothing is ever
+              deleted when you switch.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={captionsEnabled}
+            disabled={!isAdmin || savingFeature}
+            onClick={() => handleToggleCaptions(!captionsEnabled)}
+            className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:opacity-50 ${
+              captionsEnabled ? "bg-blue-600" : "bg-slate-300"
+            }`}
+          >
+            <span
+              className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                captionsEnabled ? "translate-x-4" : "translate-x-0"
+              }`}
+            />
+          </button>
+        </div>
+        {featureNotice && (
+          <div
+            className={`mt-4 rounded-lg p-3 text-xs ${
+              featureNotice.type === "success"
+                ? "bg-emerald-50 border border-emerald-200 text-emerald-800"
+                : "bg-red-50 border border-red-200 text-red-800"
+            }`}
+          >
+            {featureNotice.message}
+          </div>
+        )}
+        {!isAdmin && (
+          <p className="mt-3 text-[11px] text-slate-500">Only administrators can change this.</p>
+        )}
+      </div>
+
+      {/* Scraper Refresh Strategy & Cost Optimization Card */}
+      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-100 pb-5">
+          <div>
+            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <Sliders className="h-5 w-5 text-indigo-600" />
+              Scraper Refresh Strategy & Cost Optimization
+            </h3>
+            <p className="text-xs text-slate-500 mt-1">
+              Select between a 30-day cost-optimized window or continuous lifetime post tracking.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span
+              className={`px-2.5 py-1 text-xs font-semibold rounded-full border ${
+                strategy.mode === "30_day_cutoff"
+                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                  : "bg-blue-50 text-blue-700 border-blue-200"
+              }`}
+            >
+              Active: {strategy.mode === "30_day_cutoff" ? "30-Day Window (Cost Saver)" : "Continuous Tracking"}
+            </span>
+          </div>
+        </div>
+
+        {/* Live Eligibility Statistics */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200/70 text-xs">
+          <div>
+            <span className="text-slate-500 font-medium">Total Tracked Posts:</span>
+            <div className="text-sm font-bold text-slate-900 mt-0.5">
+              {strategyStats ? strategyStats.totalTrackedPosts : "Loading..."}
+            </div>
+          </div>
+          <div>
+            <span className="text-slate-500 font-medium">Eligible For {strategy.refresh_interval_days}-Day Refresh:</span>
+            <div className="text-sm font-bold text-indigo-700 mt-0.5">
+              {strategyStats ? `${strategyStats.eligibleForRefresh} posts due` : "Loading..."}
+            </div>
+          </div>
+          <div>
+            <span className="text-slate-500 font-medium">Active Mode:</span>
+            <div className="text-sm font-bold text-slate-800 mt-0.5">
+              {strategy.mode === "30_day_cutoff" ? `${strategy.cutoff_days}-Day Cutoff` : "Continuous Tracking"}
+            </div>
+          </div>
+        </div>
+
+        {/* Strategy Mode Selector */}
+        <form onSubmit={handleSaveStrategy} className="space-y-5">
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
+              Select Refresh Strategy
+            </label>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Option 1: 30-Day Cutoff Window (Default) */}
+              <div
+                onClick={() => isAdmin && setStrategy((prev) => ({ ...prev, mode: "30_day_cutoff" }))}
+                className={`cursor-pointer rounded-xl border p-4 transition ${
+                  strategy.mode === "30_day_cutoff"
+                    ? "border-emerald-500 bg-emerald-50/40 ring-2 ring-emerald-400"
+                    : "border-slate-200 hover:border-slate-300 bg-white"
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-emerald-600" />
+                    30-Day Window (Default)
+                  </span>
+                  <span className="px-2 py-0.5 text-[10px] font-bold uppercase rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    High Cost Savings
+                  </span>
+                </div>
+                <p className="text-xs text-slate-600 mt-2 leading-relaxed">
+                  Refreshes posts every 7 days during their first 30 days (~4–5 refreshes per post). Older posts are automatically frozen to minimize third-party scraping bills.
+                </p>
+                <div className="mt-3 flex items-center gap-1.5 text-[11px] text-emerald-700 font-medium">
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  <span>Recommended for regular volunteer campaign tracking</span>
+                </div>
+              </div>
+
+              {/* Option 2: Continuous Tracking */}
+              <div
+                onClick={() => isAdmin && setStrategy((prev) => ({ ...prev, mode: "continuous" }))}
+                className={`cursor-pointer rounded-xl border p-4 transition ${
+                  strategy.mode === "continuous"
+                    ? "border-blue-500 bg-blue-50/40 ring-2 ring-blue-400"
+                    : "border-slate-200 hover:border-slate-300 bg-white"
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                    <Clock className="h-4 w-4 text-blue-600" />
+                    Continuous Lifetime
+                  </span>
+                  <span className="px-2 py-0.5 text-[10px] font-bold uppercase rounded-full bg-blue-100 text-blue-800 border border-blue-200">
+                    Full History
+                  </span>
+                </div>
+                <p className="text-xs text-slate-600 mt-2 leading-relaxed">
+                  Refreshes all active posts every 7 days continuously without any age cutoff (~21–22 refreshes per post over 5 months).
+                </p>
+                <div className="mt-3 flex items-center gap-1.5 text-[11px] text-blue-700 font-medium">
+                  <Zap className="h-3.5 w-3.5" />
+                  <span>Tracks viral/long-term engagement growth over months</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Configuration Inputs */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 border-t border-slate-100">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Refresh Interval (Days)
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={90}
+                disabled={!isAdmin}
+                value={strategy.refresh_interval_days}
+                onChange={(e) =>
+                  setStrategy((prev) => ({
+                    ...prev,
+                    refresh_interval_days: parseInt(e.target.value, 10) || 7,
+                  }))
+                }
+                className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-xs focus:border-blue-500 focus:outline-none"
+              />
+              <span className="text-[10px] text-slate-500">Days between metric refreshes (Default: 7)</span>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Active Cutoff (Days)
+              </label>
+              <input
+                type="number"
+                min={7}
+                max={365}
+                disabled={!isAdmin || strategy.mode !== "30_day_cutoff"}
+                value={strategy.cutoff_days}
+                onChange={(e) =>
+                  setStrategy((prev) => ({
+                    ...prev,
+                    cutoff_days: parseInt(e.target.value, 10) || 30,
+                  }))
+                }
+                className={`w-full rounded-lg border border-slate-300 px-3 py-1.5 text-xs focus:border-blue-500 focus:outline-none ${
+                  strategy.mode !== "30_day_cutoff" ? "bg-slate-100 text-slate-400" : ""
+                }`}
+              />
+              <span className="text-[10px] text-slate-500">Freeze age in Cutoff mode (Default: 30)</span>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Discovery Post Limit
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={50}
+                disabled={!isAdmin}
+                value={strategy.discovery_post_limit}
+                onChange={(e) =>
+                  setStrategy((prev) => ({
+                    ...prev,
+                    discovery_post_limit: parseInt(e.target.value, 10) || 10,
+                  }))
+                }
+                className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-xs focus:border-blue-500 focus:outline-none"
+              />
+              <span className="text-[10px] text-slate-500">Recent posts per account in daily crawl</span>
+            </div>
+          </div>
+
+          {/* Strategy Save Notice */}
+          {strategyNotice && (
+            <div
+              className={`rounded-lg p-3 text-xs flex items-center gap-2 ${
+                strategyNotice.type === "success"
+                  ? "bg-emerald-50 border border-emerald-200 text-emerald-800"
+                  : "bg-red-50 border border-red-200 text-red-800"
+              }`}
+            >
+              {strategyNotice.type === "success" ? (
+                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+              ) : (
+                <AlertCircle className="h-4 w-4 text-red-600" />
+              )}
+              <span>{strategyNotice.message}</span>
+            </div>
+          )}
+
+          {refreshMessage && (
+            <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-xs text-blue-800 flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-blue-600" />
+              <span>{refreshMessage}</span>
+            </div>
+          )}
+
+          {/* Action Buttons */}
+          {isAdmin && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={handleTriggerRefreshNow}
+                disabled={triggeringRefresh || (strategyStats?.eligibleForRefresh === 0)}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-lg border border-indigo-300 bg-indigo-50/70 px-4 py-2 text-xs font-semibold text-indigo-800 hover:bg-indigo-100 transition disabled:opacity-50"
+              >
+                {triggeringRefresh ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Dispatching Refresh...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    Refresh Eligible Posts Now ({strategyStats?.eligibleForRefresh || 0})
+                  </>
+                )}
+              </button>
+
+              <button
+                type="submit"
+                disabled={savingStrategy}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-5 py-2 text-xs font-semibold text-white shadow hover:bg-indigo-700 transition disabled:opacity-50"
+              >
+                {savingStrategy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Save Refresh Strategy
+              </button>
+            </div>
+          )}
+        </form>
+      </div>
+
+      {/* Apify credit usage, budget and forecast (admin only) */}
+      {isAdmin && <ApifyUsageCard />}
+
+      {/* Multi-Platform Scraping Integration Card */}
+      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-100 pb-5">
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Sliders className="h-5 w-5 text-indigo-600" />
+                Multi-Platform Social Media Monitoring
+              </h3>
+              <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700 border border-blue-200">
+                Instagram • Facebook • Twitter/X
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 mt-1">
+              Enable or disable data ingestion independently across social networks. Facebook and Twitter/X are safely isolated and do not disrupt Instagram.
+            </p>
+          </div>
+        </div>
+
+        {platformNotice && (
+          <div
+            className={`mt-4 rounded-lg p-3 text-xs flex items-center gap-2 ${
+              platformNotice.type === "success"
+                ? "bg-emerald-50 border border-emerald-200 text-emerald-800"
+                : "bg-red-50 border border-red-200 text-red-800"
+            }`}
+          >
+            {platformNotice.type === "success" ? (
+              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+            ) : (
+              <AlertCircle className="h-4 w-4 text-red-600" />
+            )}
+            <span>{platformNotice.message}</span>
+          </div>
+        )}
+
+        <div className="mt-5 grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* Instagram */}
+          <div className="rounded-xl border border-pink-200 bg-pink-50/30 p-4 flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-sm text-slate-900 flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full bg-pink-500 animate-pulse"></span>
+                  Instagram
+                </span>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                  Primary • Active
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 mt-2">
+                Monitors volunteer Instagram posts, reels, video views, and likes. Discovery &amp; 7-day refresh fully enabled.
+              </p>
+            </div>
+            <div className="mt-4 pt-3 border-t border-pink-100 text-[11px] text-slate-500 flex justify-between items-center">
+              <span>Status</span>
+              <span className="font-semibold text-emerald-600">Always Enabled</span>
+            </div>
+          </div>
+
+          {/* Facebook */}
+          <div className={`rounded-xl border p-4 flex flex-col justify-between transition ${
+            platformSettings.facebook?.enabled
+              ? "border-blue-300 bg-blue-50/30"
+              : "border-slate-200 bg-slate-50/50"
+          }`}>
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-sm text-slate-900 flex items-center gap-1.5">
+                  <span className={`h-2 w-2 rounded-full ${platformSettings.facebook?.enabled ? "bg-blue-600" : "bg-slate-300"}`}></span>
+                  Facebook
+                </span>
+                <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                  platformSettings.facebook?.enabled
+                    ? "text-blue-700 bg-blue-100"
+                    : "text-slate-600 bg-slate-200"
+                }`}>
+                  {platformSettings.facebook?.enabled ? "Enabled" : "Disabled"}
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 mt-2">
+                Tracks public volunteer page &amp; profile posts, reactions, comments, and shares.
+              </p>
+            </div>
+            <div className="mt-4 pt-3 border-t border-slate-200/60 flex justify-between items-center">
+              <span className="text-[11px] text-slate-500">Toggle Access</span>
+              <button
+                type="button"
+                disabled={!isAdmin || savingPlatform}
+                onClick={() => handleTogglePlatform("facebook", !platformSettings.facebook?.enabled)}
+                className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:opacity-50 ${
+                  platformSettings.facebook?.enabled ? "bg-blue-600" : "bg-slate-300"
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                    platformSettings.facebook?.enabled ? "translate-x-4" : "translate-x-0"
+                  }`}
+                />
+              </button>
+            </div>
+          </div>
+
+          {/* Twitter / X */}
+          <div className={`rounded-xl border p-4 flex flex-col justify-between transition ${
+            platformSettings.x?.enabled
+              ? "border-neutral-300 bg-neutral-50/60"
+              : "border-slate-200 bg-slate-50/50"
+          }`}>
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-sm text-slate-900 flex items-center gap-1.5">
+                  <span className={`h-2 w-2 rounded-full ${platformSettings.x?.enabled ? "bg-black" : "bg-slate-300"}`}></span>
+                  Twitter / X
+                </span>
+                <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                  platformSettings.x?.enabled
+                    ? "text-slate-900 bg-slate-200"
+                    : "text-slate-600 bg-slate-200"
+                }`}>
+                  {platformSettings.x?.enabled ? "Enabled" : "Disabled"}
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 mt-2">
+                Extracts volunteer tweets, retweets, replies, likes, and full post view impressions.
+              </p>
+            </div>
+            <div className="mt-4 pt-3 border-t border-slate-200/60 flex justify-between items-center">
+              <span className="text-[11px] text-slate-500">Toggle Access</span>
+              <button
+                type="button"
+                disabled={!isAdmin || savingPlatform}
+                onClick={() => handleTogglePlatform("x", !platformSettings.x?.enabled)}
+                className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:opacity-50 ${
+                  platformSettings.x?.enabled ? "bg-black" : "bg-slate-300"
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                    platformSettings.x?.enabled ? "translate-x-4" : "translate-x-0"
+                  }`}
+                />
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -454,20 +1070,11 @@ export default function SettingsPage() {
           Sensitive API keys (such as <code className="bg-slate-100 px-1 py-0.5 rounded font-mono">SUPABASE_SERVICE_ROLE_KEY</code> and <code className="bg-slate-100 px-1 py-0.5 rounded font-mono">APIFY_API_TOKEN</code>) are secured on the server via <code className="bg-slate-100 px-1 py-0.5 rounded font-mono">.env.local</code> and Vercel Environment Variables. They are never exposed to the client bundle.
         </p>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
-          <div className="p-3 rounded-lg border border-slate-100 bg-slate-50">
-            <span className="text-xs font-semibold text-slate-500">APIFY_API_TOKEN</span>
-            <div className="text-xs font-mono text-slate-700 mt-1">Configured on Server</div>
-          </div>
-          <div className="p-3 rounded-lg border border-slate-100 bg-slate-50">
-            <span className="text-xs font-semibold text-slate-500">APIFY_TASK_ID / ACTOR_ID</span>
-            <div className="text-xs font-mono text-slate-700 mt-1">Configured on Server</div>
-          </div>
-          <div className="p-3 rounded-lg border border-slate-100 bg-slate-50">
-            <span className="text-xs font-semibold text-slate-500">SUPABASE_SERVICE_ROLE</span>
-            <div className="text-xs font-mono text-slate-700 mt-1">Configured on Server</div>
-          </div>
-        </div>
+        <p className="text-xs text-slate-500">
+          {isAdmin
+            ? "The live status of your Apify token, task and webhook secret is shown in the “Apify Connection & Credentials” card above."
+            : "Credential status is visible to administrators only."}
+        </p>
       </div>
 
       {/* Modal: Add Team Member (Admin Only) */}

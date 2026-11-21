@@ -28,8 +28,31 @@ export interface AdaptiveThresholdOptions {
 
 export interface MatchCaptionOptions {
   postedAt?: string | Date | null;
-  embargoToleranceHours?: number; // default 48 hours
+  embargoToleranceHours?: number; // default 48 hours (ignored when sameDayOnly is true)
   adaptiveThresholds?: AdaptiveThresholdOptions;
+  /**
+   * Daily-caption rule: a post can only match a caption released on the SAME calendar day
+   * (in `timeZone`). Each day has its own caption, so older / newer captions never match.
+   */
+  sameDayOnly?: boolean;
+  timeZone?: string; // default Asia/Kolkata
+}
+
+export const DEFAULT_MATCH_TIME_ZONE = "Asia/Kolkata";
+
+/** Calendar day (YYYY-MM-DD) of an instant in the given time zone. */
+export function calendarDay(
+  value: string | Date,
+  timeZone: string = DEFAULT_MATCH_TIME_ZONE
+): string | null {
+  const d = value instanceof Date ? value : new Date(value);
+  if (isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
 }
 
 export type MatchResult =
@@ -315,10 +338,17 @@ export function matchCaption(
         60 *
         1000;
 
+      const postDay = options.sameDayOnly
+        ? calendarDay(options.postedAt, options.timeZone)
+        : null;
+
       eligibleCaptions = activeCaptions.filter((caption) => {
         if (!caption.released_at) return true;
         const releaseTime = new Date(caption.released_at).getTime();
         if (isNaN(releaseTime)) return true;
+        if (options.sameDayOnly && postDay) {
+          return calendarDay(caption.released_at, options.timeZone) === postDay;
+        }
         // Post must not have been published earlier than (released_at - tolerance)
         return postTime >= releaseTime - toleranceMs;
       });

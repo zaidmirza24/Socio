@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createServerComponentClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getServerEnv } from "@/lib/env";
+import { timingSafeEqual } from "node:crypto";
 
 const createUserSchema = z.object({
   email: z.string().email("Invalid email address").toLowerCase().trim(),
@@ -25,7 +27,19 @@ async function verifyAdminOrBootstrap(request: NextRequest) {
   const isBootstrap = (count ?? 0) === 0;
 
   if (isBootstrap) {
-    return { authorized: true, isBootstrap: true };
+    // This route is outside the auth middleware, so an empty profiles table must NOT mean
+    // "anyone can become admin". Bootstrap needs the secret BOOTSTRAP_TOKEN from the server env.
+    const expected = getServerEnv().BOOTSTRAP_TOKEN;
+    const provided = request.headers.get("x-bootstrap-token") ?? "";
+    if (expected && provided.length === expected.length && timingSafeEqual(Buffer.from(provided), Buffer.from(expected))) {
+      return { authorized: true, isBootstrap: true };
+    }
+    return {
+      authorized: false,
+      isBootstrap: false,
+      error:
+        "No admin exists yet. Create the first user in Supabase Auth (it becomes admin automatically), or set BOOTSTRAP_TOKEN and send it as the x-bootstrap-token header.",
+    };
   }
 
   // If not bootstrap, check if the current requester is an authenticated Admin

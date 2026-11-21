@@ -18,13 +18,26 @@ import {
 interface TriggerScraperButtonProps {
   onCompleted?: () => void;
   className?: string;
+  /** Which collection mode the dialog opens with. "refresh" = weekly engagement refresh. */
+  initialJobType?: "discovery" | "refresh";
+  /** Optional button text when idle (e.g. "Refresh Engagement"). */
+  label?: string;
 }
 
-export function TriggerScraperButton({ onCompleted, className }: TriggerScraperButtonProps) {
+export function TriggerScraperButton({
+  onCompleted,
+  className,
+  initialJobType = "discovery",
+  label,
+}: TriggerScraperButtonProps) {
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
-  const [postLimit, setPostLimit] = useState<number>(10);
+  const [jobType, setJobType] = useState<"discovery" | "refresh">(initialJobType);
+  const [selectedPlatform, setSelectedPlatform] = useState<"instagram" | "facebook" | "x">("instagram");
+  // null = use the saved per-day cap from Settings
+  const [postLimit, setPostLimit] = useState<number | null>(null);
   const [activeAccountCount, setActiveAccountCount] = useState<number | null>(null);
+  const [eligibleRefreshCount, setEligibleRefreshCount] = useState<number | null>(null);
 
   const [errorType, setErrorType] = useState<string | null>(null);
 
@@ -44,7 +57,7 @@ export function TriggerScraperButton({ onCompleted, className }: TriggerScraperB
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Fetch count of active accounts when opening modal
+  // Fetch count of active accounts and eligible refresh posts when opening modal
   useEffect(() => {
     if (isOpen) {
       fetch("/api/accounts")
@@ -56,6 +69,15 @@ export function TriggerScraperButton({ onCompleted, className }: TriggerScraperB
           }
         })
         .catch(() => setActiveAccountCount(null));
+
+      fetch("/api/admin/settings")
+        .then((res) => res.json())
+        .then((data) => {
+          if (data?.stats) {
+            setEligibleRefreshCount(data.stats.eligibleForRefresh);
+          }
+        })
+        .catch(() => setEligibleRefreshCount(null));
     }
   }, [isOpen]);
 
@@ -79,7 +101,7 @@ export function TriggerScraperButton({ onCompleted, className }: TriggerScraperB
     if (activeRunId && (runStatus === "RUNNING" || runStatus === "INGESTING")) {
       const poll = async () => {
         try {
-          const res = await fetch(`/api/apify/status?runId=${activeRunId}`);
+          const res = await fetch(`/api/scraper/status?runId=${activeRunId}`);
           const data = await res.json();
 
           if (!res.ok) {
@@ -126,16 +148,24 @@ export function TriggerScraperButton({ onCompleted, className }: TriggerScraperB
   const handleStartRun = async () => {
     setIsStarting(true);
     setRunStatus("STARTING");
-    setStatusMessage("Querying active accounts and dispatching job to Apify...");
+    setStatusMessage(
+      jobType === "refresh"
+        ? "Querying eligible tracked posts and dispatching 7-day refresh..."
+        : "Querying active accounts and dispatching discovery job..."
+    );
     setElapsedSeconds(0);
     setSummaryData(null);
     setErrorType(null);
 
     try {
-      const res = await fetch("/api/apify/trigger", {
+      const res = await fetch("/api/scraper/trigger", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postLimit }),
+        body: JSON.stringify({
+          jobType,
+          platform: selectedPlatform,
+          ...(postLimit !== null ? { postLimit } : {}),
+        }),
       });
 
       const data = await res.json();
@@ -151,9 +181,19 @@ export function TriggerScraperButton({ onCompleted, className }: TriggerScraperB
         throw new Error(errorMsg);
       }
 
+      if (jobType === "refresh" && data.eligiblePostsCount === 0) {
+        setRunStatus("SUCCEEDED");
+        setStatusMessage(data.message || "No posts are currently due for 7-day refresh.");
+        return;
+      }
+
       setActiveRunId(data.runId);
       setRunStatus("RUNNING");
-      setStatusMessage(`Crawler dispatched (Run ID: ${data.runId}). Crawling ${data.accountsCount} accounts...`);
+      setStatusMessage(
+        jobType === "refresh"
+          ? `Refresh crawler dispatched (Run ID: ${data.runId}). Refreshing ${data.eligiblePostsCount} posts...`
+          : `Discovery crawler dispatched (Run ID: ${data.runId}). Crawling ${data.accountsCount} accounts...`
+      );
     } catch (err: unknown) {
       setRunStatus("FAILED");
       setStatusMessage(err instanceof Error ? err.message : "An unexpected error occurred");
@@ -196,8 +236,12 @@ export function TriggerScraperButton({ onCompleted, className }: TriggerScraperB
           </>
         ) : (
           <>
-            <Play className="h-4 w-4 fill-current" />
-            <span>Run Scraper Now</span>
+            {initialJobType === "refresh" ? (
+              <RefreshCw className="h-4 w-4" />
+            ) : (
+              <Play className="h-4 w-4 fill-current" />
+            )}
+            <span>{label ?? "Run Scraper Now"}</span>
           </>
         )}
       </button>
@@ -211,10 +255,10 @@ export function TriggerScraperButton({ onCompleted, className }: TriggerScraperB
               <div>
                 <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
                   <Play className="h-5 w-5 text-blue-600 fill-current" />
-                  Instagram Scraper Launcher
+                  Social Media Scraper Launcher
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Execute on-demand crawler directly against active accounts in your database.
+                  Execute on-demand crawler directly across Instagram, Facebook, and Twitter/X.
                 </p>
               </div>
               <button
@@ -227,46 +271,141 @@ export function TriggerScraperButton({ onCompleted, className }: TriggerScraperB
 
             {/* Body */}
             <div className="mt-5 space-y-5">
-              {/* Target Accounts Info */}
-              <div className="rounded-xl bg-slate-50 border border-slate-200/70 p-4">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="font-medium text-slate-700">Target Accounts</span>
-                  <span className="rounded-full bg-blue-100 text-blue-800 px-2.5 py-0.5 text-xs font-semibold">
-                    {activeAccountCount !== null ? `${activeAccountCount} active` : "Loading..."}
-                  </span>
-                </div>
-                <p className="text-xs text-slate-500 mt-1">
-                  Pulls all active Instagram handles from your database. Ingestion will automatically update existing posts and daily snapshots.
-                </p>
-              </div>
-
-              {/* Depth / Post Limit selector (only when idle) */}
+              {/* Platform Selector Tabs (Only when IDLE) */}
               {runStatus === "IDLE" && (
                 <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
-                    Posts to fetch per account
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
+                    Platform
                   </label>
-                  <div className="grid grid-cols-3 gap-3">
-                    {[
-                      { value: 5, label: "5 Posts", desc: "Fast (Quick refresh)" },
-                      { value: 10, label: "10 Posts", desc: "Standard (Recommended)" },
-                      { value: 20, label: "20 Posts", desc: "Deep (Historical backfill)" },
-                    ].map((opt) => (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        onClick={() => setPostLimit(opt.value)}
-                        className={`flex flex-col items-center justify-center p-3 rounded-xl border text-center transition ${
-                          postLimit === opt.value
-                            ? "border-blue-600 bg-blue-50/50 text-blue-900 ring-2 ring-blue-500"
-                            : "border-slate-200 hover:border-slate-300 text-slate-700"
-                        }`}
-                      >
-                        <span className="text-sm font-bold">{opt.label}</span>
-                        <span className="text-[10px] text-slate-500 mt-0.5">{opt.desc}</span>
-                      </button>
-                    ))}
+                  <div className="flex rounded-xl bg-slate-100 p-1 border border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPlatform("instagram")}
+                      className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition ${
+                        selectedPlatform === "instagram"
+                          ? "bg-white text-pink-700 shadow-sm"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      Instagram
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPlatform("facebook")}
+                      className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition ${
+                        selectedPlatform === "facebook"
+                          ? "bg-white text-blue-700 shadow-sm"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      Facebook
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPlatform("x")}
+                      className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition ${
+                        selectedPlatform === "x"
+                          ? "bg-white text-slate-950 shadow-sm"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      Twitter / X
+                    </button>
                   </div>
+                </div>
+              )}
+
+              {/* Job Type Selector Tabs (Only when IDLE) */}
+              {runStatus === "IDLE" && (
+                <div>
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1.5">
+                    Collection Mode
+                  </label>
+                  <div className="flex rounded-xl bg-slate-100 p-1 border border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => setJobType("discovery")}
+                      className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition ${
+                        jobType === "discovery"
+                          ? "bg-white text-blue-700 shadow-sm"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      Daily Discovery (Part A)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setJobType("refresh")}
+                      className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition ${
+                        jobType === "refresh"
+                          ? "bg-white text-blue-700 shadow-sm"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      7-Day Refresh (Part B)
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Discovery Mode Info */}
+              {jobType === "discovery" ? (
+                <>
+                  <div className="rounded-xl bg-slate-50 border border-slate-200/70 p-4">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="font-medium text-slate-700">Target Accounts</span>
+                      <span className="rounded-full bg-blue-100 text-blue-800 px-2.5 py-0.5 text-xs font-semibold">
+                        {activeAccountCount !== null ? `${activeAccountCount} active` : "Loading..."}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Crawls all active volunteer profiles for recent posts published during active campaigns.
+                    </p>
+                  </div>
+
+                  {/* Depth / Post Limit selector (only when idle) */}
+                  {runStatus === "IDLE" && (
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
+                        Max posts per account (today only)
+                      </label>
+                      <div className="grid grid-cols-4 gap-3">
+                        {[
+                          { value: null, label: "Saved", desc: "From Settings" },
+                          { value: 6, label: "6 Posts", desc: "Per day" },
+                          { value: 8, label: "8 Posts", desc: "Per day" },
+                          { value: 10, label: "10 Posts", desc: "Per day" },
+                        ].map((opt) => (
+                          <button
+                            key={opt.label}
+                            type="button"
+                            onClick={() => setPostLimit(opt.value)}
+                            className={`flex flex-col items-center justify-center p-3 rounded-xl border text-center transition ${
+                              postLimit === opt.value
+                                ? "border-blue-600 bg-blue-50/50 text-blue-900 ring-2 ring-blue-500"
+                                : "border-slate-200 hover:border-slate-300 text-slate-700"
+                            }`}
+                          >
+                            <span className="text-sm font-bold">{opt.label}</span>
+                            <span className="text-[10px] text-slate-500 mt-0.5">{opt.desc}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                /* 7-Day Refresh Mode Info */
+                <div className="rounded-xl bg-indigo-50/60 border border-indigo-200/80 p-4">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="font-medium text-indigo-950">Posts Due For 7-Day Refresh</span>
+                    <span className="rounded-full bg-indigo-100 text-indigo-800 px-2.5 py-0.5 text-xs font-semibold">
+                      {eligibleRefreshCount !== null ? `${eligibleRefreshCount} posts` : "Loading..."}
+                    </span>
+                  </div>
+                  <p className="text-xs text-indigo-900/80 mt-1 leading-relaxed">
+                    Fetches fresh metrics (likes, comments, views) only for tracked posts whose last refresh was 7+ days ago. Calculates true interval growth without touching recently updated posts.
+                  </p>
                 </div>
               )}
 
@@ -369,11 +508,15 @@ export function TriggerScraperButton({ onCompleted, className }: TriggerScraperB
                 <button
                   type="button"
                   onClick={handleStartRun}
-                  disabled={isStarting || activeAccountCount === 0}
+                  disabled={
+                    isStarting ||
+                    (jobType === "discovery" && activeAccountCount === 0) ||
+                    (jobType === "refresh" && eligibleRefreshCount === 0)
+                  }
                   className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white shadow hover:bg-blue-700 transition disabled:opacity-50"
                 >
                   <Play className="h-4 w-4 fill-current" />
-                  Launch Scraper
+                  {jobType === "refresh" ? "Launch 7-Day Refresh" : "Launch Scraper"}
                 </button>
               ) : runStatus === "SUCCEEDED" || runStatus === "FAILED" ? (
                 <button

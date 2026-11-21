@@ -38,9 +38,11 @@ export interface MatchedPost {
   posted_at: string;
   first_seen_at: string;
   last_seen_at: string;
+  last_metrics_refresh_at?: string;
+  thumbnail_url?: string | null;
 }
 
-export type MetricSnapshotSource = "daily_batch" | "direct_url" | "manual_refresh";
+export type MetricSnapshotSource = "daily_batch" | "direct_url" | "manual_refresh" | "weekly_refresh";
 
 export interface MetricSnapshot {
   id: string;
@@ -49,9 +51,11 @@ export interface MetricSnapshot {
   likes: number | null; // null if unavailable/hidden, 0 if genuinely zero
   comments: number | null;
   views: number | null; // null for images/carousels, number for videos/reels
+  shares?: number | null; // null if unavailable/hidden, number for Facebook/X
   delta_likes: number;
   delta_comments: number;
   delta_views: number;
+  delta_shares?: number;
   source: MetricSnapshotSource;
   fetched_at: string;
 }
@@ -91,11 +95,39 @@ export interface Account {
   platform: PlatformType;
   handle: string;
   volunteer_name: string;
+  /** The volunteer (person) who owns this account. One volunteer has up to 3 accounts. */
+  volunteer_id?: string | null;
   status: AccountStatus;
   is_visible: boolean;
   last_checked_at: string | null;
   added_at: string;
   updated_at: string;
+}
+
+/** Caption-match label on a stored post. Posts are never hidden or deleted because of it. */
+export type PostMatchStatus = "unmatched" | "matched" | "needs_review";
+
+export interface Volunteer {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Row of the volunteer_totals SQL view (cross-platform roll-up). */
+export interface VolunteerTotals {
+  volunteer_id: string;
+  name: string;
+  accounts_count: number;
+  instagram_accounts: number;
+  facebook_accounts: number;
+  x_accounts: number;
+  posts_count: number;
+  total_likes: number | null;
+  total_comments: number | null;
+  total_shares: number | null;
+  total_views: number | null;
+  last_posted_at: string | null;
 }
 
 export interface Profile {
@@ -121,6 +153,8 @@ export interface Post {
   posted_at: string;
   first_seen_at: string;
   last_seen_at: string;
+  last_metrics_refresh_at?: string;
+  thumbnail_url?: string | null;
 }
 
 export interface PostSnapshot {
@@ -145,18 +179,44 @@ export interface AccountSnapshot {
   created_at: string;
 }
 
+export type ScraperJobType = "discovery" | "refresh" | "direct_url";
+
 export interface CollectionRun {
   id: string;
   actor_run_id: string | null;
   platform: PlatformType;
+  provider?: string;
+  job_type?: ScraperJobType;
   started_at: string;
   completed_at: string | null;
   status: RunStatus;
   accounts_targeted: number;
   posts_found: number;
   posts_upserted: number;
+  posts_new?: number;
+  posts_refreshed?: number;
   snapshots_created: number;
   error: Record<string, unknown> | null;
+}
+
+// ==========================================
+// System Settings & Refresh Strategy Types
+// ==========================================
+
+export type ScraperRefreshStrategyMode = "30_day_cutoff" | "continuous";
+
+export interface ScraperRefreshStrategy {
+  mode: ScraperRefreshStrategyMode;
+  refresh_interval_days: number;
+  cutoff_days: number;
+  discovery_post_limit: number;
+}
+
+export interface SystemSetting<T = unknown> {
+  key: string;
+  value: T;
+  updated_at: string;
+  updated_by?: string | null;
 }
 
 // ==========================================
@@ -176,6 +236,7 @@ export interface CommonPostItem {
   metrics: {
     likes: number | null;
     comments: number | null;
+    shares?: number | null;
     views: number | null;
   };
 }
@@ -197,6 +258,7 @@ export interface NormalizedPostItem {
   caption: string | null;
   media_type: string | null;
   posted_at: string; // ISO 8601
+  thumbnail_url?: string | null;
   metrics: {
     likes: number | null;
     comments: number | null;

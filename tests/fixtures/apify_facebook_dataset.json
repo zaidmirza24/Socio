@@ -1,0 +1,56 @@
+[
+  {
+    "id": "100089271625341_1234567890",
+    "postId": "1234567890",
+    "url": "https://www.facebook.com/volunteer.rahul/posts/1234567890",
+    "postUrl": "https://www.facebook.com/volunteer.rahul/posts/1234567890",
+    "text": "Join our community initiative this Sunday at 10 AM! Together we build a cleaner, greener tomorrow. #GreenFuture",
+    "createdAt": 1740000000,
+    "user": {
+      "id": "100089271625341",
+      "name": "Rahul Verma",
+      "url": "https://www.facebook.com/volunteer.rahul/"
+    },
+    "reactionCount": 142,
+    "commentCount": 28,
+    "shareCount": 12,
+    "attachments": [
+      {
+        "url": "https://scontent.xx.fbcdn.net/v/sample_fb_image.jpg"
+      }
+    ]
+  },
+  {
+    "id": "100089271625342_9876543210",
+    "postId": "9876543210",
+    "url": "https://www.facebook.com/priya_campaigner/posts/9876543210",
+    "postUrl": "https://www.facebook.com/priya_campaigner/posts/9876543210",
+    "text": "Proud to stand with our volunteer force. Every small step counts towards lasting progress! #YouthEmpowerment",
+    "createdAt": "2026-02-18T10:30:00.000Z",
+    "user": {
+      "id": "100089271625342",
+      "name": "Priya Sharma",
+      "url": "https://www.facebook.com/priya_campaigner/"
+    },
+    "reactionCount": 0,
+    "commentCount": 0,
+    "shareCount": 0,
+    "attachments": []
+  },
+  {
+    "id": "100089271625343_5554443332",
+    "postId": "5554443332",
+    "url": "https://www.facebook.com/amit.singh.social/posts/5554443332",
+    "postUrl": "https://www.facebook.com/amit.singh.social/posts/5554443332",
+    "text": "Volunteers meeting postponed to next Friday due to weather conditions.",
+    "createdAt": 1739900000,
+    "user": {
+      "id": "100089271625343",
+      "name": "Amit Singh",
+      "url": "https://www.facebook.com/amit.singh.social"
+    },
+    "reactionCount": 350,
+    "commentCount": 45,
+    "shareCount": 85
+  }
+]

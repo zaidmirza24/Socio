@@ -1,16 +1,48 @@
 import { ApifyClient } from "apify-client";
 import { getServerEnv } from "../env.ts";
+import { safeEqual } from "../services/crypto.ts";
+import {
+  getApifyConfig,
+  getSecret,
+  isPlaceholderValue,
+} from "../services/integrations.ts";
 
-function isPlaceholder(value: string | undefined): boolean {
-  if (!value) return true;
-  const trimmed = value.trim().toLowerCase();
-  return (
-    trimmed.startsWith("your-") ||
-    trimmed.includes("placeholder") ||
-    trimmed.includes("example") ||
-    trimmed === "changeme" ||
-    trimmed === "not-configured"
-  );
+const isPlaceholder = isPlaceholderValue;
+
+const MISSING_TOKEN_MESSAGE =
+  "Apify API token is not configured. Open Settings → Integrations and paste your token " +
+  "(or set APIFY_API_TOKEN in .env.local). You can create one at https://console.apify.com/account/integrations";
+
+/**
+ * Creates an authorized Apify client using the token saved in Settings (encrypted in DB),
+ * falling back to the APIFY_API_TOKEN environment variable. Server-only.
+ */
+export async function getApifyClientAsync(tokenOverride?: string): Promise<ApifyClient> {
+  const token = tokenOverride ?? (await getSecret("apify_api_token")).value;
+  if (!token || isPlaceholder(token)) {
+    throw new ApifyConfigError(MISSING_TOKEN_MESSAGE);
+  }
+  return new ApifyClient({ token });
+}
+
+/** Task ID from Settings → env → null (caller then falls back to the actor). */
+export async function getApifyTaskIdAsync(override?: string): Promise<string | null> {
+  if (override && !isPlaceholder(override)) return override.trim();
+  return (await getApifyConfig()).taskId;
+}
+
+/** Instagram actor ID from Settings → env → built-in default. */
+export async function getApifyActorIdAsync(override?: string): Promise<string> {
+  if (override && !isPlaceholder(override)) return override.trim();
+  return (await getApifyConfig()).actors.instagram.discovery;
+}
+
+/** Validates an incoming webhook secret against Settings → env, in constant time. */
+export async function verifyWebhookSecretAsync(received: string | null | undefined): Promise<boolean> {
+  if (!received) return false;
+  const expected = (await getSecret("apify_webhook_secret")).value;
+  if (!expected || isPlaceholder(expected)) return false;
+  return safeEqual(received, expected);
 }
 
 /**
@@ -18,18 +50,13 @@ function isPlaceholder(value: string | undefined): boolean {
  * Server-only execution. Throws a descriptive error if the token is missing or placeholder.
  */
 export function getApifyClient(): ApifyClient {
-  const env = getServerEnv();
+  const token = getServerEnv().APIFY_API_TOKEN;
 
-  if (isPlaceholder(env.APIFY_API_TOKEN)) {
-    throw new ApifyConfigError(
-      "APIFY_API_TOKEN is not configured. Please set a valid Apify API token in your .env.local file. " +
-      "You can find your token at https://console.apify.com/account/integrations"
-    );
+  if (!token || isPlaceholder(token)) {
+    throw new ApifyConfigError(MISSING_TOKEN_MESSAGE);
   }
 
-  return new ApifyClient({
-    token: env.APIFY_API_TOKEN,
-  });
+  return new ApifyClient({ token });
 }
 
 /**
@@ -66,7 +93,7 @@ export function verifyWebhookSecret(receivedSecret: string | null | undefined): 
   if (!expectedSecret || isPlaceholder(expectedSecret)) {
     return false;
   }
-  return receivedSecret === expectedSecret;
+  return safeEqual(receivedSecret, expectedSecret);
 }
 
 /**
@@ -74,7 +101,7 @@ export function verifyWebhookSecret(receivedSecret: string | null | undefined): 
  */
 export async function deleteApifyDataset(datasetId: string): Promise<boolean> {
   try {
-    const client = getApifyClient();
+    const client = await getApifyClientAsync();
     await client.dataset(datasetId).delete();
     return true;
   } catch (err: unknown) {

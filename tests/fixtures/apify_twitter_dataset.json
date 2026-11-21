@@ -1,0 +1,59 @@
+[
+  {
+    "inputUrl": "https://x.com/volunteer_anita",
+    "postText": "Proud to join Socio environmental campaign today in New Delhi! Clean water is a human right. #CleanWaterForAll",
+    "postUrl": "https://x.com/volunteer_anita/status/1938336472253534273",
+    "profileUrl": "https://x.com/volunteer_anita",
+    "timestamp": 1750970402000,
+    "conversationId": "1938336472253534273",
+    "postId": "1938336472253534273",
+    "media": [
+      {
+        "url": "https://pbs.twimg.com/media/sample_tweet_pic.jpg"
+      }
+    ],
+    "author": {
+      "name": "Anita Roy",
+      "screenName": "volunteer_anita",
+      "followersCount": 4200,
+      "profileImageUrl": "https://pbs.twimg.com/profile_images/sample_avatar.png"
+    },
+    "replyCount": 18,
+    "quoteCount": 4,
+    "repostCount": 35,
+    "favouriteCount": 145,
+    "viewCount": 2450
+  },
+  {
+    "inputUrl": "https://x.com/rohit_activist",
+    "postText": "Standing united with our team for universal healthcare access. Every citizen matters. #HealthForAll",
+    "postUrl": "https://x.com/rohit_activist/status/1938336472253534274",
+    "profileUrl": "https://x.com/rohit_activist",
+    "timestamp": 1750970500000,
+    "postId": "1938336472253534274",
+    "media": [],
+    "author": {
+      "name": "Rohit Das",
+      "screenName": "rohit_activist",
+      "followersCount": 850
+    },
+    "replyCount": 0,
+    "repostCount": 0,
+    "favouriteCount": 0,
+    "viewCount": 112
+  },
+  {
+    "tweetId": "1938336472253534275",
+    "url": "https://x.com/sneha_action/status/1938336472253534275",
+    "text": "Youth lead the movement for quality education in rural zones! Join us. #EducationFirst",
+    "createdAt": "2026-02-18T14:20:00.000Z",
+    "likeCount": 88,
+    "replyCount": 12,
+    "authorUsername": "sneha_action",
+    "media": []
+  },
+  {
+    "inputUrl": "https://x.com/missing_profile",
+    "error": "PAGE_UNAVAILABLE"
+  }
+]

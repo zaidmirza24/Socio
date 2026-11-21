@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useReviewCount } from "@/hooks/useReviewCount";
+import { useFeatureSettings } from "@/hooks/useFeatureSettings";
 import {
   BarChart3,
   Users,
@@ -29,47 +30,9 @@ interface SidebarNavProps {
 
 export function SidebarNav({ onNavigate }: SidebarNavProps) {
   const pathname = usePathname();
-  const [pendingCount, setPendingCount] = useState<number>(0);
-
-  useEffect(() => {
-    let isMounted = true;
-    const fetchPendingCount = async () => {
-      // Don't poll when the browser tab is hidden/minimized
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
-        return;
-      }
-
-      try {
-        const res = await fetch("/api/review-queue/count");
-        if (res.ok) {
-          const data = await res.json();
-          if (isMounted && typeof data?.count === "number") {
-            setPendingCount(data.count);
-          }
-        }
-      } catch {
-        // Silently ignore network hiccup
-      }
-    };
-
-    fetchPendingCount();
-
-    // Poll every 60s only when active, plus immediate refresh on tab focus
-    const interval = setInterval(fetchPendingCount, 60000);
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        fetchPendingCount();
-      }
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-
-    return () => {
-      isMounted = false;
-      clearInterval(interval);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-    };
-  }, []);
+  // Single shared poll — all SidebarNav instances (desktop + mobile) share one fetch
+  const pendingCount = useReviewCount();
+  const { campaign_captions_enabled } = useFeatureSettings();
 
   const MONITORING_ITEMS: NavItem[] = [
     {
@@ -78,11 +41,15 @@ export function SidebarNav({ onNavigate }: SidebarNavProps) {
       icon: BarChart3,
       exact: true,
     },
-    {
-      name: "Campaign Captions",
-      href: "/dashboard/captions",
-      icon: FileText,
-    },
+    ...(campaign_captions_enabled
+      ? [
+          {
+            name: "Campaign Captions",
+            href: "/dashboard/captions",
+            icon: FileText,
+          } satisfies NavItem,
+        ]
+      : []),
     {
       name: "Review Queue",
       href: "/dashboard/review",
@@ -94,9 +61,14 @@ export function SidebarNav({ onNavigate }: SidebarNavProps) {
 
   const DIRECTORY_ITEMS: NavItem[] = [
     {
-      name: "Accounts & Volunteers",
-      href: "/dashboard/accounts",
+      name: "Volunteers",
+      href: "/dashboard/volunteers",
       icon: Users,
+    },
+    {
+      name: "Accounts",
+      href: "/dashboard/accounts",
+      icon: Layers,
     },
     {
       name: "Recent Posts",

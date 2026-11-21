@@ -5,14 +5,17 @@ import { VolunteerDetailView } from "@/components/volunteers/VolunteerDetailView
 export const dynamic = "force-dynamic";
 
 interface Props {
-  params: Promise<{ handle: string }>;
-  searchParams: Promise<{ range?: string }>;
+  params: Promise<{ handle: string[] | string }>;
+  searchParams: Promise<{ range?: string; platform?: string }>;
 }
 
 export default async function VolunteerDetailPage({ params, searchParams }: Props) {
   const { handle } = await params;
   const resolvedSearchParams = await searchParams;
-  const decodedHandle = decodeURIComponent(handle);
+  const rawHandle = Array.isArray(handle)
+    ? handle.map(decodeURIComponent).join("/")
+    : decodeURIComponent(handle || "");
+  const platform = resolvedSearchParams?.platform;
 
   const initialRange: DateRangePreset =
     resolvedSearchParams?.range === "today" ||
@@ -23,9 +26,8 @@ export default async function VolunteerDetailPage({ params, searchParams }: Prop
       ? (resolvedSearchParams.range as DateRangePreset)
       : "today";
 
-  // Fetch all posts — no preset passed so DB returns every post for this volunteer.
-  // Client-side dateFilter state handles all filtering interactively.
-  const data = await getVolunteerDetails(decodedHandle);
+  // Fetch all posts — pass platform if present for multi-platform disambiguation
+  const data = await getVolunteerDetails(rawHandle, undefined, platform);
 
   if (!data) {
     notFound();

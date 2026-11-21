@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createServerComponentClient } from "@/lib/supabase/server";
+import { resolveVolunteerIds, renameVolunteer } from "@/lib/services/volunteers";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 
 const createAccountSchema = z.object({
   handle: z.string().min(1, "Handle is required").transform((v) => v.replace(/^@/, "").trim().toLowerCase()),
@@ -50,51 +52,37 @@ export async function GET() {
 
     const admin = createAdminClient();
 
-    // 1. Fetch accounts
-    const { data: accounts, error: accError } = await admin
-      .from("accounts")
-      .select("id, platform, handle, volunteer_name, status, added_at, updated_at")
-      .order("added_at", { ascending: false });
+    // 1. Fetch all accounts (paginated: Supabase caps a response at 1000 rows)
+    const accounts = await fetchAllRows((from, to) =>
+      admin
+        .from("accounts")
+        .select("id, platform, handle, volunteer_id, volunteer_name, status, added_at, updated_at")
+        .order("added_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to)
+    );
 
-    if (accError) {
-      return NextResponse.json({ error: accError.message }, { status: 500 });
-    }
-
-    if (!accounts || accounts.length === 0) {
+    if (accounts.length === 0) {
       return NextResponse.json({ accounts: [] });
     }
 
-    // 2. Fetch post counts per account
-    const { data: posts, error: postsError } = await admin
-      .from("posts")
-      .select("account_id");
-
-    const postCounts: Record<string, number> = {};
-    if (!postsError && posts) {
-      for (const p of posts) {
-        postCounts[p.account_id] = (postCounts[p.account_id] || 0) + 1;
-      }
-    }
-
-    // 3. Fetch latest follower count from account_snapshots
-    const { data: snapshots, error: snapError } = await admin
-      .from("account_snapshots")
-      .select("account_id, followers, snapshot_date")
-      .order("snapshot_date", { ascending: false });
-
-    const followersMap: Record<string, number | null> = {};
-    if (!snapError && snapshots) {
-      for (const s of snapshots) {
-        if (followersMap[s.account_id] === undefined) {
-          followersMap[s.account_id] = s.followers;
-        }
-      }
-    }
+    // 2. Post counts and latest followers come from the account_stats SQL view
+    const stats = await fetchAllRows((from, to) =>
+      admin
+        .from("account_stats")
+        .select("account_id, posts_count, followers")
+        .order("account_id", { ascending: true })
+        .range(from, to)
+    ).catch((err: unknown) => {
+      console.error("[accounts] account_stats unavailable (apply migration 20261124):", err);
+      return [] as Array<{ account_id: string; posts_count: number; followers: number | null }>;
+    });
+    const statsById = new Map(stats.map((s) => [s.account_id, s]));
 
     const enrichedAccounts = accounts.map((acc) => ({
       ...acc,
-      postsCount: postCounts[acc.id] || 0,
-      followers: followersMap[acc.id] ?? null,
+      postsCount: Number(statsById.get(acc.id)?.posts_count ?? 0),
+      followers: statsById.get(acc.id)?.followers ?? null,
     }));
 
     return NextResponse.json({ accounts: enrichedAccounts });
@@ -124,11 +112,15 @@ export async function POST(request: NextRequest) {
     const { handle, volunteer_name, platform, status } = parseResult.data;
     const admin = createAdminClient();
 
+    // Same-name accounts on different platforms join one volunteer (max one account/platform)
+    const volunteerIds = await resolveVolunteerIds([{ platform, handle, volunteer_name }]);
+
     const { data, error } = await admin
       .from("accounts")
       .insert({
         handle,
         volunteer_name,
+        volunteer_id: volunteerIds.get(`${platform}:${handle}`) ?? null,
         platform,
         status,
         updated_at: new Date().toISOString(),
@@ -172,6 +164,14 @@ export async function PATCH(request: NextRequest) {
 
     const { id, ...updates } = parseResult.data;
     const admin = createAdminClient();
+
+    // Renaming a volunteer renames them on all of their platform accounts
+    if (updates.volunteer_name) {
+      const { data: current } = await admin.from("accounts").select("volunteer_id").eq("id", id).single();
+      if (current?.volunteer_id) {
+        await renameVolunteer(current.volunteer_id as string, updates.volunteer_name);
+      }
+    }
 
     const { data, error } = await admin
       .from("accounts")

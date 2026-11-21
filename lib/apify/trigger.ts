@@ -187,6 +187,7 @@ export async function triggerApifyTaskRun(
 
   // 4. Build dynamic input payload for the Instagram Scraper
   const dynamicInput: Record<string, unknown> = {
+    username: targetHandles,
     usernames: targetHandles,
     directUrls,
     resultsLimit: postLimit,

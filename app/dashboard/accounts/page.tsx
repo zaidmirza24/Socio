@@ -15,6 +15,8 @@ import {
   AlertCircle,
   Users,
   Instagram,
+  Facebook,
+  Twitter,
   RefreshCw,
   UploadCloud,
   FileText,
@@ -27,7 +29,7 @@ import { formatNumber, formatMetric } from "@/lib/utils";
 
 interface AccountItem {
   id: string;
-  platform: "instagram" | "facebook";
+  platform: "instagram" | "facebook" | "x";
   handle: string;
   volunteer_name: string;
   status: "active" | "paused" | "archived";
@@ -40,11 +42,20 @@ interface ParsedVolunteer {
   id: string;
   volunteer_name: string;
   handle: string;
+  platform: "instagram" | "facebook" | "x";
   status: "active" | "paused";
   isExisting: boolean;
   isDuplicateInBatch: boolean;
   isValid: boolean;
   errorMessage?: string;
+}
+
+interface GridRow {
+  id: string;
+  name: string;
+  handle: string;
+  platform: "instagram" | "facebook" | "x";
+  status: "active" | "paused";
 }
 
 export default function AccountsPage() {
@@ -55,6 +66,7 @@ export default function AccountsPage() {
   // Search & Filter state
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "paused">("all");
+  const [platformFilter, setPlatformFilter] = useState<"all" | "instagram" | "facebook" | "x">("all");
 
   // Single Add / Edit Modals state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -65,16 +77,18 @@ export default function AccountsPage() {
   // Form inputs for single add/edit
   const [volunteerNameInput, setVolunteerNameInput] = useState("");
   const [handleInput, setHandleInput] = useState("");
+  const [platformInput, setPlatformInput] = useState<"instagram" | "facebook" | "x">("instagram");
   const [statusInput, setStatusInput] = useState<"active" | "paused">("active");
 
   // Bulk Modal state
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
   const [bulkMode, setBulkMode] = useState<"paste" | "grid">("paste");
+  const [bulkPlatformInput, setBulkPlatformInput] = useState<"instagram" | "facebook" | "x">("instagram");
   const [bulkTextInput, setBulkTextInput] = useState("");
-  const [gridRows, setGridRows] = useState<Array<{ id: string; name: string; handle: string; status: "active" | "paused" }>>([
-    { id: "1", name: "", handle: "", status: "active" },
-    { id: "2", name: "", handle: "", status: "active" },
-    { id: "3", name: "", handle: "", status: "active" },
+  const [gridRows, setGridRows] = useState<GridRow[]>([
+    { id: "1", name: "", handle: "", platform: "instagram", status: "active" },
+    { id: "2", name: "", handle: "", platform: "instagram", status: "active" },
+    { id: "3", name: "", handle: "", platform: "instagram", status: "active" },
   ]);
   const [bulkSubmitting, setBulkSubmitting] = useState(false);
   const [bulkFormError, setBulkFormError] = useState<string | null>(null);
@@ -105,6 +119,7 @@ export default function AccountsPage() {
   const openAddModal = () => {
     setVolunteerNameInput("");
     setHandleInput("");
+    setPlatformInput("instagram");
     setStatusInput("active");
     setFormError(null);
     setIsAddModalOpen(true);
@@ -114,10 +129,11 @@ export default function AccountsPage() {
     setBulkTextInput("");
     setBulkFormError(null);
     setBulkSuccessSummary(null);
+    setBulkPlatformInput("instagram");
     setGridRows([
-      { id: "1", name: "", handle: "", status: "active" },
-      { id: "2", name: "", handle: "", status: "active" },
-      { id: "3", name: "", handle: "", status: "active" },
+      { id: "1", name: "", handle: "", platform: "instagram", status: "active" },
+      { id: "2", name: "", handle: "", platform: "instagram", status: "active" },
+      { id: "3", name: "", handle: "", platform: "instagram", status: "active" },
     ]);
     setIsBulkModalOpen(true);
   };
@@ -126,8 +142,40 @@ export default function AccountsPage() {
     setEditingAccount(acc);
     setVolunteerNameInput(acc.volunteer_name);
     setHandleInput(acc.handle);
+    setPlatformInput(acc.platform || "instagram");
     setStatusInput(acc.status === "paused" ? "paused" : "active");
     setFormError(null);
+  };
+
+  // Helper to extract clean handle and auto-detect platform from URLs or raw strings
+  const extractHandleAndPlatform = (
+    raw: string,
+    defaultPlatform: "instagram" | "facebook" | "x" = "instagram"
+  ): { handle: string; platform: "instagram" | "facebook" | "x" } => {
+    let text = raw.trim();
+    let detectedPlatform = defaultPlatform;
+
+    if (/instagram\.com/i.test(text)) {
+      detectedPlatform = "instagram";
+      text = text.replace(/^https?:\/\/(www\.)?instagram\.com\//i, "").split(/[?#]/)[0];
+    } else if (/facebook\.com/i.test(text)) {
+      detectedPlatform = "facebook";
+      text = text.replace(/^https?:\/\/(www\.)?facebook\.com\//i, "").split(/[?#]/)[0];
+      if (/profile\.php/i.test(text) && raw.includes("id=")) {
+        const match = raw.match(/id=([0-9]+)/);
+        if (match) text = match[1];
+      }
+    } else if (/(twitter\.com|x\.com)/i.test(text)) {
+      detectedPlatform = "x";
+      text = text.replace(/^https?:\/\/(www\.)?(twitter|x)\.com\//i, "").split(/[?#]/)[0];
+    }
+
+    const cleanHandle = text.replace(/^@+/, "").replace(/\/+$/, "").trim().toLowerCase();
+    return { handle: cleanHandle, platform: detectedPlatform };
+  };
+
+  const normalizeHandle = (raw: string, platform: "instagram" | "facebook" | "x" = "instagram") => {
+    return extractHandleAndPlatform(raw, platform).handle;
   };
 
   const handleCreateAccount = async (e: React.FormEvent) => {
@@ -136,14 +184,15 @@ export default function AccountsPage() {
     setFormError(null);
 
     try {
+      const cleanHandle = normalizeHandle(handleInput, platformInput);
       const res = await fetch("/api/accounts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           volunteer_name: volunteerNameInput,
-          handle: handleInput,
+          handle: cleanHandle,
           status: statusInput,
-          platform: "instagram",
+          platform: platformInput,
         }),
       });
 
@@ -168,13 +217,14 @@ export default function AccountsPage() {
     setFormError(null);
 
     try {
+      const cleanHandle = normalizeHandle(handleInput, editingAccount.platform);
       const res = await fetch("/api/accounts", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: editingAccount.id,
           volunteer_name: volunteerNameInput,
-          handle: handleInput,
+          handle: cleanHandle,
           status: statusInput,
         }),
       });
@@ -213,7 +263,7 @@ export default function AccountsPage() {
   };
 
   const handleDeleteAccount = async (acc: AccountItem) => {
-    if (!window.confirm(`Are you sure you want to remove @${acc.handle}? Associated posts and snapshot history will be deleted.`)) {
+    if (!window.confirm(`Are you sure you want to remove @${acc.handle} (${acc.platform})? Associated posts and snapshot history will be deleted.`)) {
       return;
     }
 
@@ -229,14 +279,9 @@ export default function AccountsPage() {
     }
   };
 
-  // Helper to normalize handles
-  const normalizeHandle = (raw: string) => {
-    return raw.replace(/^@/, "").trim().toLowerCase();
-  };
-
-  // Set of existing lowercase handles for quick lookup
+  // Set of existing accounts (platform:handle) for quick lookup
   const existingHandlesSet = useMemo(() => {
-    return new Set(accounts.map((a) => a.handle.toLowerCase()));
+    return new Set(accounts.map((a) => `${a.platform}:${a.handle.toLowerCase()}`));
   }, [accounts]);
 
   // Parse bulk text or grid input into structured preview items
@@ -251,7 +296,8 @@ export default function AccountsPage() {
         if (!line) continue;
 
         let name = "";
-        let handle = "";
+        let rawHandle = "";
+        let linePlatform = bulkPlatformInput;
         let status: "active" | "paused" = "active";
 
         // Check for comma, tab, or pipe delimiters
@@ -266,47 +312,66 @@ export default function AccountsPage() {
         if (delimiter) {
           const parts = line.split(delimiter).map((p) => p.trim());
           if (parts.length >= 2) {
-            // Check if parts[0] is handle (starts with @) or parts[1] is handle
-            if (parts[0].startsWith("@") || (!parts[1].startsWith("@") && parts[0].includes("instagram.com"))) {
-              handle = parts[0];
+            const part0IsUrlOrHandle =
+              parts[0].startsWith("@") ||
+              /instagram\.com|facebook\.com|x\.com|twitter\.com/i.test(parts[0]);
+            if (part0IsUrlOrHandle) {
+              rawHandle = parts[0];
               name = parts[1];
-            } else if (parts[1].startsWith("@") || parts[1].toLowerCase().replace(/[^a-z0-9._]/g, "") === parts[1].toLowerCase()) {
-              name = parts[0];
-              handle = parts[1];
             } else {
               name = parts[0];
-              handle = parts[1];
+              rawHandle = parts[1];
             }
-            if (parts[2] && parts[2].toLowerCase().includes("pause")) {
+
+            // Check parts[2] for platform or status
+            if (parts[2]) {
+              const p2 = parts[2].toLowerCase();
+              if (p2.includes("pause")) {
+                status = "paused";
+              } else if (p2 === "facebook" || p2 === "fb") {
+                linePlatform = "facebook";
+              } else if (p2 === "x" || p2 === "twitter") {
+                linePlatform = "x";
+              } else if (p2 === "instagram" || p2 === "ig") {
+                linePlatform = "instagram";
+              }
+            }
+
+            // Check parts[3] for status if parts[2] was platform
+            if (parts[3] && parts[3].toLowerCase().includes("pause")) {
               status = "paused";
             }
           } else {
-            handle = parts[0];
+            rawHandle = parts[0];
           }
         } else {
-          // Single value: if it has @ or is single word, treat as handle
-          const clean = line.replace(/^https?:\/\/(www\.)?instagram\.com\//, "").replace(/\/$/, "");
-          handle = clean;
+          rawHandle = line;
         }
 
-        const cleanHandle = normalizeHandle(handle);
+        const { handle: cleanHandle, platform: detectedPlatform } = extractHandleAndPlatform(
+          rawHandle,
+          linePlatform
+        );
+        const finalPlatform = detectedPlatform;
+
         if (!name && cleanHandle) {
-          // Capitalize handle as default volunteer name
           name = cleanHandle.charAt(0).toUpperCase() + cleanHandle.slice(1);
         }
 
+        const batchKey = `${finalPlatform}:${cleanHandle}`;
         const isValid = !!cleanHandle && cleanHandle.length >= 1;
-        const isDuplicateInBatch = seenInBatch.has(cleanHandle);
-        const isExisting = existingHandlesSet.has(cleanHandle);
+        const isDuplicateInBatch = seenInBatch.has(batchKey);
+        const isExisting = existingHandlesSet.has(batchKey);
 
         if (cleanHandle) {
-          seenInBatch.add(cleanHandle);
+          seenInBatch.add(batchKey);
         }
 
         items.push({
           id: `paste-${i}`,
           volunteer_name: name || cleanHandle,
           handle: cleanHandle,
+          platform: finalPlatform,
           status,
           isExisting,
           isDuplicateInBatch,
@@ -320,31 +385,39 @@ export default function AccountsPage() {
         const row = gridRows[i];
         if (!row.name && !row.handle) continue; // Skip empty rows
 
-        const cleanHandle = normalizeHandle(row.handle);
-        const name = row.name.trim() || (cleanHandle ? cleanHandle.charAt(0).toUpperCase() + cleanHandle.slice(1) : "");
+        const { handle: cleanHandle, platform: detectedPlatform } = extractHandleAndPlatform(
+          row.handle,
+          row.platform
+        );
+        const finalPlatform = detectedPlatform || row.platform;
+        const name =
+          row.name.trim() ||
+          (cleanHandle ? cleanHandle.charAt(0).toUpperCase() + cleanHandle.slice(1) : "");
+        const batchKey = `${finalPlatform}:${cleanHandle}`;
         const isValid = !!cleanHandle && cleanHandle.length >= 1;
-        const isDuplicateInBatch = seenInBatch.has(cleanHandle);
-        const isExisting = existingHandlesSet.has(cleanHandle);
+        const isDuplicateInBatch = seenInBatch.has(batchKey);
+        const isExisting = existingHandlesSet.has(batchKey);
 
         if (cleanHandle) {
-          seenInBatch.add(cleanHandle);
+          seenInBatch.add(batchKey);
         }
 
         items.push({
           id: row.id,
           volunteer_name: name,
           handle: cleanHandle,
+          platform: finalPlatform,
           status: row.status,
           isExisting,
           isDuplicateInBatch,
           isValid,
-          errorMessage: !isValid ? "Missing Instagram handle" : undefined,
+          errorMessage: !isValid ? "Missing account handle" : undefined,
         });
       }
     }
 
     return items;
-  }, [bulkMode, bulkTextInput, gridRows, existingHandlesSet]);
+  }, [bulkMode, bulkTextInput, gridRows, existingHandlesSet, bulkPlatformInput]);
 
   const validAccountsToSubmit = useMemo(() => {
     return parsedVolunteers.filter((v) => v.isValid && !v.isDuplicateInBatch);
@@ -369,7 +442,7 @@ export default function AccountsPage() {
             volunteer_name: acc.volunteer_name,
             handle: acc.handle,
             status: acc.status,
-            platform: "instagram",
+            platform: acc.platform,
           })),
         }),
       });
@@ -394,19 +467,27 @@ export default function AccountsPage() {
   };
 
   const handleLoadSampleData = () => {
-    setBulkTextInput(
-      `Anurag Yadav, @socialistt_anuragyadav\n` +
-      `Youth with Akhilesh, @Youthwithakhilesh\n` +
-      `Cycle with Akhilesh, @cyclewithakhilesh\n` +
-      `Pravind Yadav, @sp_pravind\n` +
-      `Monu Ahir, @Monuahir.100\n` +
-      `Aman Yadav, @yadav_aman_official_\n` +
-      `Shivam Kashyap, @shivamkashyapsp\n` +
-      `Pranshul Yadav, @yadav_pranshul\n` +
-      `Saurabh Anand, @saurabh.anand91\n` +
-      `Lokbandhu Live, @lokbandhulive1\n` +
-      `Samajwadi Lucknow, @samajwadi_lucknow`
-    );
+    if (bulkPlatformInput === "facebook") {
+      setBulkTextInput(
+        `Pravind Yadav, pravind.yadav.sp\n` +
+        `Youth SP News, youth.sp.official\n` +
+        `Samajwadi Live, samajwadi.live`
+      );
+    } else if (bulkPlatformInput === "x") {
+      setBulkTextInput(
+        `Media Cell SP, @MediaCellSP\n` +
+        `Akhilesh Voice, @samajwadi_voice\n` +
+        `Youth with SP, @YouthwithSP`
+      );
+    } else {
+      setBulkTextInput(
+        `Anurag Yadav, @socialistt_anuragyadav\n` +
+        `Youth with Akhilesh, @Youthwithakhilesh\n` +
+        `Cycle with Akhilesh, @cyclewithakhilesh\n` +
+        `Pravind Yadav, https://facebook.com/sp_pravind, facebook\n` +
+        `Media Cell SP, @MediaCellSP, x`
+      );
+    }
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -429,14 +510,14 @@ export default function AccountsPage() {
   const handleAddGridRow = () => {
     setGridRows((prev) => [
       ...prev,
-      { id: String(Date.now()), name: "", handle: "", status: "active" },
+      { id: String(Date.now()), name: "", handle: "", platform: bulkPlatformInput, status: "active" },
     ]);
   };
 
   // Update grid row
   const handleUpdateGridRow = (
     id: string,
-    field: "name" | "handle" | "status",
+    field: "name" | "handle" | "status" | "platform",
     val: string
   ) => {
     setGridRows((prev) =>
@@ -458,9 +539,10 @@ export default function AccountsPage() {
         acc.volunteer_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         acc.handle.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesStatus = statusFilter === "all" || acc.status === statusFilter;
-      return matchesSearch && matchesStatus;
+      const matchesPlatform = platformFilter === "all" || acc.platform === platformFilter;
+      return matchesSearch && matchesStatus && matchesPlatform;
     });
-  }, [accounts, searchQuery, statusFilter]);
+  }, [accounts, searchQuery, statusFilter, platformFilter]);
 
   // Summary counts
   const totalAccounts = accounts.length;
@@ -478,7 +560,7 @@ export default function AccountsPage() {
             Monitored Accounts
           </h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            Manage volunteer Instagram profiles tracked by the scraper.
+            Manage volunteer profiles (Instagram, Facebook, Twitter / X) tracked by the scraper.
           </p>
         </div>
         <div className="flex items-center gap-2.5">
@@ -525,35 +607,86 @@ export default function AccountsPage() {
       </div>
 
       {/* Filter and Search Bar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
-        <div className="relative w-full sm:w-80">
+      <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
+        <div className="relative w-full md:w-80">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
           <input
             type="text"
-            placeholder="Search by volunteer or @handle..."
+            placeholder="Search by volunteer or handle..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full rounded-lg border border-slate-200 pl-9 pr-4 py-1.5 text-sm placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
         </div>
 
-        <div className="flex items-center gap-1.5 self-start sm:self-auto">
-          {(["all", "active", "paused"] as const).map((tab) => (
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Platform Filter */}
+          <div className="inline-flex rounded-lg bg-slate-100 p-0.5 text-xs font-medium">
             <button
-              key={tab}
-              onClick={() => setStatusFilter(tab)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition ${
-                statusFilter === tab
-                  ? "bg-slate-900 text-white"
-                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+              onClick={() => setPlatformFilter("all")}
+              className={`px-2.5 py-1 rounded-md transition ${
+                platformFilter === "all"
+                  ? "bg-white text-slate-900 shadow-sm font-semibold"
+                  : "text-slate-600 hover:text-slate-900"
               }`}
             >
-              {tab}
+              All Platforms
             </button>
-          ))}
+            <button
+              onClick={() => setPlatformFilter("instagram")}
+              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md transition ${
+                platformFilter === "instagram"
+                  ? "bg-white text-pink-700 shadow-sm font-semibold"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              <Instagram className="h-3 w-3" />
+              IG
+            </button>
+            <button
+              onClick={() => setPlatformFilter("facebook")}
+              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md transition ${
+                platformFilter === "facebook"
+                  ? "bg-white text-blue-700 shadow-sm font-semibold"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              <Facebook className="h-3 w-3" />
+              FB
+            </button>
+            <button
+              onClick={() => setPlatformFilter("x")}
+              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md transition ${
+                platformFilter === "x"
+                  ? "bg-white text-slate-900 shadow-sm font-semibold"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              <Twitter className="h-3 w-3" />
+              X
+            </button>
+          </div>
+
+          {/* Status Filter */}
+          <div className="inline-flex rounded-lg bg-slate-100 p-0.5 text-xs font-medium">
+            {(["all", "active", "paused"] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setStatusFilter(tab)}
+                className={`px-2.5 py-1 rounded-md capitalize transition ${
+                  statusFilter === tab
+                    ? "bg-slate-900 text-white shadow-sm font-semibold"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+
           <button
             onClick={fetchAccounts}
-            className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 ml-1"
+            className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"
             title="Refresh accounts"
           >
             <RefreshCw className="h-4 w-4" />
@@ -584,8 +717,8 @@ export default function AccountsPage() {
             <Users className="h-10 w-10 mx-auto mb-2 text-slate-300" />
             <p className="text-sm font-medium text-slate-600">No accounts found</p>
             <p className="text-xs text-slate-400 mt-1">
-              {searchQuery
-                ? "Try refining your search query."
+              {searchQuery || platformFilter !== "all" || statusFilter !== "all"
+                ? "Try refining your search or filter criteria."
                 : "Click 'Bulk Add Volunteers' or 'Add Single' to enroll profiles."}
             </p>
           </div>
@@ -595,7 +728,7 @@ export default function AccountsPage() {
               <thead className="bg-slate-50 text-xs uppercase font-semibold text-slate-500 border-b border-slate-200">
                 <tr>
                   <th className="px-6 py-3.5">Volunteer</th>
-                  <th className="px-6 py-3.5">Instagram Handle</th>
+                  <th className="px-6 py-3.5">Account Handle</th>
                   <th className="px-6 py-3.5">Platform</th>
                   <th className="px-6 py-3.5">Scraper Status</th>
                   <th className="px-6 py-3.5 text-right">Posts Tracked</th>
@@ -608,7 +741,7 @@ export default function AccountsPage() {
                   <tr key={account.id} className="hover:bg-slate-50/70 transition">
                     <td className="px-6 py-4 font-semibold text-slate-900">
                       <Link
-                        href={`/dashboard/volunteers/${account.handle}`}
+                        href={`/dashboard/volunteers/${account.handle}?platform=${account.platform}`}
                         className="flex items-center gap-2 hover:text-blue-600 hover:underline"
                       >
                         <UserCheck className="h-4 w-4 text-slate-400 shrink-0" />
@@ -617,17 +750,29 @@ export default function AccountsPage() {
                     </td>
                     <td className="px-6 py-4 font-medium text-blue-600">
                       <Link
-                        href={`/dashboard/volunteers/${account.handle}`}
+                        href={`/dashboard/volunteers/${account.handle}?platform=${account.platform}`}
                         className="hover:underline flex items-center gap-1 font-mono text-xs"
                       >
                         @{account.handle}
                       </Link>
                     </td>
                     <td className="px-6 py-4">
-                      <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-pink-50 text-pink-700 font-medium border border-pink-200">
-                        <Instagram className="h-3 w-3" />
-                        Instagram
-                      </span>
+                      {account.platform === "facebook" ? (
+                        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-medium border border-blue-200">
+                          <Facebook className="h-3 w-3" />
+                          Facebook
+                        </span>
+                      ) : account.platform === "x" ? (
+                        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-slate-900 text-white font-medium border border-slate-700">
+                          <Twitter className="h-3 w-3" />
+                          Twitter / X
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-pink-50 text-pink-700 font-medium border border-pink-200">
+                          <Instagram className="h-3 w-3" />
+                          Instagram
+                        </span>
+                      )}
                     </td>
                     <td className="px-6 py-4">
                       <span
@@ -731,6 +876,57 @@ export default function AccountsPage() {
                 </div>
               )}
 
+              {/* Platform Selector Bar & Mode Tabs */}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Default Platform:
+                  </span>
+                  <div className="inline-flex rounded-lg bg-white border border-slate-200 p-0.5 text-xs font-semibold shadow-sm">
+                    <button
+                      type="button"
+                      onClick={() => setBulkPlatformInput("instagram")}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md transition ${
+                        bulkPlatformInput === "instagram"
+                          ? "bg-pink-50 text-pink-700 ring-1 ring-pink-300"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      <Instagram className="h-3.5 w-3.5 text-pink-600" />
+                      Instagram
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBulkPlatformInput("facebook")}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md transition ${
+                        bulkPlatformInput === "facebook"
+                          ? "bg-blue-50 text-blue-700 ring-1 ring-blue-300"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      <Facebook className="h-3.5 w-3.5 text-blue-600" />
+                      Facebook
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBulkPlatformInput("x")}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md transition ${
+                        bulkPlatformInput === "x"
+                          ? "bg-slate-900 text-white"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      <Twitter className="h-3.5 w-3.5" />
+                      Twitter / X
+                    </button>
+                  </div>
+                </div>
+
+                <div className="text-[11px] text-slate-500 italic">
+                  💡 URLs like <span className="font-mono text-slate-700">facebook.com/...</span> or <span className="font-mono text-slate-700">x.com/...</span> auto-detect platform
+                </div>
+              </div>
+
               {/* Mode Tabs & Action Tools */}
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div className="flex rounded-lg bg-slate-100 p-1 text-xs font-semibold">
@@ -769,7 +965,7 @@ export default function AccountsPage() {
                         className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-md border border-blue-200 transition"
                       >
                         <Sparkles className="h-3 w-3" />
-                        Load Example Data
+                        Fill Sample Data
                       </button>
                       <button
                         type="button"
@@ -806,7 +1002,7 @@ export default function AccountsPage() {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-xs text-slate-500">
                     <span>
-                      Supported format: <code className="bg-slate-100 px-1 py-0.5 rounded font-mono">Volunteer Name, @handle</code> or just <code className="bg-slate-100 px-1 py-0.5 rounded font-mono">@handle</code> per line.
+                      Formats: <code className="bg-slate-100 px-1 py-0.5 rounded font-mono">Volunteer, @handle</code> or <code className="bg-slate-100 px-1 py-0.5 rounded font-mono">Volunteer, handle, platform</code> or full profile URLs.
                     </span>
                     <span>{bulkTextInput.split("\n").filter((l) => l.trim()).length} lines</span>
                   </div>
@@ -815,10 +1011,11 @@ export default function AccountsPage() {
                     value={bulkTextInput}
                     onChange={(e) => setBulkTextInput(e.target.value)}
                     placeholder={
-                      "Priya Sharma, @priyasharma_ngo\n" +
-                      "Rahul Verma, @rahul.initiatives\n" +
-                      "@ananya_volunteer\n" +
-                      "Vikram Singh, @vikram.socialwork"
+                      bulkPlatformInput === "facebook"
+                        ? "Pravind Yadav, pravind.yadav.sp\nRahul Verma, https://facebook.com/rahul.initiatives\nsamajwadi.live"
+                        : bulkPlatformInput === "x"
+                        ? "Media Cell SP, @MediaCellSP\nAkhilesh Voice, @samajwadi_voice\nhttps://x.com/YouthwithSP"
+                        : "Priya Sharma, @priyasharma_ngo\nRahul Verma, https://facebook.com/rahul.initiatives\nMedia Cell SP, @MediaCellSP, x\n@ananya_volunteer"
                     }
                     className="w-full rounded-xl border border-slate-300 p-3 text-xs font-mono focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 leading-relaxed placeholder:text-slate-300"
                   />
@@ -832,13 +1029,14 @@ export default function AccountsPage() {
                     <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200 uppercase tracking-wider text-[10px]">
                       <tr>
                         <th className="px-3 py-2">Volunteer Name</th>
-                        <th className="px-3 py-2">Instagram Handle</th>
+                        <th className="px-3 py-2">Platform</th>
+                        <th className="px-3 py-2">Handle / URL</th>
                         <th className="px-3 py-2">Status</th>
                         <th className="px-3 py-2 text-right"></th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {gridRows.map((row, idx) => (
+                      {gridRows.map((row) => (
                         <tr key={row.id} className="hover:bg-slate-50/50">
                           <td className="p-2">
                             <input
@@ -852,11 +1050,28 @@ export default function AccountsPage() {
                             />
                           </td>
                           <td className="p-2">
+                            <select
+                              value={row.platform}
+                              onChange={(e) =>
+                                handleUpdateGridRow(
+                                  row.id,
+                                  "platform",
+                                  e.target.value as "instagram" | "facebook" | "x"
+                                )
+                              }
+                              className="w-full rounded-md border border-slate-200 px-2 py-1 text-xs focus:outline-none focus:border-blue-500 font-medium"
+                            >
+                              <option value="instagram">Instagram</option>
+                              <option value="facebook">Facebook</option>
+                              <option value="x">Twitter / X</option>
+                            </select>
+                          </td>
+                          <td className="p-2">
                             <div className="relative">
                               <span className="absolute left-2 top-1 text-slate-400">@</span>
                               <input
                                 type="text"
-                                placeholder="handle"
+                                placeholder="handle or URL"
                                 value={row.handle}
                                 onChange={(e) =>
                                   handleUpdateGridRow(row.id, "handle", e.target.value)
@@ -926,7 +1141,8 @@ export default function AccountsPage() {
                       <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200 uppercase tracking-wider text-[10px]">
                         <tr>
                           <th className="px-3 py-2">Volunteer</th>
-                          <th className="px-3 py-2">Normalized Handle</th>
+                          <th className="px-3 py-2">Platform</th>
+                          <th className="px-3 py-2">Account Handle</th>
                           <th className="px-3 py-2">Status</th>
                           <th className="px-3 py-2 text-right">Validation</th>
                         </tr>
@@ -936,6 +1152,21 @@ export default function AccountsPage() {
                           <tr key={item.id} className="hover:bg-slate-50/60">
                             <td className="px-3 py-2 font-medium text-slate-900">
                               {item.volunteer_name}
+                            </td>
+                            <td className="px-3 py-2">
+                              {item.platform === "facebook" ? (
+                                <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 font-medium border border-blue-200">
+                                  <Facebook className="h-2.5 w-2.5" /> Facebook
+                                </span>
+                              ) : item.platform === "x" ? (
+                                <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-slate-900 text-white font-medium border border-slate-700">
+                                  <Twitter className="h-2.5 w-2.5" /> Twitter / X
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-pink-50 text-pink-700 font-medium border border-pink-200">
+                                  <Instagram className="h-2.5 w-2.5" /> Instagram
+                                </span>
+                              )}
                             </td>
                             <td className="px-3 py-2 font-mono text-blue-600">
                               @{item.handle}
@@ -1042,6 +1273,51 @@ export default function AccountsPage() {
                 </div>
               )}
 
+              {/* Platform Selector */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Platform
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPlatformInput("instagram")}
+                    className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-semibold border transition ${
+                      platformInput === "instagram"
+                        ? "bg-pink-50 border-pink-300 text-pink-700 shadow-sm ring-1 ring-pink-300"
+                        : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    <Instagram className="h-3.5 w-3.5 text-pink-600" />
+                    Instagram
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPlatformInput("facebook")}
+                    className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-semibold border transition ${
+                      platformInput === "facebook"
+                        ? "bg-blue-50 border-blue-300 text-blue-700 shadow-sm ring-1 ring-blue-300"
+                        : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    <Facebook className="h-3.5 w-3.5 text-blue-600" />
+                    Facebook
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPlatformInput("x")}
+                    className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-semibold border transition ${
+                      platformInput === "x"
+                        ? "bg-slate-900 border-slate-900 text-white shadow-sm ring-1 ring-slate-900"
+                        : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    <Twitter className="h-3.5 w-3.5" />
+                    Twitter / X
+                  </button>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
                   Volunteer Name
@@ -1058,19 +1334,32 @@ export default function AccountsPage() {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-                  Instagram Handle
+                  {platformInput === "facebook"
+                    ? "Facebook Profile / Page Handle"
+                    : platformInput === "x"
+                    ? "Twitter / X Handle"
+                    : "Instagram Handle"}
                 </label>
                 <div className="relative">
                   <span className="absolute left-3 top-2 text-sm text-slate-400">@</span>
                   <input
                     type="text"
                     required
-                    placeholder="username"
+                    placeholder={
+                      platformInput === "facebook"
+                        ? "username slug or profile URL"
+                        : platformInput === "x"
+                        ? "username or profile URL"
+                        : "username or profile URL"
+                    }
                     value={handleInput}
                     onChange={(e) => setHandleInput(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 pl-7 pr-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="w-full rounded-lg border border-slate-300 pl-7 pr-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
                   />
                 </div>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Pasting full URLs like <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-600">https://{platformInput === "facebook" ? "facebook.com/username" : platformInput === "x" ? "x.com/username" : "instagram.com/username"}</code> will automatically normalize the handle.
+                </p>
               </div>
 
               <div>
@@ -1126,6 +1415,31 @@ export default function AccountsPage() {
                 </div>
               )}
 
+              {/* Platform Info */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                  Platform
+                </label>
+                <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 flex items-center gap-2">
+                  {editingAccount.platform === "facebook" ? (
+                    <>
+                      <Facebook className="h-4 w-4 text-blue-600" />
+                      <span className="text-xs font-semibold text-blue-700">Facebook Profile / Page</span>
+                    </>
+                  ) : editingAccount.platform === "x" ? (
+                    <>
+                      <Twitter className="h-4 w-4 text-slate-800" />
+                      <span className="text-xs font-semibold text-slate-800">Twitter / X Account</span>
+                    </>
+                  ) : (
+                    <>
+                      <Instagram className="h-4 w-4 text-pink-600" />
+                      <span className="text-xs font-semibold text-pink-700">Instagram Profile</span>
+                    </>
+                  )}
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
                   Volunteer Name
@@ -1141,7 +1455,7 @@ export default function AccountsPage() {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-                  Instagram Handle
+                  Account Handle
                 </label>
                 <div className="relative">
                   <span className="absolute left-3 top-2 text-sm text-slate-400">@</span>
@@ -1150,7 +1464,7 @@ export default function AccountsPage() {
                     required
                     value={handleInput}
                     onChange={(e) => setHandleInput(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 pl-7 pr-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="w-full rounded-lg border border-slate-300 pl-7 pr-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
                   />
                 </div>
               </div>

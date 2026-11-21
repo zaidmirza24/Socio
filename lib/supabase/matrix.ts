@@ -1,6 +1,7 @@
 "use server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllRows, chunk } from "@/lib/supabase/paginate";
 
 export type MatrixCellStatus = "POSTED" | "PENDING" | "NEEDS_REVIEW" | "NOT_VISIBLE";
 
@@ -79,17 +80,29 @@ export async function getMatrixData(): Promise<MatrixData> {
   }));
 
   // 2. Fetch active monitored accounts
-  const { data: accountsRaw, error: accountsError } = await supabase
-    .from("accounts")
-    .select("id, handle, volunteer_name, platform, is_visible, last_checked_at")
-    .eq("status", "active")
-    .order("volunteer_name", { ascending: true });
-
-  if (accountsError) {
+  let accountsRaw: Array<{
+    id: string;
+    handle: string;
+    volunteer_name: string;
+    platform: string;
+    is_visible: boolean | null;
+    last_checked_at: string | null;
+  }> = [];
+  try {
+    accountsRaw = await fetchAllRows((from, to) =>
+      supabase
+        .from("accounts")
+        .select("id, handle, volunteer_name, platform, is_visible, last_checked_at")
+        .eq("status", "active")
+        .order("volunteer_name", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to)
+    );
+  } catch (accountsError) {
     console.error("Failed to query accounts:", accountsError);
   }
 
-  const accounts: MatrixAccount[] = (accountsRaw || []).map((a) => ({
+  const accounts: MatrixAccount[] = accountsRaw.map((a) => ({
     id: a.id,
     handle: a.handle,
     volunteerName: a.volunteer_name,
@@ -99,24 +112,56 @@ export async function getMatrixData(): Promise<MatrixData> {
   }));
 
   // 3. Fetch matched posts
-  const { data: matchedPostsRaw } = await supabase
-    .from("matched_posts")
-    .select("id, caption_id, account_id, post_url, posted_at, tracking_status")
-    .neq("tracking_status", "archived");
+  const matchedPostsRaw = await fetchAllRows((from, to) =>
+    supabase
+      .from("matched_posts")
+      .select("id, caption_id, account_id, post_url, posted_at, tracking_status")
+      .neq("tracking_status", "archived")
+      .order("id", { ascending: true })
+      .range(from, to)
+  ).catch((err: unknown) => {
+    console.error("Failed to query matched posts:", err);
+    return [] as Array<{
+      id: string;
+      caption_id: string;
+      account_id: string;
+      post_url: string;
+      posted_at: string;
+      tracking_status: string;
+    }>;
+  });
 
-  // Fetch metric snapshots for those posts
-  const postIds = (matchedPostsRaw || []).map((p) => p.id);
-  const { data: snapshotsRaw } = postIds.length > 0
-    ? await supabase
-        .from("metric_snapshots")
-        .select("post_id, likes, comments, views, snapshot_date")
-        .in("post_id", postIds)
-        .order("snapshot_date", { ascending: false })
-    : { data: [] };
+  // Fetch metric snapshots for those posts, in chunks (a long .in() list overflows the URL)
+  const snapshotsRaw: Array<{
+    post_id: string;
+    likes: number | null;
+    comments: number | null;
+    views: number | null;
+    snapshot_date: string;
+  }> = [];
+  for (const ids of chunk(
+    matchedPostsRaw.map((p) => p.id),
+    150
+  )) {
+    try {
+      const rows = await fetchAllRows((from, to) =>
+        supabase
+          .from("metric_snapshots")
+          .select("post_id, likes, comments, views, snapshot_date")
+          .in("post_id", ids)
+          .order("snapshot_date", { ascending: false })
+          .order("post_id", { ascending: true })
+          .range(from, to)
+      );
+      snapshotsRaw.push(...rows);
+    } catch (snapErr) {
+      console.error("Failed to query metric snapshots:", snapErr);
+    }
+  }
 
-  // Map latest snapshot metrics per post
+  // Map latest snapshot metrics per post (rows are newest-first within each chunk)
   const latestMetrics = new Map<string, { likes: number | null; comments: number | null; views: number | null }>();
-  for (const s of snapshotsRaw || []) {
+  for (const s of snapshotsRaw) {
     if (!latestMetrics.has(s.post_id)) {
       latestMetrics.set(s.post_id, {
         likes: s.likes,
@@ -129,7 +174,7 @@ export async function getMatrixData(): Promise<MatrixData> {
   // Key by `accountId:captionId`
   const matchedPostsMap = new Map<string, MatrixPostItem[]>();
 
-  for (const mp of matchedPostsRaw || []) {
+  for (const mp of matchedPostsRaw) {
     const key = `${mp.account_id}:${mp.caption_id}`;
     const metrics = latestMetrics.get(mp.id) || { likes: null, comments: null, views: null };
     const item: MatrixPostItem = {

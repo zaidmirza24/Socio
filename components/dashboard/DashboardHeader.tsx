@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { TriggerScraperButton } from "@/components/TriggerScraperButton";
+import { RunScraperPanel } from "@/components/RunScraperPanel";
 import { SignOutButton } from "@/components/SignOutButton";
 import { CommandPalette } from "./CommandPalette";
 import { MobileSidebar } from "./MobileSidebar";
@@ -18,6 +19,7 @@ const ROUTE_LABELS: Record<string, { group: string; label: string }> = {
   "/dashboard": { group: "Monitoring", label: "Matrix & Overview" },
   "/dashboard/captions": { group: "Campaign", label: "Campaign Captions" },
   "/dashboard/review": { group: "Review", label: "Review Queue" },
+  "/dashboard/volunteers": { group: "Directory", label: "Volunteers" },
   "/dashboard/accounts": { group: "Directory", label: "Volunteer Accounts" },
   "/dashboard/posts": { group: "Directory", label: "Recent Monitored Posts" },
   "/dashboard/health": { group: "Platform", label: "System Health & Runs" },
@@ -28,6 +30,30 @@ export function DashboardHeader() {
   const pathname = usePathname();
   const [isCommandOpen, setIsCommandOpen] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const [lastRunLabel, setLastRunLabel] = useState("No runs yet");
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/runs?range=all&limit=1")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { runs?: { started_at: string; status: string }[] } | null) => {
+        const latest = d?.runs?.[0];
+        if (!cancelled && latest) {
+          const when = new Date(latest.started_at).toLocaleString("en-IN", {
+            timeZone: "Asia/Kolkata",
+            day: "numeric",
+            month: "short",
+            hour: "2-digit",
+            minute: "2-digit",
+          });
+          setLastRunLabel(`Last run ${when} IST`);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname]);
 
   // Global keydown shortcut listener (⌘K or Ctrl+K)
   useEffect(() => {
@@ -95,18 +121,20 @@ export function DashboardHeader() {
             </kbd>
           </button>
 
-          {/* Live schedule pill (hidden on small screens) */}
-          <div className="hidden xl:inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200/70 text-[11px] font-semibold">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-            </span>
-            <span>08:00 AM IST Sync</span>
+          {/* Last collection run (real data, hidden on small screens) */}
+          <div className="hidden xl:inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-slate-50 text-slate-600 border border-slate-200/70 text-[11px] font-semibold">
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-slate-400"></span>
+            <span>{lastRunLabel}</span>
           </div>
 
           <div className="h-4 w-px bg-slate-200 hidden sm:block" />
 
-          <TriggerScraperButton />
+          <TriggerScraperButton
+            initialJobType="refresh"
+            label="Weekly Refresh"
+            className="inline-flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 shadow-sm hover:bg-indigo-100 transition focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+          />
+          <RunScraperPanel />
           <SignOutButton variant="header" />
         </div>
       </header>

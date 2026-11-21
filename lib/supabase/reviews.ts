@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createServerComponentClient } from "@/lib/supabase/server";
 import { processCaption } from "@/lib/matching/normalizer.ts";
-import { fetchDirectPostDetails } from "@/lib/apify/trigger";
+import { fetchSinglePostDetails } from "@/lib/services/scraper-orchestrator";
 import { formatDate } from "@/lib/utils";
 import type { ReviewStatus } from "@/types/database";
 
@@ -167,33 +167,28 @@ export async function approveReviewItem(
       }
     );
 
-    // 3. Fetch live metrics from Apify (with fast-path for demo/mock URLs)
+    // 3. Fetch live metrics from the scraper. Never invent numbers: if the live fetch fails we
+    //    stop and let the admin retry, so wrong metrics or a wrong post date are never saved.
     let postDetails = null;
-    const isMockUrl =
-      item.post_url.includes("DB11") ||
-      item.post_url.includes("mock") ||
-      item.post_url.includes("example") ||
-      item.post_url.includes("placeholder");
-
-    if (!isMockUrl) {
-      try {
-        postDetails = await fetchDirectPostDetails(item.post_url);
-      } catch (apifyErr) {
-        console.warn("Could not fetch direct post metrics during approval:", apifyErr);
-      }
-    } else {
-      // For demo URLs, provide instant realistic metrics so UI approval is snappy (<300ms)
-      postDetails = {
-        likes: Math.round(48000 + Math.random() * 24000),
-        comments: Math.round(1950 + Math.random() * 850),
-        views: Math.round(360000 + Math.random() * 180000),
-        postedAt: item.created_at,
-        mediaType: "Post",
+    try {
+      postDetails = await fetchSinglePostDetails(item.post_url);
+    } catch (scraperErr) {
+      const reason = scraperErr instanceof Error ? scraperErr.message : String(scraperErr);
+      return {
+        success: false,
+        error: `Could not fetch the live post details, so nothing was approved. Please retry. (${reason})`,
       };
     }
 
-    const postedAt = postDetails?.postedAt || item.created_at;
-    const mediaType = postDetails?.mediaType || "Post";
+    if (!postDetails || !postDetails.postedAt) {
+      return {
+        success: false,
+        error: "The scraper returned no post details (the post may be private or deleted), so nothing was approved.",
+      };
+    }
+
+    const postedAt = postDetails.postedAt;
+    const mediaType = postDetails.mediaType || "Post";
     const likes = postDetails?.likes ?? null;
     const comments = postDetails?.comments ?? null;
     const views = postDetails?.views ?? null;
@@ -214,6 +209,8 @@ export async function approveReviewItem(
           tracking_status: "tracking",
           posted_at: postedAt,
           last_seen_at: now,
+          last_metrics_refresh_at: now,
+          thumbnail_url: postDetails?.thumbnailUrl ?? null,
         },
         {
           onConflict: "platform,platform_post_id",
@@ -260,6 +257,8 @@ export async function approveReviewItem(
           media_type: mediaType,
           posted_at: postedAt,
           last_seen_at: now,
+          last_metrics_refresh_at: now,
+          thumbnail_url: postDetails?.thumbnailUrl ?? null,
         },
         {
           onConflict: "platform,platform_post_id",
@@ -335,10 +334,18 @@ export async function rejectReviewItem(
     .single();
 
   if (item) {
-    // If it was previously tracked, archive it
+    // If it was previously tracked, stop tracking it...
     await supabase
       .from("matched_posts")
       .update({ tracking_status: "archived" })
+      .eq("platform", item.platform)
+      .eq("platform_post_id", item.platform_post_id);
+
+    // ...and remove it from the dashboard copy too (its snapshots go with it), otherwise the
+    // rejected post would keep showing up and keep being re-scraped on every refresh.
+    await supabase
+      .from("posts")
+      .delete()
       .eq("platform", item.platform)
       .eq("platform_post_id", item.platform_post_id);
   }

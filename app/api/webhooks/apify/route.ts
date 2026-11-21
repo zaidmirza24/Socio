@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getApifyClient, verifyWebhookSecret, deleteApifyDataset } from "@/lib/apify/client";
-import { normalizeInstagramDataset } from "@/lib/collectors/instagram";
+import { getApifyClientAsync, verifyWebhookSecretAsync, deleteApifyDataset } from "@/lib/apify/client";
+import { recordRunUsage } from "@/lib/services/apify-usage";
+import { normalizePlatformDataset } from "@/lib/scrapers/platform-adapter";
 import { processIngestion } from "@/lib/services/ingestion";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { PlatformType } from "@/types/database";
 
 /**
  * Standard Apify Webhook Payload schema
@@ -35,7 +37,7 @@ export async function POST(request: NextRequest) {
     const querySecret = request.nextUrl.searchParams.get("secret");
     const providedSecret = headerSecret || querySecret;
 
-    if (!verifyWebhookSecret(providedSecret)) {
+    if (!(await verifyWebhookSecretAsync(providedSecret))) {
       return NextResponse.json(
         { error: "Unauthorized: Invalid or missing webhook secret" },
         { status: 401 }
@@ -64,17 +66,32 @@ export async function POST(request: NextRequest) {
     // 3. Handle failed Apify runs
     if (runStatus === "FAILED" || runStatus === "TIMED-OUT" || runStatus === "ABORTED") {
       const supabase = createAdminClient();
-      await supabase.from("collection_runs").insert({
-        actor_run_id: actorRunId,
-        platform: "instagram",
-        started_at: new Date().toISOString(),
+      const { data: runMeta } = await supabase
+        .from("collection_runs")
+        .select("id, platform")
+        .eq("actor_run_id", actorRunId)
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const platform = (runMeta?.platform as PlatformType) || "instagram";
+      const failure = {
         completed_at: new Date().toISOString(),
         status: "failed",
-        error: {
-          apify_status: runStatus,
-          payload: body,
-        },
-      });
+        error: { apify_status: runStatus, payload: body },
+      };
+
+      // Update the existing audit row (never insert a duplicate for the same Apify run)
+      if (runMeta?.id) {
+        await supabase.from("collection_runs").update(failure).eq("id", runMeta.id);
+      } else {
+        await supabase
+          .from("collection_runs")
+          .insert({ actor_run_id: actorRunId, platform, started_at: new Date().toISOString(), ...failure });
+      }
+
+      // Failed runs still cost money - record it
+      await recordRunUsage(actorRunId);
 
       return NextResponse.json({
         message: "Logged failed Apify actor run in collection_runs",
@@ -91,22 +108,63 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const apifyClient = getApifyClient();
+    // Idempotency: Apify retries webhooks and the dashboard poller may already have ingested this run
+    const { data: priorRun } = await createAdminClient()
+      .from("collection_runs")
+      .select("status")
+      .eq("actor_run_id", actorRunId)
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (priorRun?.status === "success") {
+      await recordRunUsage(actorRunId);
+      return NextResponse.json({ success: true, duplicate: true, message: "Run already ingested" });
+    }
+
+    const apifyClient = await getApifyClientAsync();
     const dataset = await apifyClient.dataset(datasetId).listItems({
       clean: true,
     });
 
     const rawItems = dataset.items || [];
 
-    // 5. Normalize and Ingest
-    const normalizedData = normalizeInstagramDataset(rawItems);
-    const summary = await processIngestion(normalizedData, { actorRunId });
+    // 5. Look up run metadata for platform & job type, normalize and Ingest
+    const { data: runMeta } = await createAdminClient()
+      .from("collection_runs")
+      .select("platform, job_type")
+      .eq("actor_run_id", actorRunId)
+      .maybeSingle();
 
-    // 6. Delete Apify dataset after successful ingestion for zero residual third-party retention
-    await deleteApifyDataset(datasetId);
+    const platform = (runMeta?.platform as PlatformType) || "instagram";
+    const normalizedData = normalizePlatformDataset(platform, rawItems);
+
+    const summary = await processIngestion(normalizedData, {
+      actorRunId,
+      provider: "apify",
+      jobType: (runMeta?.job_type as "discovery" | "refresh") || "discovery",
+      platform,
+    });
+
+    // 6. Only delete the Apify dataset when EVERYTHING was saved. If saving failed or was partial,
+    //    keep the raw data so the run can be retried (Apify keeps datasets for its own retention period).
+    if (summary.status === "success") {
+      await deleteApifyDataset(datasetId);
+    }
+
+    // 7. Record what this run cost us on Apify (powers Settings → Credit Usage)
+    const usage = await recordRunUsage(actorRunId);
+
+    if (summary.status === "failed") {
+      // Non-2xx makes Apify retry the webhook; the dataset is still there.
+      return NextResponse.json(
+        { error: "Ingestion failed; dataset kept for retry", summary },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json({
       success: true,
+      usageRecorded: usage.recorded,
       summary,
     });
   } catch (error: unknown) {

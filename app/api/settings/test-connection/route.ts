@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getApifyClient } from "@/lib/apify/client";
+import { getApifyClientAsync } from "@/lib/apify/client";
+import { getIntegrationStatus } from "@/lib/services/integrations";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createServerComponentClient } from "@/lib/supabase/server";
 
@@ -10,6 +11,11 @@ export async function GET(request: NextRequest) {
 
     if (!user) {
       return NextResponse.json({ error: "Unauthorized: Team login required" }, { status: 401 });
+    }
+
+    const integration = await getIntegrationStatus().catch(() => null);
+    if (!integration) {
+      return NextResponse.json({ error: "Could not read integration settings" }, { status: 500 });
     }
 
     const results: {
@@ -45,7 +51,7 @@ export async function GET(request: NextRequest) {
 
     // 2. Test Apify
     try {
-      const apifyClient = getApifyClient();
+      const apifyClient = await getApifyClientAsync();
       const user = await apifyClient.user().get();
       if (user && user.id) {
         results.apify = {
@@ -68,8 +74,8 @@ export async function GET(request: NextRequest) {
       results,
       env: {
         supabaseUrlConfigured: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
-        apifyTokenConfigured: !!process.env.APIFY_API_TOKEN,
-        apifyTaskIdConfigured: !!process.env.APIFY_TASK_ID,
+        apifyTokenConfigured: integration.apifyToken.configured,
+        apifyTaskIdConfigured: !!integration.taskId,
       },
     });
   } catch (err: unknown) {

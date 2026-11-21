@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createServerComponentClient } from "@/lib/supabase/server";
+import { resolveVolunteerIds } from "@/lib/services/volunteers";
 
 const accountItemSchema = z.object({
   volunteer_name: z.string().min(1, "Volunteer name is required").trim(),
@@ -69,7 +70,13 @@ export async function POST(request: NextRequest) {
     }
 
     const now = new Date().toISOString();
-    const rowsToUpsert = Array.from(uniqueMap.values()).map((acc) => ({
+    const uniqueAccounts = Array.from(uniqueMap.values());
+    // Same-name rows on different platforms become one volunteer (IG + FB + X)
+    const volunteerIds = await resolveVolunteerIds(
+      uniqueAccounts.map((a) => ({ platform: a.platform, handle: a.handle, volunteer_name: a.volunteer_name }))
+    );
+    const rowsToUpsert = uniqueAccounts.map((acc) => ({
+      volunteer_id: volunteerIds.get(`${acc.platform}:${acc.handle}`) ?? null,
       volunteer_name: acc.volunteer_name,
       handle: acc.handle,
       platform: acc.platform,
@@ -86,7 +93,7 @@ export async function POST(request: NextRequest) {
         onConflict: "platform,handle",
         ignoreDuplicates: false,
       })
-      .select("id, platform, handle, volunteer_name, status, added_at, updated_at");
+      .select("id, platform, handle, volunteer_id, volunteer_name, status, added_at, updated_at");
 
     if (error) {
       return NextResponse.json(
