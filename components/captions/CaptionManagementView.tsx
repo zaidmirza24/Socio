@@ -16,7 +16,7 @@ import {
   MessageCircle,
   Hash,
 } from "lucide-react";
-import { formatNumber, formatDisplayDate } from "@/lib/utils";
+import { formatMetric, formatDisplayDate } from "@/lib/utils";
 import {
   createCampaignCaption,
   createCampaignCaptionsBulk,
@@ -113,9 +113,9 @@ export function CaptionManagementView({ initialCaptions }: CaptionManagementView
           const newCaption: CaptionWithStats = {
             ...result.caption,
             matchedPostsCount: 0,
-            totalLikes: 0,
-            totalComments: 0,
-            totalViews: 0,
+            totalLikes: null,
+            totalComments: null,
+            totalViews: null,
             variantsCount: 0,
           };
           setCaptions((prev) => [newCaption, ...prev]);
@@ -231,9 +231,9 @@ export function CaptionManagementView({ initialCaptions }: CaptionManagementView
           const newEntries: CaptionWithStats[] = res.insertedCaptions.map((c) => ({
             ...c,
             matchedPostsCount: 0,
-            totalLikes: 0,
-            totalComments: 0,
-            totalViews: 0,
+            totalLikes: null,
+            totalComments: null,
+            totalViews: null,
             variantsCount: 0,
           }));
           setCaptions((prev) => [...newEntries, ...prev]);
@@ -646,17 +646,17 @@ export function CaptionManagementView({ initialCaptions }: CaptionManagementView
 
                     <div className="flex items-center gap-1 text-slate-500">
                       <Heart className="h-3.5 w-3.5 text-rose-500" />
-                      <span>{formatNumber(caption.totalLikes)} Likes</span>
+                      <span>{formatMetric(caption.totalLikes)} Likes</span>
                     </div>
 
                     <div className="flex items-center gap-1 text-slate-500">
                       <MessageCircle className="h-3.5 w-3.5 text-blue-500" />
-                      <span>{formatNumber(caption.totalComments)} Comments</span>
+                      <span>{formatMetric(caption.totalComments)} Comments</span>
                     </div>
 
                     <div className="flex items-center gap-1 text-slate-500">
                       <Eye className="h-3.5 w-3.5 text-amber-500" />
-                      <span>{formatNumber(caption.totalViews)} Views</span>
+                      <span>{formatMetric(caption.totalViews)} Views</span>
                     </div>
 
                     <div className="flex items-center gap-1 text-slate-500 ml-auto font-mono text-xs">

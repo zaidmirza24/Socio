@@ -8,7 +8,6 @@
 
 export interface DetectedCredentials {
   apifyToken?: string;
-  webhookSecret?: string;
   taskId?: string;
   /** Actor IDs or "username/actor-name" slugs found in the text. */
   actorIds: string[];
@@ -39,13 +38,6 @@ export function detectCredentials(rawText: string): DetectedCredentials {
   if (token) {
     result.apifyToken = token;
     recognised.push("Apify API token");
-  }
-
-  // --- Webhook secret ----------------------------------------------------------
-  const secret = clean(text.match(/APIFY_WEBHOOK_SECRET\s*[=:]\s*(\S+)/i)?.[1]);
-  if (secret) {
-    result.webhookSecret = secret;
-    recognised.push("Webhook secret");
   }
 
   // --- Task ID -------------------------------------------------------------------

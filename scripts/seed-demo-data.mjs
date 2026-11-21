@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { confirmDestructive } from "./confirm-destructive.mjs";
 
 // Load environment variables from .env.local
 const envContent = fs.readFileSync(".env.local", "utf8");
@@ -599,4 +600,5 @@ async function seedRealData() {
   console.log("=================================================================");
 }
 
+await confirmDestructive("Wipe the database and replace it with demo data", url);
 seedRealData();

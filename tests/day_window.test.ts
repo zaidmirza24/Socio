@@ -49,3 +49,21 @@ test("day window keeps only today and applies per-account cap, newest first", ()
   const uncapped = applyDayWindowAndCap(posts, null, NOW);
   assert.equal(uncapped.kept.length, 4);
 });
+
+test("a run started 23:50 IST and saved after midnight keeps the posts of the day it started", () => {
+  // Run started 2026-11-21 23:50 IST (18:20 UTC); ingestion happens 2026-11-22 00:10 IST.
+  const runStartedAt = new Date("2026-11-21T18:20:00.000Z");
+  const ingestedAt = new Date("2026-11-21T18:40:00.000Z");
+  const posts = [
+    { posted_at: "2026-11-21T15:30:00.000Z", account_handle: "a", platform: "instagram" }, // 21:00 IST 21st
+    { posted_at: "2026-11-21T04:00:00.000Z", account_handle: "b", platform: "instagram" }, // 09:30 IST 21st
+  ];
+
+  // Anchored to ingestion time (the old behaviour) every post looks like "yesterday".
+  assert.equal(applyDayWindowAndCap(posts, null, ingestedAt).kept.length, 0);
+
+  // Anchored to the run's start, both are kept.
+  const { kept, dropped } = applyDayWindowAndCap(posts, null, runStartedAt);
+  assert.equal(kept.length, 2);
+  assert.equal(dropped, 0);
+});

@@ -1,11 +1,20 @@
 import { NextResponse } from "next/server";
+import { internalError } from "@/lib/api/errors";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createServerComponentClient } from "@/lib/supabase/server";
 import { formatDate } from "@/lib/utils";
 
+/**
+ * CSV-escapes a cell. Text that a spreadsheet would read as a formula (starting with = + - @,
+ * tab or CR) is prefixed with ' so a volunteer name like =HYPERLINK(...) cannot execute when the
+ * export is opened in Excel or Sheets. Numbers are written as-is.
+ */
 function escapeCSV(val: string | number | null | undefined): string {
   if (val === null || val === undefined) return "";
-  const str = String(val);
+  let str = String(val);
+  if (typeof val === "string" && /^[=+\-@\t\r]/.test(str)) {
+    str = `'${str}`;
+  }
   if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
     return `"${str.replace(/"/g, '""')}"`;
   }
@@ -79,8 +88,7 @@ export async function GET() {
         .range(from, from + PAGE_SIZE - 1);
 
       if (error) {
-        console.error("Failed to query snapshots for CSV export:", error);
-        return NextResponse.json({ error: "Failed to export snapshots", details: error.message }, { status: 500 });
+        return internalError(error, "Failed to export snapshots");
       }
       const page = (data ?? []) as unknown as SnapshotExportRow[];
       all.push(...page);
@@ -119,7 +127,7 @@ export async function GET() {
       rows.push(
         [
           escapeCSV(acc?.volunteer_name ?? "Unknown"),
-          escapeCSV(acc?.handle ? `@${acc.handle}` : ""),
+          escapeCSV(acc?.handle ?? ""),
           escapeCSV(post?.platform ?? ""),
           escapeCSV(post?.match_status ?? "unmatched"),
           escapeCSV(caption?.title ?? ""),
@@ -149,8 +157,6 @@ export async function GET() {
       },
     });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("CSV Export Exception:", err);
-    return NextResponse.json({ error: "Internal Server Error", details: message }, { status: 500 });
+    return internalError(err, "Failed to export snapshots");
   }
 }

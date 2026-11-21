@@ -3,7 +3,7 @@ import { z } from "zod";
 import { createServerComponentClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getServerEnv } from "@/lib/env";
-import { timingSafeEqual } from "node:crypto";
+import { safeEqual } from "@/lib/services/crypto";
 
 const createUserSchema = z.object({
   email: z.string().email("Invalid email address").toLowerCase().trim(),
@@ -20,18 +20,23 @@ async function verifyAdminOrBootstrap(request: NextRequest) {
   const admin = createAdminClient();
 
   // Check if system has any profiles
-  const { count } = await admin
+  const { count, error: countError } = await admin
     .from("profiles")
     .select("*", { count: "exact", head: true });
 
-  const isBootstrap = (count ?? 0) === 0;
+  // Fail closed: a failed count must never be read as "no users yet" (which enables bootstrap).
+  if (countError || count === null) {
+    return { authorized: false, isBootstrap: false, error: "Could not verify existing users. Try again." };
+  }
+
+  const isBootstrap = count === 0;
 
   if (isBootstrap) {
     // This route is outside the auth middleware, so an empty profiles table must NOT mean
     // "anyone can become admin". Bootstrap needs the secret BOOTSTRAP_TOKEN from the server env.
     const expected = getServerEnv().BOOTSTRAP_TOKEN;
     const provided = request.headers.get("x-bootstrap-token") ?? "";
-    if (expected && provided.length === expected.length && timingSafeEqual(Buffer.from(provided), Buffer.from(expected))) {
+    if (expected && provided && safeEqual(provided, expected)) {
       return { authorized: true, isBootstrap: true };
     }
     return {
@@ -115,10 +120,10 @@ export async function POST(request: NextRequest) {
       email,
       password,
       email_confirm: true,
-      user_metadata: {
-        full_name,
-        role,
-      },
+      user_metadata: { full_name },
+      // Roles live in app metadata, which only the service role can write. The profile
+      // trigger ignores any role in user metadata (that is user-controlled at signup).
+      app_metadata: { role },
     });
 
     if (authError || !authData.user) {
@@ -148,7 +153,7 @@ export async function POST(request: NextRequest) {
         {
           warning: "User created in Auth, but profile sync failed",
           error: profileError.message,
-          user: authData.user,
+          user: { id: authData.user.id, email },
         },
         { status: 207 }
       );

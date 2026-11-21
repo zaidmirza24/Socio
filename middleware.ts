@@ -11,8 +11,16 @@ export async function middleware(request: NextRequest) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  // Skip middleware auth checks if Supabase env is not configured yet (e.g. during initial local preview)
+  // Fail closed: without Supabase config nobody can be authenticated, so protected pages and
+  // APIs must not be served. (Only the login page and static assets stay reachable.)
   if (!supabaseUrl || !supabaseAnonKey) {
+    const path = request.nextUrl.pathname;
+    if (path.startsWith("/api/")) {
+      return NextResponse.json({ error: "Server is not configured (Supabase env missing)." }, { status: 503 });
+    }
+    if (!path.startsWith("/login")) {
+      return new NextResponse("Server is not configured (Supabase env missing).", { status: 503 });
+    }
     return response;
   }
 
@@ -57,7 +65,6 @@ export async function middleware(request: NextRequest) {
 
   const isProtectedApi =
     request.nextUrl.pathname.startsWith("/api/") &&
-    !request.nextUrl.pathname.startsWith("/api/webhooks") &&
     !request.nextUrl.pathname.startsWith("/api/auth") &&
     !request.nextUrl.pathname.startsWith("/api/admin/users");
 
@@ -93,9 +100,8 @@ export const config = {
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
-     * - api/webhooks/* (public webhook receiver endpoints with their own secret verification)
      */
-    "/((?!_next/static|_next/image|favicon.ico|api/webhooks).*)",
+    "/((?!_next/static|_next/image|favicon.ico).*)",
   ],
 };
 

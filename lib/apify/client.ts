@@ -1,6 +1,4 @@
 import { ApifyClient } from "apify-client";
-import { getServerEnv } from "../env.ts";
-import { safeEqual } from "../services/crypto.ts";
 import {
   getApifyConfig,
   getSecret,
@@ -35,65 +33,6 @@ export async function getApifyTaskIdAsync(override?: string): Promise<string | n
 export async function getApifyActorIdAsync(override?: string): Promise<string> {
   if (override && !isPlaceholder(override)) return override.trim();
   return (await getApifyConfig()).actors.instagram.discovery;
-}
-
-/** Validates an incoming webhook secret against Settings → env, in constant time. */
-export async function verifyWebhookSecretAsync(received: string | null | undefined): Promise<boolean> {
-  if (!received) return false;
-  const expected = (await getSecret("apify_webhook_secret")).value;
-  if (!expected || isPlaceholder(expected)) return false;
-  return safeEqual(received, expected);
-}
-
-/**
- * Creates an authorized Apify API client instance.
- * Server-only execution. Throws a descriptive error if the token is missing or placeholder.
- */
-export function getApifyClient(): ApifyClient {
-  const token = getServerEnv().APIFY_API_TOKEN;
-
-  if (!token || isPlaceholder(token)) {
-    throw new ApifyConfigError(MISSING_TOKEN_MESSAGE);
-  }
-
-  return new ApifyClient({ token });
-}
-
-/**
- * Resolves which Apify Task ID to use.
- * Returns null if no valid task ID is configured (caller should fall back to actor ID).
- */
-export function getApifyTaskId(override?: string): string | null {
-  const raw = override || process.env.APIFY_TASK_ID;
-  if (!raw || isPlaceholder(raw)) {
-    return null;
-  }
-  return raw.trim();
-}
-
-/**
- * Resolves which Apify Actor ID to use.
- */
-export function getApifyActorId(override?: string): string {
-  const raw = override || process.env.APIFY_ACTOR_ID;
-  if (!raw || isPlaceholder(raw)) {
-    return "apify/instagram-scraper";
-  }
-  return raw.trim();
-}
-
-/**
- * Validates incoming webhook authorization headers or tokens.
- */
-export function verifyWebhookSecret(receivedSecret: string | null | undefined): boolean {
-  if (!receivedSecret) {
-    return false;
-  }
-  const expectedSecret = getServerEnv().APIFY_WEBHOOK_SECRET;
-  if (!expectedSecret || isPlaceholder(expectedSecret)) {
-    return false;
-  }
-  return safeEqual(receivedSecret, expectedSecret);
 }
 
 /**

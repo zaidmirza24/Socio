@@ -180,7 +180,7 @@ export function CampaignAnalyticsView({
     } else if (sortLeaderboardBy === "comments") {
       list = [...list].sort((a, b) => b.totalComments - a.totalComments);
     } else if (sortLeaderboardBy === "followers") {
-      list = [...list].sort((a, b) => b.followers - a.followers);
+      list = [...list].sort((a, b) => (b.followers ?? -1) - (a.followers ?? -1));
     } else if (sortLeaderboardBy === "posts") {
       list = [...list].sort((a, b) => b.posts - a.posts);
     } else {
@@ -616,7 +616,7 @@ export function CampaignAnalyticsView({
                   <div>
                     <span className="text-slate-500">Posts / Followers</span>
                     <p className="font-semibold text-slate-700">
-                      {leaderboard[0].posts} · {formatNumber(leaderboard[0].followers)}
+                      {leaderboard[0].posts} · {formatMetric(leaderboard[0].followers)}
                     </p>
                   </div>
                 </div>
@@ -649,7 +649,7 @@ export function CampaignAnalyticsView({
                   <div>
                     <span className="text-slate-500">Posts / Followers</span>
                     <p className="font-semibold text-slate-700">
-                      {leaderboard[1].posts} · {formatNumber(leaderboard[1].followers)}
+                      {leaderboard[1].posts} · {formatMetric(leaderboard[1].followers)}
                     </p>
                   </div>
                 </div>
@@ -682,7 +682,7 @@ export function CampaignAnalyticsView({
                   <div>
                     <span className="text-slate-500">Posts / Followers</span>
                     <p className="font-semibold text-slate-700">
-                      {leaderboard[2].posts} · {formatNumber(leaderboard[2].followers)}
+                      {leaderboard[2].posts} · {formatMetric(leaderboard[2].followers)}
                     </p>
                   </div>
                 </div>

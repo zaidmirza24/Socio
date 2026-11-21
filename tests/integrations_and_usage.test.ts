@@ -1,3 +1,4 @@
+import { createCipheriv, createHash, randomBytes } from "node:crypto";
 import { describe, it } from "node:test";
 import assert from "node:assert";
 import { encryptSecret, decryptSecret, maskSecret, safeEqual, generateSecret } from "../lib/services/crypto.ts";
@@ -15,7 +16,7 @@ const FAKE_TOKEN = "apify_api_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789";
 describe("Credential encryption (AES-256-GCM)", () => {
   it("round-trips a secret and never stores plaintext", () => {
     const enc = encryptSecret(FAKE_TOKEN, "test-key-with-16+chars");
-    assert.ok(enc.startsWith("v1:"));
+    assert.ok(enc.startsWith("v2:"));
     assert.ok(!enc.includes(FAKE_TOKEN));
     assert.strictEqual(decryptSecret(enc, "test-key-with-16+chars"), FAKE_TOKEN);
   });
@@ -32,6 +33,39 @@ describe("Credential encryption (AES-256-GCM)", () => {
     const parts = enc.split(":");
     parts[3] = Buffer.from("tampered").toString("base64");
     assert.throws(() => decryptSecret(parts.join(":"), "test-key-with-16+chars"));
+  });
+
+  it("still reads v1 credentials saved before scrypt key derivation", () => {
+    const material = "test-key-with-16+chars";
+    const key = createHash("sha256").update(`socio:integration-secrets:v1:${material}`).digest();
+    const iv = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", key, iv);
+    const data = Buffer.concat([cipher.update("legacy-secret", "utf8"), cipher.final()]);
+    const legacy = ["v1", iv.toString("base64"), cipher.getAuthTag().toString("base64"), data.toString("base64")].join(":");
+    assert.strictEqual(decryptSecret(legacy, material), "legacy-secret");
+  });
+
+  it("rejects a truncated auth tag", () => {
+    const parts = encryptSecret(FAKE_TOKEN, "test-key-with-16+chars").split(":");
+    parts[2] = Buffer.from(parts[2], "base64").subarray(0, 4).toString("base64");
+    assert.throws(() => decryptSecret(parts.join(":"), "test-key-with-16+chars"), /corrupted/);
+  });
+
+  it("decrypts values saved under the service-role fallback after SETTINGS_ENCRYPTION_KEY is added", () => {
+    const prevKey = process.env.SETTINGS_ENCRYPTION_KEY;
+    const prevRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    try {
+      process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-key-material-123";
+      delete process.env.SETTINGS_ENCRYPTION_KEY;
+      const enc = encryptSecret("saved-before");
+      process.env.SETTINGS_ENCRYPTION_KEY = "a-brand-new-dedicated-key-456";
+      assert.strictEqual(decryptSecret(enc), "saved-before");
+    } finally {
+      if (prevKey === undefined) delete process.env.SETTINGS_ENCRYPTION_KEY;
+      else process.env.SETTINGS_ENCRYPTION_KEY = prevKey;
+      if (prevRole === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+      else process.env.SUPABASE_SERVICE_ROLE_KEY = prevRole;
+    }
   });
 
   it("masks secrets and compares in constant time", () => {
@@ -60,7 +94,8 @@ describe("Smart-paste credential detection", () => {
       ].join("\n")
     );
     assert.strictEqual(d.apifyToken, FAKE_TOKEN);
-    assert.strictEqual(d.webhookSecret, "abc123secret");
+    // Webhook secrets are no longer used (collection is polled), so they are not picked up.
+    assert.ok(!d.recognised.some((r) => /webhook/i.test(r)));
     assert.strictEqual(d.taskId, undefined); // placeholder rejected
   });
 

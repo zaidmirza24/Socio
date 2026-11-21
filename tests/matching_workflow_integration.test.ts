@@ -1,293 +1,197 @@
 /**
- * QA Integration Test Suite: Complete Matching Workflow
+ * Matching workflow test: raw Instagram items -> adapter -> REAL routing decision
+ * (lib/services/post-routing.ts, the same function lib/services/ingestion.ts uses) -> an in-memory
+ * store that applies each route the way ingestion does.
  *
- * Verifies the end-to-end flow from raw Instagram scraped items through
- * normalization, caption matching, review queue routing, and metric snapshotting
- * using an isolated mock database environment.
+ * Rules checked (AGENTS.md): every post of a monitored account is KEPT with its engagement;
+ * matching only labels it. Rejected posts are never re-queued. Caption filter OFF = no matching.
+ * Re-running the same input creates no duplicates.
  *
- * Ensures ZERO modification to production data.
  * Run: node --no-warnings --experimental-strip-types tests/matching_workflow_integration.test.ts
  */
-
-import { normalizeInstagramDataset } from "../lib/collectors/instagram.ts";
-import {
-  matchCaption,
-  type MatchableCaption,
-  type MatchableVariant,
-  type MatchResult,
-} from "../lib/matching/matcher.ts";
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { normalizeApifyInstagramDataset } from "../lib/scrapers/apify/adapter.ts";
+import { matchCaption, type MatchableCaption, type MatchableVariant } from "../lib/matching/matcher.ts";
 import { processCaption } from "../lib/matching/normalizer.ts";
+import { routePost } from "../lib/services/post-routing.ts";
+import type { PostMatchStatus } from "../types/database.ts";
 
-function assert(condition: boolean, message: string): void {
-  if (!condition) {
-    throw new Error(`Assertion failed: ${message}`);
-  }
+interface Store {
+  accounts: Set<string>;
+  posts: Map<string, { matchStatus: PostMatchStatus; captionId: string | null; likes: number | null }>;
+  reviewQueue: Map<string, { status: "pending" | "approved" | "rejected"; captionId: string }>;
+  matchedPosts: Map<string, { captionId: string; tier: string }>;
+  snapshots: Map<string, { likes: number | null }>; // key: post + date (one per post per day)
 }
 
-interface MockDB {
-  accounts: Map<string, { id: string; handle: string; is_visible: boolean }>;
-  campaign_captions: Map<string, MatchableCaption & { title: string; status: string }>;
-  caption_approved_variants: Map<string, { caption_id: string; variant_hash: string }>;
-  review_queue: Map<string, {
-    caption_id: string;
-    account_id: string;
-    platform: string;
-    platform_post_id: string;
-    post_url: string;
-    candidate_caption: string;
-    similarity_score: number;
-    status: "pending" | "approved" | "rejected";
-  }>;
-  matched_posts: Map<string, {
-    id: string;
-    caption_id: string;
-    account_id: string;
-    platform: string;
-    platform_post_id: string;
-    match_tier: string;
-    match_confidence: number;
-  }>;
-  metric_snapshots: Array<{
-    post_id: string;
-    snapshot_date: string;
-    likes: number | null;
-    comments: number | null;
-    views: number | null;
-  }>;
-}
+const TODAY = "2026-11-10";
 
-function createMockDB(): MockDB {
+function newStore(): Store {
   return {
-    accounts: new Map(),
-    campaign_captions: new Map(),
-    caption_approved_variants: new Map(),
-    review_queue: new Map(),
-    matched_posts: new Map(),
-    metric_snapshots: [],
+    accounts: new Set(["volunteer_alice", "volunteer_bob", "volunteer_carol"]),
+    posts: new Map(),
+    reviewQueue: new Map(),
+    matchedPosts: new Map(),
+    snapshots: new Map(),
   };
 }
 
-/**
- * Isolated end-to-end ingestion runner mimicking lib/services/ingestion.ts
- * without touching external Supabase network or database.
- */
-function runIsolatedIngestion(
-  db: MockDB,
-  rawScrapedItems: unknown[],
-  targetDate: string = "2026-11-11"
-) {
-  // 1. Adapter layer: normalize Apify items
-  const adapterResult = normalizeInstagramDataset(rawScrapedItems);
+const OFFICIAL = "Join us this Sunday for our Annual Tree Planting Drive! Bring gloves and water bottles.";
+const { normalized, hash } = processCaption(OFFICIAL);
+const captions: MatchableCaption[] = [
+  {
+    id: "cap-tree",
+    caption_hash: hash,
+    canonical_caption: OFFICIAL,
+    normalized_caption: normalized,
+    released_at: `${TODAY}T03:00:00Z`,
+  },
+];
+const variants: MatchableVariant[] = [];
 
-  // 2. Load active captions from DB
-  const activeCaptions: MatchableCaption[] = Array.from(db.campaign_captions.values())
-    .filter((c) => c.status === "active")
-    .map((c) => ({
-      id: c.id,
-      caption_hash: c.caption_hash,
-      canonical_caption: c.canonical_caption,
-      normalized_caption: c.normalized_caption,
-      released_at: c.released_at,
-    }));
+/** Applies routes like ingestion.ts does (upserts keyed like the real unique constraints). */
+function ingest(store: Store, rawItems: unknown[], captionMatchingEnabled = true) {
+  const { posts } = normalizeApifyInstagramDataset(rawItems);
+  const counts = { kept: 0, queued: 0, tracked: 0, skipped: 0 };
 
-  const approvedVariants: MatchableVariant[] = Array.from(db.caption_approved_variants.values()).map(
-    (v) => ({
-      caption_id: v.caption_id,
-      variant_hash: v.variant_hash,
-    })
-  );
-
-  let postsMatched = 0;
-  let postsDiscarded = 0;
-  let reviewsQueued = 0;
-
-  for (const post of adapterResult.posts) {
-    const account = db.accounts.get(post.account_handle);
-    if (!account) {
-      // Unmonitored account -> skip
+  for (const post of posts) {
+    if (!store.accounts.has(post.account_handle)) {
+      counts.skipped++;
       continue;
     }
-
-    const matchResult = matchCaption(post.caption, activeCaptions, approvedVariants, {
-      postedAt: post.posted_at,
+    const key = `${post.platform}:${post.platform_post_id}`;
+    const route = routePost({
+      captionMatchingEnabled,
+      existingReviewStatus: store.reviewQueue.get(key)?.status,
+      match: () => matchCaption(post.caption, captions, variants, { postedAt: post.posted_at, sameDayOnly: true }),
     });
 
-    const postKey = `${post.platform}:${post.platform_post_id}`;
+    const existing = store.posts.get(key);
+    let label: { matchStatus: PostMatchStatus; captionId: string | null } | null = null;
 
-    if (!matchResult.matched) {
-      postsDiscarded++;
-      continue;
+    switch (route.action) {
+      case "store_unlabelled":
+        break;
+      case "label":
+        label = { matchStatus: route.matchStatus, captionId: route.captionId };
+        break;
+      case "queue_review": {
+        const prev = store.reviewQueue.get(key);
+        // status is never overwritten on conflict (the real upsert omits it)
+        store.reviewQueue.set(key, { status: prev?.status ?? "pending", captionId: route.captionId });
+        label = { matchStatus: "needs_review", captionId: route.captionId };
+        counts.queued++;
+        break;
+      }
+      case "track_match":
+        store.matchedPosts.set(key, { captionId: route.match.captionId, tier: route.match.tier });
+        label = { matchStatus: "matched", captionId: route.match.captionId };
+        counts.tracked++;
+        break;
     }
 
-    if (matchResult.needsReview) {
-      const existingReview = db.review_queue.get(postKey);
-      if (existingReview?.status === "rejected") {
-        postsDiscarded++;
-        continue;
-      }
-      if (existingReview?.status === "approved") {
-        continue;
-      }
-
-      db.review_queue.set(postKey, {
-        caption_id: matchResult.captionId,
-        account_id: account.id,
-        platform: post.platform,
-        platform_post_id: post.platform_post_id,
-        post_url: post.url,
-        candidate_caption: post.caption ?? "",
-        similarity_score: matchResult.confidence,
-        status: "pending",
-      });
-      reviewsQueued++;
-      continue;
-    }
-
-    // Tier 1 Exact or Approved Variant
-    const matchedPostId = `matched-${post.platform_post_id}`;
-    db.matched_posts.set(postKey, {
-      id: matchedPostId,
-      caption_id: matchResult.captionId,
-      account_id: account.id,
-      platform: post.platform,
-      platform_post_id: post.platform_post_id,
-      match_tier: matchResult.tier,
-      match_confidence: matchResult.confidence,
-    });
-    postsMatched++;
-
-    db.metric_snapshots.push({
-      post_id: matchedPostId,
-      snapshot_date: targetDate,
+    store.posts.set(key, {
+      matchStatus: label?.matchStatus ?? existing?.matchStatus ?? "unmatched",
+      captionId: label ? label.captionId : existing?.captionId ?? null,
       likes: post.metrics.likes,
-      comments: post.metrics.comments,
-      views: post.metrics.views,
     });
+    store.snapshots.set(`${key}@${TODAY}`, { likes: post.metrics.likes });
+    counts.kept++;
   }
-
-  return { postsMatched, postsDiscarded, reviewsQueued };
+  return counts;
 }
 
-function runIntegrationTests(): void {
-  console.log("--- Starting Matching Workflow Integration Tests (Isolated Mock DB) ---");
+const item = (id: string, owner: string, caption: string, likes = 10) => ({
+  id,
+  url: `https://www.instagram.com/p/${id}/`,
+  caption,
+  ownerUsername: owner,
+  timestamp: `${TODAY}T10:00:00Z`,
+  likesCount: likes,
+  commentsCount: 1,
+});
 
-  // Setup initial mock DB
-  const db = createMockDB();
+const exact = item("post-101", "volunteer_alice", `   ${OFFICIAL}   `, 45);
+const unrelated = item("post-102", "volunteer_alice", "Sunday brunch with friends! Best avocado toast ever #weekend", 120);
+const typo = item("post-103", "volunteer_bob", "Join us this Sunday for our Annual Tree Planting Drive! Bring glove and water bottle.", 22);
 
-  // Register accounts
-  db.accounts.set("volunteer_alice", { id: "acc-1", handle: "volunteer_alice", is_visible: true });
-  db.accounts.set("volunteer_bob", { id: "acc-2", handle: "volunteer_bob", is_visible: true });
-  db.accounts.set("volunteer_carol", { id: "acc-3", handle: "volunteer_carol", is_visible: true });
-
-  // Register campaign caption
-  const officialCaption = "Join us this Sunday for our Annual Tree Planting Drive! Bring gloves and water bottles.";
-  const { normalized, hash } = processCaption(officialCaption);
-  db.campaign_captions.set("cap-tree", {
-    id: "cap-tree",
-    title: "Tree Planting Drive",
-    canonical_caption: officialCaption,
-    normalized_caption: normalized,
-    caption_hash: hash,
-    status: "active",
-    released_at: "2026-11-01T00:00:00Z",
+describe("Matching workflow (real routing)", () => {
+  it("INT-01: exact caption -> tracked in matched_posts, labelled matched, snapshot stored", () => {
+    const store = newStore();
+    const r = ingest(store, [exact]);
+    assert.equal(r.tracked, 1);
+    assert.equal(store.matchedPosts.get("instagram:post-101")?.captionId, "cap-tree");
+    assert.equal(store.posts.get("instagram:post-101")?.matchStatus, "matched");
+    assert.equal(store.snapshots.size, 1);
   });
 
-  // TEST 1: Exact match post flow
-  const rawItem1 = {
-    id: "post-101",
-    url: "https://instagram.com/p/post101",
-    caption: "   Join us this Sunday for our Annual Tree Planting Drive! Bring gloves and water bottles.   ",
-    ownerUsername: "volunteer_alice",
-    timestamp: "2026-11-10T10:00:00Z",
-    likesCount: 45,
-    commentsCount: 3,
-  };
+  it("INT-02: unrelated post is KEPT with its engagement, labelled unmatched (nothing discarded)", () => {
+    const store = newStore();
+    const r = ingest(store, [unrelated]);
+    assert.equal(r.kept, 1);
+    assert.equal(store.posts.get("instagram:post-102")?.matchStatus, "unmatched");
+    assert.equal(store.posts.get("instagram:post-102")?.likes, 120);
+    assert.equal(store.matchedPosts.size, 0);
+    assert.equal(store.reviewQueue.size, 0);
+  });
 
-  const res1 = runIsolatedIngestion(db, [rawItem1]);
-  assert(res1.postsMatched === 1, `Test 1 failed: Expected 1 post matched, got ${res1.postsMatched}`);
-  assert(db.matched_posts.has("instagram:post-101"), "Matched posts should contain post-101");
-  assert(db.metric_snapshots.length === 1, "Should have created 1 metric snapshot");
-  console.log("✓ INT-01: Raw scraped post with exact caption -> matched_posts & metric_snapshots created");
+  it("INT-03: typo -> review queue (pending), post kept as needs_review", () => {
+    const store = newStore();
+    const r = ingest(store, [typo]);
+    assert.equal(r.queued, 1);
+    assert.equal(store.reviewQueue.get("instagram:post-103")?.status, "pending");
+    assert.equal(store.posts.get("instagram:post-103")?.matchStatus, "needs_review");
+  });
 
-  // TEST 2: Unrelated personal post flow (Zero DB storage)
-  const rawItem2 = {
-    id: "post-102",
-    url: "https://instagram.com/p/post102",
-    caption: "Sunday brunch with friends! Best avocado toast ever #weekend",
-    ownerUsername: "volunteer_alice",
-    timestamp: "2026-11-10T12:00:00Z",
-    likesCount: 120,
-    commentsCount: 15,
-  };
+  it("INT-04: re-running identical input creates no duplicates and one snapshot per post per day", () => {
+    const store = newStore();
+    ingest(store, [exact, unrelated, typo]);
+    ingest(store, [exact, unrelated, typo]);
+    assert.equal(store.posts.size, 3);
+    assert.equal(store.matchedPosts.size, 1);
+    assert.equal(store.reviewQueue.size, 1);
+    assert.equal(store.snapshots.size, 3);
+  });
 
-  const initialMatchedCount = db.matched_posts.size;
-  const initialReviewCount = db.review_queue.size;
-  const res2 = runIsolatedIngestion(db, [rawItem2]);
-  assert(res2.postsDiscarded === 1, "Unrelated post must be discarded");
-  assert(db.matched_posts.size === initialMatchedCount, "Zero matched_posts created for unrelated post");
-  assert(db.review_queue.size === initialReviewCount, "Zero review_queue rows created for unrelated post");
-  console.log("✓ INT-02: Unrelated personal post -> immediately discarded (zero DB records)");
+  it("INT-05: a rejected post is never re-queued, stays 'rejected', and is still kept", () => {
+    const store = newStore();
+    ingest(store, [typo]);
+    store.reviewQueue.get("instagram:post-103")!.status = "rejected";
+    const r = ingest(store, [typo]);
+    assert.equal(r.queued, 0);
+    assert.equal(store.reviewQueue.get("instagram:post-103")?.status, "rejected");
+    assert.equal(store.posts.get("instagram:post-103")?.matchStatus, "rejected");
+  });
 
-  // TEST 3: Typo/Fuzzy match post flow -> routes to review_queue
-  const rawItem3 = {
-    id: "post-103",
-    url: "https://instagram.com/p/post103",
-    caption: "Join us this Sunday for our Annual Tree Planting Drive! Bring glove and water bottle.",
-    ownerUsername: "volunteer_bob",
-    timestamp: "2026-11-10T14:00:00Z",
-    likesCount: 22,
-    commentsCount: 1,
-  };
+  it("INT-06: an approved fuzzy post is labelled matched on later runs, not re-queued", () => {
+    const store = newStore();
+    ingest(store, [typo]);
+    store.reviewQueue.get("instagram:post-103")!.status = "approved";
+    const r = ingest(store, [typo]);
+    assert.equal(r.queued, 0);
+    assert.equal(store.posts.get("instagram:post-103")?.matchStatus, "matched");
+  });
 
-  const res3 = runIsolatedIngestion(db, [rawItem3]);
-  assert(res3.reviewsQueued === 1, "Fuzzy post must be queued for review");
-  assert(db.review_queue.has("instagram:post-103"), "Review queue must contain post-103");
-  const queuedItem = db.review_queue.get("instagram:post-103")!;
-  assert(queuedItem.status === "pending", "Status must be pending");
-  assert(queuedItem.caption_id === "cap-tree", "Caption ID must match");
-  console.log("✓ INT-03: Post with typo -> routed to review_queue with pending status");
+  it("INT-07: same caption from several volunteers is tracked independently", () => {
+    const store = newStore();
+    const r = ingest(store, [item("post-104", "volunteer_bob", OFFICIAL), item("post-105", "volunteer_carol", OFFICIAL)]);
+    assert.equal(r.tracked, 2);
+  });
 
-  // TEST 4: Idempotency — Rerunning same items produces zero duplicates
-  const res4 = runIsolatedIngestion(db, [rawItem1, rawItem2, rawItem3]);
-  // post-101 was already matched; upsert updates it, does not duplicate
-  assert(db.matched_posts.size === 1, "matched_posts count must not increase on duplicate run");
-  assert(db.review_queue.size === 1, "review_queue count must not increase on duplicate run");
-  console.log("✓ INT-04: Idempotency verified — duplicate runs do not inflate counts");
+  it("INT-08: caption filter OFF -> no matching at all, every post kept unlabelled", () => {
+    const store = newStore();
+    const r = ingest(store, [exact, unrelated, typo], false);
+    assert.equal(r.kept, 3);
+    assert.equal(r.tracked + r.queued, 0);
+    assert.equal(store.matchedPosts.size, 0);
+    assert.ok(Array.from(store.posts.values()).every((p) => p.matchStatus === "unmatched"));
+  });
 
-  // TEST 5: State Machine — Rejected review items remain discarded on subsequent ingestions
-  db.review_queue.get("instagram:post-103")!.status = "rejected";
-  const res5 = runIsolatedIngestion(db, [rawItem3]);
-  assert(res5.postsDiscarded === 1, "Previously rejected post must be discarded on subsequent scrape");
-  assert(db.review_queue.get("instagram:post-103")!.status === "rejected", "Status must remain rejected");
-  console.log("✓ INT-05: Review rejection state guard — rejected post never resurrected to pending");
-
-  // TEST 6: Multi-volunteer same caption
-  const rawItemBob = {
-    id: "post-104",
-    url: "https://instagram.com/p/post104",
-    caption: officialCaption,
-    ownerUsername: "volunteer_bob",
-    timestamp: "2026-11-10T15:00:00Z",
-    likesCount: 30,
-    commentsCount: 2,
-  };
-  const rawItemCarol = {
-    id: "post-105",
-    url: "https://instagram.com/p/post105",
-    caption: officialCaption,
-    ownerUsername: "volunteer_carol",
-    timestamp: "2026-11-10T16:00:00Z",
-    likesCount: 15,
-    commentsCount: 0,
-  };
-
-  const res6 = runIsolatedIngestion(db, [rawItemBob, rawItemCarol]);
-  assert(res6.postsMatched === 2, "Both volunteers posting same caption must be matched");
-  assert(db.matched_posts.has("instagram:post-104") && db.matched_posts.has("instagram:post-105"), "Both posts tracked");
-  console.log("✓ INT-06: Same caption across multiple volunteers independently matched and tracked");
-
-  console.log("--- All Matching Workflow Integration Tests Passed! ---");
-}
-
-runIntegrationTests();
-
+  it("INT-09: posts from handles that are not monitored accounts are skipped and counted", () => {
+    const store = newStore();
+    const r = ingest(store, [item("post-200", "someone_else", OFFICIAL)]);
+    assert.equal(r.skipped, 1);
+    assert.equal(store.posts.size, 0);
+  });
+});

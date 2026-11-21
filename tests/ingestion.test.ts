@@ -1,4 +1,5 @@
-import { ACCOUNT_BATCH_SIZE, DIRECT_URL_BATCH_SIZE } from "../lib/apify/trigger.ts";
+import { DIRECT_URL_BATCH_SIZE } from "../lib/config/batching.ts";
+import { chunk } from "../lib/supabase/paginate.ts";
 import {
   matchCaption,
   type MatchableCaption,
@@ -16,13 +17,10 @@ function runIngestionTests(): void {
   console.log("--- Starting Ingestion & Discard Pipeline Unit Tests ---");
 
   // ─────────────────────────────────────────────────────────────
-  // 1. Batch Partitioning Logic
+  // 1. Batch Partitioning Logic (shared chunk helper used for .in() filters)
   // ─────────────────────────────────────────────────────────────
   const mockHandles = Array.from({ length: 250 }, (_, i) => `volunteer_${i + 1}`);
-  const chunks: string[][] = [];
-  for (let i = 0; i < mockHandles.length; i += ACCOUNT_BATCH_SIZE) {
-    chunks.push(mockHandles.slice(i, i + ACCOUNT_BATCH_SIZE));
-  }
+  const chunks = chunk(mockHandles, 100);
 
   assert(chunks.length === 3, `Expected 3 chunks for 250 handles, got ${chunks.length}`);
   assert(chunks[0].length === 100, `Expected chunk 0 length 100, got ${chunks[0].length}`);
@@ -34,10 +32,7 @@ function runIngestionTests(): void {
   // 2. Direct URL Fetch Batching
   // ─────────────────────────────────────────────────────────────
   const mockUrls = Array.from({ length: 120 }, (_, i) => `https://instagram.com/p/post_${i + 1}/`);
-  const urlBatches: string[][] = [];
-  for (let i = 0; i < mockUrls.length; i += DIRECT_URL_BATCH_SIZE) {
-    urlBatches.push(mockUrls.slice(i, i + DIRECT_URL_BATCH_SIZE));
-  }
+  const urlBatches = chunk(mockUrls, DIRECT_URL_BATCH_SIZE);
 
   assert(urlBatches.length === 3, `Expected 3 batches for 120 URLs, got ${urlBatches.length}`);
   assert(urlBatches[0].length === 50, "Batch 0 should have 50 URLs");

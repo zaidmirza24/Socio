@@ -8,28 +8,31 @@ import type { IPlatformAdapter, AdapterResult } from "../platform-adapter.ts";
  */
 export function extractFacebookHandle(urlOrHandle: string): string {
   const trimmed = urlOrHandle.trim().replace(/^@/, "").replace(/\/+$/, "");
+  if (!trimmed) return "";
   if (!trimmed.includes("/")) {
-    return trimmed.toLowerCase();
+    // A display name ("Rahul Sharma") is not a handle and would never match an account.
+    return /\s/.test(trimmed) ? "" : trimmed.toLowerCase();
   }
+  let parsed: URL;
   try {
-    const parsed = new URL(trimmed);
-    const parts = parsed.pathname.split("/").filter(Boolean);
-    // Ignore common prefix paths like /profile.php or /pages/
-    if (parts.length > 0) {
-      if (parts[0] === "profile.php") {
-        const idParam = parsed.searchParams.get("id");
-        return (idParam ?? parts[0]).toLowerCase();
-      }
-      return parts[parts.length - 1].toLowerCase();
-    }
+    parsed = new URL(trimmed.startsWith("http") ? trimmed : `https://${trimmed}`);
   } catch {
-    // If not a valid URL, split by slashes
-    const parts = trimmed.split("/").filter(Boolean);
-    if (parts.length > 0) {
-      return parts[parts.length - 1].toLowerCase();
-    }
+    return "";
   }
-  return trimmed.toLowerCase();
+  const parts = parsed.pathname.split("/").filter(Boolean);
+  if (parts.length === 0) return "";
+
+  // Numeric-id profile forms: /profile.php?id=…, /permalink.php?id=…, /story.php?id=…
+  if (["profile.php", "permalink.php", "story.php"].includes(parts[0])) {
+    return (parsed.searchParams.get("id") ?? "").toLowerCase();
+  }
+  // /people/<Name>/<id>/ and /pages/<Name>/<id>/ -> the stable numeric id
+  if ((parts[0] === "people" || parts[0] === "pages") && parts.length >= 3) {
+    return parts[2].toLowerCase();
+  }
+  // /<handle>, /<handle>/posts/<pfbid…>, /<handle>/videos/<id>: the handle is the FIRST segment.
+  // (Taking the last segment returned the post id, so the post matched no account.)
+  return parts[0].toLowerCase();
 }
 
 /**
@@ -105,9 +108,17 @@ export function normalizeFacebookDataset(rawData: unknown[]): AdapterResult {
     }
 
     // Resolve author handle
+    // Prefer the author's profile URL, then the post URL's owner segment. The display name is only
+    // usable when it is a single token (e.g. a vanity name) - "Rahul Sharma" is not a handle.
     const authorObj = data.user ?? data.author;
-    const authorUrlOrName = authorObj?.url ?? authorObj?.name ?? "";
-    const cleanHandle = extractFacebookHandle(authorUrlOrName || postUrl);
+    const cleanHandle =
+      extractFacebookHandle(authorObj?.url ?? "") ||
+      extractFacebookHandle(postUrl) ||
+      extractFacebookHandle(authorObj?.name ?? "");
+    if (!cleanHandle) {
+      console.warn("Skipping Facebook item: could not determine the author handle", postUrl);
+      continue;
+    }
 
     // Parse timestamp (could be Unix timestamp in seconds, milliseconds, or ISO string)
     let postedAt: string | null = null;

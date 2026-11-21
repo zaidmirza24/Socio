@@ -4,6 +4,9 @@ import { getScraperRefreshStrategy, getPlatformSettings } from "./settings.ts";
 import { recordRunUsage } from "./apify-usage.ts";
 import { processIngestion, type IngestionSummary } from "./ingestion.ts";
 import { getScrapeBoundaryDate } from "../utils/day-window.ts";
+import { fetchAllRows } from "../supabase/paginate.ts";
+import { DIRECT_URL_BATCH_SIZE } from "../config/batching.ts";
+import { formatDate } from "../utils.ts";
 import type { PlatformType } from "../../types/database.ts";
 import type {
   ScraperDiscoveryOptions,
@@ -14,7 +17,79 @@ import type {
   ScraperProviderType,
 } from "../scrapers/types.ts";
 
-export const DEFAULT_DIRECT_URL_BATCH_SIZE = 50;
+export const DEFAULT_DIRECT_URL_BATCH_SIZE = DIRECT_URL_BATCH_SIZE;
+
+/** A run still marked started/ingesting after this long is treated as abandoned. */
+const ACTIVE_RUN_WINDOW_MS = 6 * 60 * 60 * 1000;
+/** An ingestion claim older than this is assumed dead (crashed request) and can be re-claimed. */
+const INGEST_CLAIM_TTL_MS = 15 * 60 * 1000;
+
+/**
+ * Thrown when a run of the same platform + job type is already in progress. Carries the Apify
+ * run ids so callers can resume polling them instead of paying for a second identical run.
+ */
+export class RunAlreadyActiveError extends Error {
+  readonly runIds: string[];
+  constructor(platform: PlatformType, jobType: "discovery" | "refresh", runIds: string[]) {
+    super(
+      `A ${jobType === "refresh" ? "refresh" : "discovery"} run for ${platform} is already in progress. Following it instead of starting another.`
+    );
+    this.name = "RunAlreadyActiveError";
+    this.runIds = runIds;
+  }
+}
+
+/** Apify run ids of recent runs for this platform + job type that have not finished saving. */
+export async function findActiveRunIds(
+  platform: PlatformType,
+  jobType: "discovery" | "refresh"
+): Promise<string[]> {
+  const supabase = createAdminClient();
+  const since = new Date(Date.now() - ACTIVE_RUN_WINDOW_MS).toISOString();
+  const { data, error } = await supabase
+    .from("collection_runs")
+    .select("actor_run_id")
+    .eq("platform", platform)
+    .eq("job_type", jobType)
+    .in("status", ["started", "ingesting"])
+    .gte("started_at", since)
+    .not("actor_run_id", "is", null);
+  if (error) {
+    throw new Error(`Could not check for runs already in progress: ${error.message}`);
+  }
+  return (data ?? []).map((r) => r.actor_run_id as string);
+}
+
+async function assertNoActiveRun(platform: PlatformType, jobType: "discovery" | "refresh"): Promise<void> {
+  const active = await findActiveRunIds(platform, jobType);
+  if (active.length > 0) throw new RunAlreadyActiveError(platform, jobType, active);
+}
+
+/** Inserts the audit row for a started provider run. Throws if it cannot be written. */
+async function logRunStart(row: {
+  actor_run_id: string;
+  platform: PlatformType;
+  provider: string;
+  job_type: "discovery" | "refresh";
+  accounts_targeted: number;
+  posts_found: number;
+  error: Record<string, unknown>;
+}): Promise<void> {
+  const supabase = createAdminClient();
+  const { error } = await supabase.from("collection_runs").insert({
+    ...row,
+    started_at: new Date().toISOString(),
+    status: "started",
+    posts_upserted: 0,
+    snapshots_created: 0,
+  });
+  if (error) {
+    // Without this row the run cannot be ingested safely (platform and job type are unknown).
+    throw new Error(
+      `Run ${row.actor_run_id} started on ${row.provider} but could not be logged: ${error.message}. Abort it in the provider console to avoid paying for it.`
+    );
+  }
+}
 
 /**
  * Enforces the Settings → platform toggles at runtime (stored in system_settings).
@@ -80,22 +155,32 @@ export async function triggerDailyDiscovery(
 
   const supabase = createAdminClient();
 
+  // 1b. Never pay for two identical runs (double-click, two tabs, two admins)
+  await assertNoActiveRun(platform, "discovery");
+
   // 2. Resolve target handles
   let targetHandles: string[];
   if (options.customHandles && options.customHandles.length > 0) {
     targetHandles = options.customHandles.map((h) => h.replace(/^@/, "").trim().toLowerCase());
   } else {
-    const { data: accounts, error: accError } = await supabase
-      .from("accounts")
-      .select("handle")
-      .eq("platform", platform)
-      .eq("status", "active");
-
-    if (accError) {
-      throw new Error(`Database error querying active accounts: ${accError.message}`);
+    let accounts: { handle: string }[];
+    try {
+      accounts = await fetchAllRows<{ handle: string }>((from, to) =>
+        supabase
+          .from("accounts")
+          .select("handle")
+          .eq("platform", platform)
+          .eq("status", "active")
+          .order("id")
+          .range(from, to)
+      );
+    } catch (accError: unknown) {
+      throw new Error(
+        `Database error querying active accounts: ${accError instanceof Error ? accError.message : String(accError)}`
+      );
     }
 
-    if (!accounts || accounts.length === 0) {
+    if (accounts.length === 0) {
       throw new Error(`No active ${platform} accounts found. Add accounts in the Accounts tab first.`);
     }
 
@@ -117,24 +202,16 @@ export async function triggerDailyDiscovery(
     onlyPostsNewerThan: newerThan ?? undefined,
   });
 
-  // 5. Audit log in collection_runs
-  try {
-    await supabase.from("collection_runs").insert({
-      actor_run_id: triggerResult.jobId,
-      platform,
-      provider: provider.name,
-      job_type: "discovery",
-      started_at: new Date().toISOString(),
-      status: "started",
-      accounts_targeted: targetHandles.length,
-      posts_found: 0,
-      posts_upserted: 0,
-      snapshots_created: 0,
-      error: { targeted_handles: targetHandles },
-    });
-  } catch (logErr: unknown) {
-    console.error("[collection_runs] Failed to log discovery run start:", logErr);
-  }
+  // 5. Audit log in collection_runs (required: ingestion reads platform/job type from it)
+  await logRunStart({
+    actor_run_id: triggerResult.jobId,
+    platform,
+    provider: provider.name,
+    job_type: "discovery",
+    accounts_targeted: targetHandles.length,
+    posts_found: 0,
+    error: { targeted_handles: targetHandles },
+  });
 
   return triggerResult;
 }
@@ -156,40 +233,51 @@ async function getRefreshCandidates(
 ): Promise<RefreshCandidate[]> {
   const supabase = createAdminClient();
 
-  let matchedQuery = supabase
-    .from("matched_posts")
-    .select("post_url, last_metrics_refresh_at")
-    .eq("platform", platform)
-    .eq("tracking_status", "tracking");
-  if (ageCutoff) {
-    matchedQuery = matchedQuery.gte("posted_at", ageCutoff);
-  }
-
-  const matchedRes = await matchedQuery;
-  if (matchedRes.error) {
-    throw new Error(`Failed to query tracked posts for refresh: ${matchedRes.error.message}`);
+  // Both tables grow past Supabase's 1000-row response cap within days, so page through them.
+  let matchedRows: { post_url: string; last_metrics_refresh_at: string | null }[];
+  try {
+    matchedRows = await fetchAllRows<{ post_url: string; last_metrics_refresh_at: string | null }>(
+      (from, to) => {
+        let q = supabase
+          .from("matched_posts")
+          .select("post_url, last_metrics_refresh_at")
+          .eq("platform", platform)
+          .eq("tracking_status", "tracking");
+        if (ageCutoff) q = q.gte("posted_at", ageCutoff);
+        return q.order("id").range(from, to);
+      }
+    );
+  } catch (err: unknown) {
+    throw new Error(
+      `Failed to query tracked posts for refresh: ${err instanceof Error ? err.message : String(err)}`
+    );
   }
 
   const byUrl = new Map<string, RefreshCandidate>();
 
   // Also refresh every stored post, including unfiltered ones saved while Campaign Captions
-  // was OFF. (With captions always ON, `posts` only mirrors matched posts, so nothing changes.)
-  let allQuery = supabase
-    .from("posts")
-    .select("url, last_metrics_refresh_at")
-    .eq("platform", platform);
-  if (ageCutoff) {
-    allQuery = allQuery.gte("posted_at", ageCutoff);
+  // was OFF. Posts whose match an admin rejected keep their history but are no longer refreshed.
+  let allRows: { url: string; last_metrics_refresh_at: string | null }[];
+  try {
+    allRows = await fetchAllRows<{ url: string; last_metrics_refresh_at: string | null }>((from, to) => {
+      let q = supabase
+        .from("posts")
+        .select("url, last_metrics_refresh_at")
+        .eq("platform", platform)
+        .neq("match_status", "rejected");
+      if (ageCutoff) q = q.gte("posted_at", ageCutoff);
+      return q.order("id").range(from, to);
+    });
+  } catch (err: unknown) {
+    throw new Error(
+      `Failed to query stored posts for refresh: ${err instanceof Error ? err.message : String(err)}`
+    );
   }
-  const allRes = await allQuery;
-  if (allRes.error) {
-    throw new Error(`Failed to query stored posts for refresh: ${allRes.error.message}`);
-  }
-  for (const p of allRes.data ?? []) {
+  for (const p of allRows) {
     byUrl.set(p.url, { url: p.url, last_metrics_refresh_at: p.last_metrics_refresh_at });
   }
   // matched_posts wins on conflict (its refresh timestamp is the authoritative one)
-  for (const p of matchedRes.data ?? []) {
+  for (const p of matchedRows) {
     byUrl.set(p.post_url, {
       url: p.post_url,
       last_metrics_refresh_at: p.last_metrics_refresh_at,
@@ -290,8 +378,10 @@ export async function triggerWeeklyRefresh(
   await assertPlatformEnabled(platform);
   const provider = getScraperProvider(options.providerOverride);
   const strategy = await getScraperRefreshStrategy();
-  const supabase = createAdminClient();
   const now = new Date();
+
+  // Refresh batches still being saved would be re-sent (and paid for) a second time.
+  await assertNoActiveRun(platform, "refresh");
 
   // 1. Calculate eligibility thresholds
   const refreshThreshold = new Date(
@@ -341,29 +431,38 @@ export async function triggerWeeklyRefresh(
 
   const jobIds: string[] = [];
 
-  // 4. Dispatch each batch to the active scraper provider
+  // 4. Dispatch each batch to the active scraper provider. If one batch fails (rate limit, out
+  // of credit), stop dispatching but still return the batches that started so they get polled
+  // and ingested instead of running (and costing money) unseen.
+  let dispatchError: string | null = null;
   for (const batch of batches) {
-    const triggerRes = await provider.startRefreshJob(batch, { platform });
-    jobIds.push(triggerRes.jobId);
-
-    // Audit log in collection_runs
     try {
-      await supabase.from("collection_runs").insert({
+      const triggerRes = await provider.startRefreshJob(batch, { platform });
+      jobIds.push(triggerRes.jobId);
+      await logRunStart({
         actor_run_id: triggerRes.jobId,
         platform,
         provider: provider.name,
         job_type: "refresh",
-        started_at: new Date().toISOString(),
-        status: "started",
         accounts_targeted: 0,
         posts_found: batch.length,
-        posts_upserted: 0,
-        snapshots_created: 0,
         error: { target_urls: batch },
       });
-    } catch (logErr: unknown) {
-      console.error("[collection_runs] Failed to log refresh run start:", logErr);
+    } catch (err: unknown) {
+      dispatchError = err instanceof Error ? err.message : String(err);
+      break;
     }
+  }
+
+  if (dispatchError) {
+    if (jobIds.length === 0) throw new Error(dispatchError);
+    return {
+      success: true,
+      jobIds,
+      eligiblePostsCount: targetUrls.length,
+      dispatchedBatchesCount: jobIds.length,
+      message: `Started ${jobIds.length} of ${batches.length} batch(es); the rest failed to start: ${dispatchError}`,
+    };
   }
 
   return {
@@ -383,10 +482,11 @@ export async function triggerWeeklyRefresh(
  */
 export async function fetchSinglePostDetails(
   postUrl: string,
+  platform: PlatformType = "instagram",
   providerOverride?: ScraperProviderType
 ): Promise<DirectPostDetails | null> {
   const provider = getScraperProvider(providerOverride);
-  return provider.fetchDirectPost(postUrl);
+  return provider.fetchDirectPost(postUrl, platform);
 }
 
 /**
@@ -400,82 +500,203 @@ export async function checkScraperJobStatus(
   return provider.checkJobStatus(jobId);
 }
 
+/** Canonical form of a post URL for comparing what was requested with what came back. */
+export function canonicalPostUrl(url: string): string {
+  try {
+    const u = new URL(url.trim());
+    const host = u.hostname.toLowerCase().replace(/^(www\.|m\.|mobile\.)/, "").replace(/^twitter\.com$/, "x.com");
+    return `${host}${u.pathname.replace(/\/+$/, "")}`.toLowerCase();
+  } catch {
+    return url.trim().toLowerCase().replace(/\/+$/, "");
+  }
+}
+
+async function markUnreturnedRefreshTargets(requested: string[], returned: string[]): Promise<void> {
+  const got = new Set(returned.map(canonicalPostUrl));
+  const missing = requested.filter((u) => !got.has(canonicalPostUrl(u)));
+  if (missing.length === 0) return;
+  const supabase = createAdminClient();
+  const nowIso = new Date().toISOString();
+  for (let i = 0; i < missing.length; i += 50) {
+    const part = missing.slice(i, i + 50);
+    const [a, b] = await Promise.all([
+      supabase.from("posts").update({ last_metrics_refresh_at: nowIso }).in("url", part),
+      supabase.from("matched_posts").update({ last_metrics_refresh_at: nowIso }).in("post_url", part),
+    ]);
+    if (a.error || b.error) {
+      console.error("[refresh] Could not mark unreturned posts:", a.error?.message ?? b.error?.message);
+    }
+  }
+  console.log(`[refresh] ${missing.length} requested post(s) returned no data (deleted or private?).`);
+}
+
+export type IngestJobState =
+  /** Provider is still queueing / crawling. */
+  | "running"
+  /** Another request is saving this run right now. */
+  | "ingesting"
+  /** Data is saved (by this request, or earlier when `summary` is absent). */
+  | "succeeded"
+  /** The provider run failed, or saving it failed. The run row is marked `failed`. */
+  | "failed";
+
+export interface IngestJobResult {
+  state: IngestJobState;
+  /** Present only for the request that actually saved the data. */
+  summary?: IngestionSummary;
+  message: string;
+}
+
 /**
- * Handles completed scraper job ingestion idempotently.
+ * Checks a provider run and, once it has finished, ingests its dataset exactly once.
+ *
+ * Several requests can poll the same run at the same time (the Run panel, the Health page's
+ * "Ingest now"), so the run is claimed atomically (status -> 'ingesting') before any data is
+ * fetched. Only the request that wins the claim ingests; the others report "ingesting".
+ * Every terminal outcome is written to `collection_runs`, so a run never stays 'started'.
  */
 export async function ingestCompletedJob(
   jobId: string,
-  providerOverride?: ScraperProviderType,
-  jobType: "discovery" | "refresh" = "discovery"
-): Promise<{
-  ingested: boolean;
-  summary?: IngestionSummary;
-  message: string;
-}> {
+  providerOverride?: ScraperProviderType
+): Promise<IngestJobResult> {
   const provider = getScraperProvider(providerOverride);
   const supabase = createAdminClient();
 
-  // Check if this run was already successfully ingested
-  const { data: existingLog } = await supabase
+  const { data: run, error: runError } = await supabase
     .from("collection_runs")
-    .select("status, posts_upserted, snapshots_created, job_type, platform")
+    .select("id, status, job_type, platform, started_at, error")
     .eq("actor_run_id", jobId)
-    .order("started_at", { ascending: false })
-    .limit(1)
     .maybeSingle();
 
-  if (existingLog && existingLog.status === "success") {
-    return {
-      ingested: true,
-      message: "Data has already been ingested into Supabase.",
-    };
+  if (runError) {
+    throw new Error(`Could not read the run log for ${jobId}: ${runError.message}`);
+  }
+  if (!run) {
+    // Guessing the platform/job type would parse the dataset with the wrong adapter and then
+    // delete it, so refuse instead.
+    throw new Error(
+      `Run ${jobId} has no collection_runs record, so its platform and job type are unknown. It was not ingested.`
+    );
+  }
+  if (run.status === "success") {
+    return { state: "succeeded", message: "Data has already been saved." };
   }
 
-  // Check status with provider
-  const statusRes = await provider.checkJobStatus(jobId);
-  if (!statusRes.isFinished || statusRes.status !== "completed") {
-    return {
-      ingested: false,
-      message: `Job is not completed yet (status: ${statusRes.status})`,
-    };
-  }
-
-  if (!statusRes.datasetOrSnapshotId) {
-    throw new Error(`Job ${jobId} completed but returned no dataset or snapshot ID`);
-  }
-
-  // Fetch dataset items
-  const rawItems = await provider.fetchDatasetItems(statusRes.datasetOrSnapshotId);
-
-  // Determine actual jobType and platform from collection_runs if available
-  const resolvedJobType = (existingLog?.job_type as "discovery" | "refresh") || jobType;
-  const resolvedPlatform = (existingLog?.platform as PlatformType) || "instagram";
-
-  // Normalize dataset using platform adapter
-  const normalized = provider.normalizeDataset(rawItems, resolvedJobType, resolvedPlatform);
-
-  // Ingest via canonical ingestion pipeline
-  const summary = await processIngestion(normalized, {
-    actorRunId: jobId,
-    jobType: resolvedJobType,
-    provider: provider.name,
-    platform: resolvedPlatform,
-  });
-
-  // Clean up remote storage only after a fully successful save, so a failed or partial
-  // ingestion can be retried from the same dataset.
-  if (summary.status === "success") {
-    await provider.cleanupDataset(statusRes.datasetOrSnapshotId);
-  }
-
-  // Capture the real Apify cost of this run (non-fatal if Apify has not published it yet)
-  if (provider.name === "apify") {
-    await recordRunUsage(jobId);
-  }
-
-  return {
-    ingested: true,
-    summary,
-    message: `Successfully ingested ${summary.postsUpserted} posts and ${summary.snapshotsCreated} snapshots.`,
+  const markFailed = async (errorPayload: Record<string, unknown>, onlyFrom: string[]): Promise<void> => {
+    const { error } = await supabase
+      .from("collection_runs")
+      .update({ status: "failed", completed_at: new Date().toISOString(), error: errorPayload })
+      .eq("id", run.id)
+      .in("status", onlyFrom);
+    if (error) console.error(`[collection_runs] Could not mark run ${jobId} failed:`, error.message);
   };
+
+  // 1. Ask the provider where the run is
+  const statusRes = await provider.checkJobStatus(jobId);
+  if (!statusRes.isFinished) {
+    return { state: "running", message: `Run is still ${statusRes.status}.` };
+  }
+  if (statusRes.status !== "completed") {
+    const reason = statusRes.error || `Provider reported the run as ${statusRes.status}.`;
+    await markFailed({ fatal: reason, provider_status: statusRes.status }, ["started"]);
+    return { state: "failed", message: reason };
+  }
+
+  // 2. Claim the run. Allowed from started / partial / failed (retry), or from a stale
+  // 'ingesting' claim left by a request that crashed.
+  const staleBefore = new Date(Date.now() - INGEST_CLAIM_TTL_MS).toISOString();
+  const { data: claimed, error: claimError } = await supabase
+    .from("collection_runs")
+    .update({ status: "ingesting", ingest_claimed_at: new Date().toISOString() })
+    .eq("id", run.id)
+    .or(
+      `status.in.(started,partial,failed),and(status.eq.ingesting,ingest_claimed_at.lt."${staleBefore}")`
+    )
+    .select("id")
+    .maybeSingle();
+
+  if (claimError) {
+    throw new Error(`Could not claim run ${jobId} for ingestion: ${claimError.message}`);
+  }
+  if (!claimed) {
+    const { data: latest } = await supabase
+      .from("collection_runs")
+      .select("status")
+      .eq("id", run.id)
+      .maybeSingle();
+    if (latest?.status === "success") {
+      return { state: "succeeded", message: "Data has already been saved." };
+    }
+    return { state: "ingesting", message: "Another request is saving this run. Checking again shortly." };
+  }
+
+  // 3. We own the run: fetch, normalize, ingest. Any throw marks it failed so it can be retried.
+  const jobType = run.job_type === "refresh" ? "refresh" : "discovery";
+  const platform = run.platform as PlatformType;
+  // The day window is "the IST day the run STARTED", not the day it finished saving: a run
+  // started at 23:50 IST and saved at 00:10 must keep its posts.
+  const runStartedAt = new Date(run.started_at);
+  // Refresh runs log the URLs they asked for; read them now (ingestion rewrites `error`).
+  const runLog = (run.error ?? null) as { target_urls?: unknown } | null;
+  const targetUrls = Array.isArray(runLog?.target_urls)
+    ? (runLog.target_urls as unknown[]).filter((u): u is string => typeof u === "string")
+    : [];
+
+  try {
+    if (!statusRes.datasetOrSnapshotId) {
+      throw new Error(`Run ${jobId} completed but returned no dataset or snapshot ID`);
+    }
+
+    const rawItems = await provider.fetchDatasetItems(statusRes.datasetOrSnapshotId);
+    const normalized = provider.normalizeDataset(rawItems, jobType, platform);
+    const strategy = await getScraperRefreshStrategy();
+
+    const summary = await processIngestion(normalized, {
+      actorRunId: jobId,
+      jobType,
+      provider: provider.name,
+      platform,
+      targetDate: formatDate(runStartedAt),
+      dayWindowAnchor: runStartedAt,
+      postCapPerAccount: jobType === "discovery" ? strategy.discovery_post_limit : null,
+    });
+
+    // Clean up remote storage only after a fully successful save, so a failed or partial
+    // ingestion can be retried from the same dataset.
+    if (summary.status === "success") {
+      await provider.cleanupDataset(statusRes.datasetOrSnapshotId);
+    }
+
+    // Capture the real Apify cost of this run (non-fatal if Apify has not published it yet)
+    if (provider.name === "apify") {
+      await recordRunUsage(jobId);
+    }
+
+    // Posts a refresh asked for but got nothing back for (deleted / made private) would otherwise
+    // be re-sent, and paid for, on every refresh. Mark them checked so they wait a full interval.
+    if (jobType === "refresh" && summary.status !== "failed" && targetUrls.length > 0) {
+      await markUnreturnedRefreshTargets(targetUrls, normalized.posts.map((p) => p.url));
+    }
+
+    if (summary.status === "failed") {
+      return {
+        state: "failed",
+        summary,
+        message: `Saving the run failed: ${summary.errors[summary.errors.length - 1] ?? "unknown error"}`,
+      };
+    }
+
+    return {
+      state: "succeeded",
+      summary,
+      message:
+        summary.status === "partial"
+          ? `Saved ${summary.postsUpserted} posts with ${summary.errors.length} error(s). Open Health to retry.`
+          : `Saved ${summary.postsUpserted} posts and ${summary.snapshotsCreated} snapshots.`,
+    };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    await markFailed({ fatal: message }, ["ingesting"]);
+    throw err;
+  }
 }

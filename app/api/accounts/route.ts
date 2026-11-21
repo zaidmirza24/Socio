@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { internalError } from "@/lib/api/errors";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createServerComponentClient } from "@/lib/supabase/server";
@@ -87,8 +88,7 @@ export async function GET() {
 
     return NextResponse.json({ accounts: enrichedAccounts });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal Server Error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return internalError(err, "Internal Server Error");
   }
 }
 
@@ -135,13 +135,12 @@ export async function POST(request: NextRequest) {
           { status: 409 }
         );
       }
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      return internalError(error, "Database error while saving the account");
     }
 
     return NextResponse.json({ account: data }, { status: 201 });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal Server Error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return internalError(err, "Internal Server Error");
   }
 }
 
@@ -184,13 +183,12 @@ export async function PATCH(request: NextRequest) {
       .single();
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      return internalError(error, "Database error while saving the account");
     }
 
     return NextResponse.json({ account: data });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal Server Error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return internalError(err, "Internal Server Error");
   }
 }
 
@@ -202,23 +200,23 @@ export async function DELETE(request: NextRequest) {
     }
 
     const url = new URL(request.url);
-    const id = url.searchParams.get("id");
+    const idParse = z.string().uuid("A valid account ID is required").safeParse(url.searchParams.get("id"));
 
-    if (!id) {
-      return NextResponse.json({ error: "Account ID is required" }, { status: 400 });
+    if (!idParse.success) {
+      return NextResponse.json({ error: idParse.error.issues[0]?.message ?? "Invalid account ID" }, { status: 400 });
     }
+    const id = idParse.data;
 
     const admin = createAdminClient();
     const { error } = await admin.from("accounts").delete().eq("id", id);
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      return internalError(error, "Database error while saving the account");
     }
 
     return NextResponse.json({ success: true, message: "Account deleted successfully" });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal Server Error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return internalError(err, "Internal Server Error");
   }
 }
 

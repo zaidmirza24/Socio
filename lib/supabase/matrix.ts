@@ -1,7 +1,8 @@
 "use server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
-import { fetchAllRows, chunk } from "@/lib/supabase/paginate";
+import { createServerComponentClient } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 
 export type MatrixCellStatus = "POSTED" | "PENDING" | "NEEDS_REVIEW" | "NOT_VISIBLE";
 
@@ -46,6 +47,7 @@ export interface MatrixData {
   rows: MatrixRow[];
   stats: {
     totalVolunteers: number;
+    totalAccounts: number;
     activeCaptionsCount: number;
     totalPosted: number;
     totalPending: number;
@@ -59,6 +61,15 @@ export interface MatrixData {
  * Loads and constructs the full Volunteers x Captions Matrix.
  */
 export async function getMatrixData(): Promise<MatrixData> {
+  // Server action reading with the service role: verify the caller is a signed-in team member.
+  const authClient = createServerComponentClient();
+  const {
+    data: { user },
+  } = await authClient.auth.getUser();
+  if (!user) {
+    throw new Error("Unauthorized: Team login required");
+  }
+
   const supabase = createAdminClient();
 
   // 1. Fetch active campaign captions
@@ -84,6 +95,7 @@ export async function getMatrixData(): Promise<MatrixData> {
     id: string;
     handle: string;
     volunteer_name: string;
+    volunteer_id: string | null;
     platform: string;
     is_visible: boolean | null;
     last_checked_at: string | null;
@@ -92,7 +104,7 @@ export async function getMatrixData(): Promise<MatrixData> {
     accountsRaw = await fetchAllRows((from, to) =>
       supabase
         .from("accounts")
-        .select("id, handle, volunteer_name, platform, is_visible, last_checked_at")
+        .select("id, handle, volunteer_name, volunteer_id, platform, is_visible, last_checked_at")
         .eq("status", "active")
         .order("volunteer_name", { ascending: true })
         .order("id", { ascending: true })
@@ -131,44 +143,25 @@ export async function getMatrixData(): Promise<MatrixData> {
     }>;
   });
 
-  // Fetch metric snapshots for those posts, in chunks (a long .in() list overflows the URL)
-  const snapshotsRaw: Array<{
-    post_id: string;
-    likes: number | null;
-    comments: number | null;
-    views: number | null;
-    snapshot_date: string;
-  }> = [];
-  for (const ids of chunk(
-    matchedPostsRaw.map((p) => p.id),
-    150
-  )) {
-    try {
-      const rows = await fetchAllRows((from, to) =>
-        supabase
-          .from("metric_snapshots")
-          .select("post_id, likes, comments, views, snapshot_date")
-          .in("post_id", ids)
-          .order("snapshot_date", { ascending: false })
-          .order("post_id", { ascending: true })
-          .range(from, to)
-      );
-      snapshotsRaw.push(...rows);
-    } catch (snapErr) {
-      console.error("Failed to query metric snapshots:", snapErr);
-    }
-  }
-
-  // Map latest snapshot metrics per post (rows are newest-first within each chunk)
+  // Latest metrics per matched post, computed in SQL (view matched_post_latest_metrics) instead of
+  // downloading every daily snapshot of every post just to keep the newest one.
   const latestMetrics = new Map<string, { likes: number | null; comments: number | null; views: number | null }>();
-  for (const s of snapshotsRaw) {
-    if (!latestMetrics.has(s.post_id)) {
-      latestMetrics.set(s.post_id, {
-        likes: s.likes,
-        comments: s.comments,
-        views: s.views,
-      });
-    }
+  try {
+    const latestRows = await fetchAllRows<{
+      post_id: string;
+      likes: number | null;
+      comments: number | null;
+      views: number | null;
+    }>((from, to) =>
+      supabase
+        .from("matched_post_latest_metrics")
+        .select("post_id, likes, comments, views")
+        .order("post_id", { ascending: true })
+        .range(from, to)
+    );
+    for (const r of latestRows) latestMetrics.set(r.post_id, { likes: r.likes, comments: r.comments, views: r.views });
+  } catch (snapErr) {
+    console.error("Failed to query latest post metrics:", snapErr);
   }
 
   // Key by `accountId:captionId`
@@ -190,14 +183,26 @@ export async function getMatrixData(): Promise<MatrixData> {
     matchedPostsMap.set(key, list);
   }
 
-  // 4. Fetch pending review queue items
-  const { data: reviewQueueRaw } = await supabase
-    .from("review_queue")
-    .select("id, caption_id, account_id, similarity_score")
-    .eq("status", "pending");
+  // 4. Fetch pending review queue items (paged: the queue can pass 1000 rows)
+  const reviewQueueRaw = await fetchAllRows<{
+    id: string;
+    caption_id: string;
+    account_id: string;
+    similarity_score: number | null;
+  }>((from, to) =>
+    supabase
+      .from("review_queue")
+      .select("id, caption_id, account_id, similarity_score")
+      .eq("status", "pending")
+      .order("id", { ascending: true })
+      .range(from, to)
+  ).catch((err: unknown) => {
+    console.error("Failed to query review queue:", err);
+    return [];
+  });
 
   const reviewQueueMap = new Map<string, { id: string; similarityScore: number }>();
-  for (const rq of reviewQueueRaw || []) {
+  for (const rq of reviewQueueRaw) {
     const key = `${rq.account_id}:${rq.caption_id}`;
     reviewQueueMap.set(key, {
       id: rq.id,
@@ -274,7 +279,9 @@ export async function getMatrixData(): Promise<MatrixData> {
     captions,
     rows,
     stats: {
-      totalVolunteers: accounts.length,
+      // People, not accounts: one volunteer has up to 3 accounts (one per platform).
+      totalVolunteers: new Set(accountsRaw.map((a) => a.volunteer_id ?? `acct:${a.id}`)).size,
+      totalAccounts: accounts.length,
       activeCaptionsCount: captions.length,
       totalPosted,
       totalPending,

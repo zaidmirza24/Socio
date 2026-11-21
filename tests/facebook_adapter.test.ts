@@ -16,6 +16,15 @@ describe("Facebook Adapter & Normalizer Tests", () => {
     assert.strictEqual(extractFacebookHandle("https://facebook.com/priya_campaigner"), "priya_campaigner");
     assert.strictEqual(extractFacebookHandle("https://www.facebook.com/profile.php?id=100089271625341"), "100089271625341");
     assert.strictEqual(extractFacebookHandle("@amit.singh"), "amit.singh");
+    // Post URLs: the owner is the first segment, not the trailing pfbid post id
+    assert.strictEqual(
+      extractFacebookHandle("https://www.facebook.com/rahul.v/posts/pfbid02abcDEF123"),
+      "rahul.v"
+    );
+    assert.strictEqual(extractFacebookHandle("https://www.facebook.com/people/Rahul-Sharma/100012345/"), "100012345");
+    assert.strictEqual(extractFacebookHandle("https://www.facebook.com/permalink.php?story_fbid=1&id=4242"), "4242");
+    // A display name with spaces is not a handle
+    assert.strictEqual(extractFacebookHandle("Rahul Sharma"), "");
   });
 
   it("buildFacebookProfileUrl constructs clean Facebook profile URLs", () => {

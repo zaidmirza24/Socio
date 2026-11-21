@@ -1,16 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { requireAdmin } from "@/lib/supabase/require-admin";
-import {
-  checkScraperJobStatus,
-  ingestCompletedJob,
-} from "@/lib/services/scraper-orchestrator";
-import type { ScraperProviderType } from "@/lib/scrapers/types";
+import { ingestCompletedJob } from "@/lib/services/scraper-orchestrator";
+
+const querySchema = z.object({
+  runId: z
+    .string()
+    .trim()
+    .min(1, "Missing runId parameter")
+    .max(100)
+    .regex(/^[A-Za-z0-9_-]+$/, "Invalid runId"),
+  provider: z.enum(["apify"]).optional(),
+});
 
 /**
  * GET /api/scraper/status?runId=...&provider=apify
  *
- * Checks run progress with the active provider.
- * When the job completes, ingests results idempotently into Supabase.
+ * Checks run progress with the active provider. When the run has finished, the first request to
+ * claim it ingests the dataset (idempotent); concurrent polls get RUNNING until it is saved.
+ *
+ * Response `status`: RUNNING (crawling or being saved), SUCCEEDED, FAILED.
  */
 export async function GET(request: NextRequest) {
   try {
@@ -19,60 +28,53 @@ export async function GET(request: NextRequest) {
     if (!guard.ok) return guard.response;
 
     const { searchParams } = new URL(request.url);
-    const runId = searchParams.get("runId") || searchParams.get("jobId");
-    const providerOverride = (searchParams.get("provider") as ScraperProviderType) || undefined;
-
-    if (!runId) {
-      return NextResponse.json({ error: "Missing runId parameter" }, { status: 400 });
+    const parsed = querySchema.safeParse({
+      runId: searchParams.get("runId") ?? searchParams.get("jobId") ?? "",
+      provider: searchParams.get("provider") ?? undefined,
+    });
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.issues[0]?.message ?? "Invalid query" },
+        { status: 400 }
+      );
     }
+    const { runId, provider } = parsed.data;
 
-    // 1. Check live job status from provider
-    const jobStatus = await checkScraperJobStatus(runId, providerOverride);
+    const result = await ingestCompletedJob(runId, provider);
 
-    // 2. If in progress
-    if (jobStatus.status === "pending" || jobStatus.status === "running") {
+    if (result.state === "running" || result.state === "ingesting") {
       return NextResponse.json({
-        runId: jobStatus.jobId,
-        status: jobStatus.status === "pending" ? "READY" : "RUNNING",
+        runId,
+        status: "RUNNING",
+        phase: result.state === "ingesting" ? "saving" : "crawling",
         isFinished: false,
-        startedAt: jobStatus.startedAt,
-        message: "Scraper is actively crawling and fetching data...",
+        message: result.message,
       });
     }
 
-    // 3. If failed
-    if (jobStatus.status === "failed") {
+    if (result.state === "failed") {
       return NextResponse.json({
-        runId: jobStatus.jobId,
+        runId,
         status: "FAILED",
         isFinished: true,
-        error: jobStatus.error || "Scraper execution failed",
-      });
-    }
-
-    // 4. If completed, ingest dataset idempotently
-    if (jobStatus.status === "completed") {
-      const ingestionResult = await ingestCompletedJob(runId, providerOverride);
-
-      return NextResponse.json({
-        runId: jobStatus.jobId,
-        status: "SUCCEEDED",
-        isFinished: true,
-        ingested: ingestionResult.ingested,
-        postsUpserted: ingestionResult.summary?.postsUpserted ?? 0,
-        snapshotsCreated: ingestionResult.summary?.snapshotsCreated ?? 0,
-        postsFound: ingestionResult.summary?.postsFound ?? 0,
-        // Present only for the request that actually saved the data; null if it was saved earlier.
-        gain: ingestionResult.summary?.gain ?? null,
-        accountsProcessed: ingestionResult.summary?.accountsProcessed ?? 0,
-        message: ingestionResult.message,
+        error: result.message,
+        message: result.message,
       });
     }
 
     return NextResponse.json({
-      runId: jobStatus.jobId,
-      status: "RUNNING",
-      isFinished: false,
+      runId,
+      status: "SUCCEEDED",
+      isFinished: true,
+      // false when an earlier request already saved this run (no counts or gain to report)
+      ingested: Boolean(result.summary),
+      postsUpserted: result.summary?.postsUpserted ?? 0,
+      snapshotsCreated: result.summary?.snapshotsCreated ?? 0,
+      postsFound: result.summary?.postsFound ?? 0,
+      // Present only for the request that actually saved the data; null if it was saved earlier.
+      gain: result.summary?.gain ?? null,
+      accountsProcessed: result.summary?.accountsProcessed ?? 0,
+      message: result.message,
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Error checking scraper status";

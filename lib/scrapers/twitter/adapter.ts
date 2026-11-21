@@ -194,7 +194,10 @@ export function normalizeTwitterDataset(rawData: unknown[]): AdapterResult {
       accountsMap.set(cleanHandle, {
         platform: "x",
         handle: cleanHandle,
-        followers: data.author?.followersCount ?? null,
+        followers:
+          typeof data.author?.followersCount === "number" && data.author.followersCount >= 0
+            ? data.author.followersCount
+            : null,
         following:
           typeof data.author?.friendsCount === "number" && data.author.friendsCount >= 0
             ? data.author.friendsCount
@@ -221,7 +224,9 @@ export class TwitterAdapter implements IPlatformAdapter {
     return {
       profileUrls,
       resultsLimit: 10,
-      skipPinnedPosts: false,
+      // A pinned (usually old) post would use up one of the per-account slots and then be dropped
+      // by the today-only day window, so pinned posts are skipped.
+      skipPinnedPosts: true,
     };
   }
 

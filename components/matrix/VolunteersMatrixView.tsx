@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
 import {
   Users,
@@ -30,10 +30,19 @@ interface VolunteersMatrixViewProps {
   data: MatrixData;
 }
 
+/** Rows rendered at once. ~1800 accounts x N captions in the DOM at once makes the page sluggish. */
+const MATRIX_PAGE_SIZE = 100;
+
 export function VolunteersMatrixView({ data }: VolunteersMatrixViewProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [platformFilter, setPlatformFilter] = useState<string>("ALL");
+  const [page, setPage] = useState(1);
+
+  // Any filter change starts again from the first page.
+  useEffect(() => {
+    setPage(1);
+  }, [searchTerm, statusFilter, platformFilter]);
 
   const filteredRows = useMemo(() => {
     return data.rows.filter((row) => {
@@ -62,6 +71,13 @@ export function VolunteersMatrixView({ data }: VolunteersMatrixViewProps) {
     });
   }, [data.rows, searchTerm, statusFilter, platformFilter]);
 
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / MATRIX_PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pagedRows = useMemo(
+    () => filteredRows.slice((currentPage - 1) * MATRIX_PAGE_SIZE, currentPage * MATRIX_PAGE_SIZE),
+    [filteredRows, currentPage]
+  );
+
   return (
     <div className="space-y-6">
       {/* Executive KPI Stats Bar */}
@@ -81,7 +97,7 @@ export function VolunteersMatrixView({ data }: VolunteersMatrixViewProps) {
             {data.stats.totalVolunteers}
           </div>
           <div className="text-xs text-slate-500 mt-1 flex items-center gap-1">
-            <span>Multi-platform monitored profiles</span>
+            <span>{data.stats.totalAccounts} monitored accounts across platforms</span>
           </div>
         </div>
 
@@ -338,7 +354,7 @@ export function VolunteersMatrixView({ data }: VolunteersMatrixViewProps) {
               </thead>
 
               <tbody className="divide-y divide-slate-200/80">
-                {filteredRows.map((row) => {
+                {pagedRows.map((row) => {
                   const { account } = row;
 
                   return (
@@ -480,6 +496,39 @@ export function VolunteersMatrixView({ data }: VolunteersMatrixViewProps) {
                 })}
               </tbody>
             </table>
+            {totalPages > 1 && (
+              <nav
+                aria-label="Matrix pages"
+                className="flex items-center justify-between border-t border-slate-100 bg-slate-50/60 px-5 py-3 text-xs text-slate-600"
+              >
+                <span>
+                  {((currentPage - 1) * MATRIX_PAGE_SIZE + 1).toLocaleString("en-IN")}–
+                  {Math.min(currentPage * MATRIX_PAGE_SIZE, filteredRows.length).toLocaleString("en-IN")} of{" "}
+                  {filteredRows.length.toLocaleString("en-IN")} accounts
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={currentPage <= 1}
+                    className="rounded-md border border-slate-200 bg-white px-2.5 py-1 font-medium text-slate-700 hover:bg-slate-50 disabled:text-slate-300"
+                  >
+                    Previous
+                  </button>
+                  <span>
+                    Page {currentPage} of {totalPages}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={currentPage >= totalPages}
+                    className="rounded-md border border-slate-200 bg-white px-2.5 py-1 font-medium text-slate-700 hover:bg-slate-50 disabled:text-slate-300"
+                  >
+                    Next
+                  </button>
+                </div>
+              </nav>
+            )}
           </div>
         )}
       </div>

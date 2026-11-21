@@ -1,6 +1,7 @@
 "use server";
 
 import { createServerComponentClient } from "@/lib/supabase/server";
+import type { PostMatchStatus } from "@/types/database";
 
 // ─────────────────────────────────────────────────────────────
 // Return types (match the chart component interfaces exactly)
@@ -56,7 +57,8 @@ export interface LeaderboardEntry {
   /** Number of accounts (max 3) combined into this row. */
   accounts: number;
   posts: number;
-  followers: number;
+  /** Sum of the latest measured follower counts; null when none was measured (shown "n/a"). */
+  followers: number | null;
   totalLikes: number;
   totalComments: number;
   totalEngagement: number;
@@ -84,7 +86,7 @@ export interface RecentPostItem {
   comments: number | null;
   views: number | null;
   /** Caption-match label. Unmatched posts are still listed with their engagement. */
-  matchStatus: "unmatched" | "matched" | "needs_review";
+  matchStatus: PostMatchStatus;
 }
 
 export interface VolunteerPostDetail {
@@ -135,13 +137,27 @@ export interface VolunteerProfileData {
 
 import type { DateRangePreset } from "@/lib/utils";
 export type { DateRangePreset };
-import { getDateFilterSince, formatDate } from "@/lib/utils";
+import { getDateFilterSince, formatDate, formatIstDateTime, formatDayLabel } from "@/lib/utils";
 import { computeDailyGains, computePostGains, sumGain, type DailyPostGain } from "@/lib/metrics/gain";
 import { fetchAllPages, loadPostMeta, loadSnapshotsForPeriod, type PostMeta } from "@/lib/supabase/metrics-data";
+import { cache } from "react";
 
-function fmtDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
+/**
+ * Snapshot history for a period, loaded ONCE per request. The dashboard renders about seven
+ * widgets that all need it; React's request-scoped cache() makes them share a single (paged)
+ * load instead of re-reading the whole history seven times.
+ */
+const loadPeriodPoints = cache(async (since: string | null) =>
+  loadSnapshotsForPeriod(createServerComponentClient(), since)
+);
+/** Post + account details, also shared across widgets in the same request. */
+const loadPeriodMeta = cache(async (since: string | null) => {
+  const points = await loadPeriodPoints(since);
+  return loadPostMeta(createServerComponentClient(), Array.from(new Set(points.map((p) => p.post_id))));
+});
+
+/** "YYYY-MM-DD" day -> "Nov 21" (timezone-proof). */
+const fmtDate = formatDayLabel;
 
 function coerce(v: number | null | undefined): number {
   return v ?? 0;
@@ -167,13 +183,12 @@ function platformMatches(meta: PostMeta, platform: PlatformFilter): boolean {
 }
 
 /** Gain per post in the period, joined with post + account details. */
-async function loadPostGains(preset: DateRangePreset, platform: PlatformFilter): Promise<PostGainRow[]> {
-  const supabase = createServerComponentClient();
+const loadPostGains = cache(async (preset: DateRangePreset, platform: PlatformFilter): Promise<PostGainRow[]> => {
   const since = getDateFilterSince(preset);
 
-  const points = await loadSnapshotsForPeriod(supabase, since);
+  const points = await loadPeriodPoints(since);
   const gains = computePostGains(points, since);
-  const metaById = await loadPostMeta(supabase, Array.from(gains.keys()));
+  const metaById = await loadPeriodMeta(since);
 
   const rows: PostGainRow[] = [];
   for (const [postId, g] of Array.from(gains.entries())) {
@@ -182,7 +197,7 @@ async function loadPostGains(preset: DateRangePreset, platform: PlatformFilter):
     rows.push({ meta, likes: g.likes, comments: g.comments, views: g.views });
   }
   return rows;
-}
+});
 
 interface DailyGainRow extends DailyPostGain {
   handle: string;
@@ -191,13 +206,12 @@ interface DailyGainRow extends DailyPostGain {
 }
 
 /** Gain per post per day, joined with account details (for trend / ranking charts). */
-async function loadDailyGains(preset: DateRangePreset, platform: PlatformFilter): Promise<DailyGainRow[]> {
-  const supabase = createServerComponentClient();
+const loadDailyGains = cache(async (preset: DateRangePreset, platform: PlatformFilter): Promise<DailyGainRow[]> => {
   const since = getDateFilterSince(preset);
 
-  const points = await loadSnapshotsForPeriod(supabase, since);
+  const points = await loadPeriodPoints(since);
   const daily = computeDailyGains(points, since);
-  const metaById = await loadPostMeta(supabase, Array.from(new Set(daily.map((d) => d.postId))));
+  const metaById = await loadPeriodMeta(since);
 
   const rows: DailyGainRow[] = [];
   for (const d of daily) {
@@ -211,7 +225,7 @@ async function loadDailyGains(preset: DateRangePreset, platform: PlatformFilter)
     });
   }
   return rows;
-}
+});
 
 /**
  * Daily engagement trend: likes and comments GAINED on each day, summed across all posts.
@@ -401,7 +415,10 @@ export async function getVolunteerLeaderboard(
     return agg;
   };
 
+  // First row per account, so the primary-account pass below is a map lookup (not O(n^2)).
+  const firstRowByAccount = new Map<string, PostGainRow>();
   for (const r of rows) {
+    if (!firstRowByAccount.has(r.meta.accountId)) firstRowByAccount.set(r.meta.accountId, r);
     const key = r.meta.volunteerId ?? `acct:${r.meta.accountId}`;
     const agg = ensure(key, r.meta.volunteerName, r.meta.accountId, r.meta.handle, r.meta.platform);
     const likes = sumGain([r.likes]);
@@ -412,15 +429,27 @@ export async function getVolunteerLeaderboard(
     accountEngagement.set(r.meta.accountId, (accountEngagement.get(r.meta.accountId) ?? 0) + likes + comments);
   }
 
-  let accountsQuery = supabase
-    .from("accounts")
-    .select("id, handle, volunteer_name, platform, volunteer_id")
-    .eq("status", "active");
-  if (platform !== "all") accountsQuery = accountsQuery.eq("platform", platform);
-  const { data: allAccounts, error: accountsErr } = await accountsQuery.limit(5000);
-  if (accountsErr) throw new Error(accountsErr.message);
+  // Paged: `.limit(5000)` is still capped at 1000 rows by the API, which dropped volunteers.
+  const allAccounts = await fetchAllPages<{
+    id: string;
+    handle: string;
+    volunteer_name: string | null;
+    platform: string | null;
+    volunteer_id: string | null;
+  }>(async (from, to) => {
+    let q = supabase
+      .from("accounts")
+      .select("id, handle, volunteer_name, platform, volunteer_id")
+      .eq("status", "active");
+    if (platform !== "all") q = q.eq("platform", platform);
+    const res = await q.order("id").range(from, to);
+    return {
+      data: res.data as Array<{ id: string; handle: string; volunteer_name: string | null; platform: string | null; volunteer_id: string | null }> | null,
+      error: res.error,
+    };
+  });
 
-  for (const acc of allAccounts ?? []) {
+  for (const acc of allAccounts) {
     const key = (acc.volunteer_id as string | null) ?? `acct:${acc.id as string}`;
     ensure(
       key,
@@ -435,7 +464,7 @@ export async function getVolunteerLeaderboard(
   for (const [accountId, engagement] of Array.from(accountEngagement.entries())) {
     const agg = byVolunteer.get(accountToKey.get(accountId) ?? "");
     if (!agg || engagement <= agg.primaryEngagement) continue;
-    const row = rows.find((r) => r.meta.accountId === accountId);
+    const row = firstRowByAccount.get(accountId);
     if (row) {
       agg.primaryEngagement = engagement;
       agg.primaryHandle = row.meta.handle;
@@ -468,8 +497,11 @@ export async function getVolunteerLeaderboard(
 
   return Array.from(byVolunteer.values())
     .map((e) => {
-      let followers = 0;
-      for (const id of Array.from(e.accountIds)) followers += latestFollowers.get(id) ?? 0;
+      let followers: number | null = null;
+      for (const id of Array.from(e.accountIds)) {
+        const f = latestFollowers.get(id);
+        if (f !== undefined) followers = (followers ?? 0) + f;
+      }
       return {
         handle: e.primaryHandle,
         volunteerName: e.volunteerName,
@@ -575,7 +607,7 @@ function mapPostRow(post: PostListRow): RecentPostItem {
     url: post.url ?? "",
     caption: post.caption,
     mediaType: post.media_type ?? "Post",
-    postedAt: post.posted_at ? new Date(post.posted_at).toISOString().replace("T", " ").slice(0, 16) : "",
+    postedAt: formatIstDateTime(post.posted_at),
     likes: latest?.likes ?? null,
     comments: latest?.comments ?? null,
     views: latest?.views ?? null,
@@ -589,9 +621,10 @@ function mapPostRow(post: PostListRow): RecentPostItem {
 export async function getRecentMonitoredPosts(
   limit = 100,
   preset: DateRangePreset = "today",
-  platform: PlatformFilter = "all"
+  platform: PlatformFilter = "all",
+  sort: "recent" | "engagement" = "recent"
 ): Promise<RecentPostItem[]> {
-  const page = await getPostsPage({ range: preset, platform, pageSize: limit });
+  const page = await getPostsPage({ range: preset, platform, pageSize: limit, sort });
   return page.posts;
 }
 
@@ -635,7 +668,9 @@ export async function getPostsPage(opts: PostsPageOptions): Promise<PostsPageRes
       .from("accounts")
       .select("id")
       .or(`handle.ilike.%${term}%,volunteer_name.ilike.%${term}%`)
-      .limit(1000);
+      // Each uuid adds ~37 chars to the request URL; 150 keeps the filter well under URL limits.
+      // A term matching more accounts than that is too broad to be useful as an account filter.
+      .limit(150);
     if (matchErr) throw new Error(matchErr.message);
     const ids = (matches ?? []).map((m) => m.id as string);
     accountIdFilter = ids.length > 0 ? `,account_id.in.(${ids.join(",")})` : "";
@@ -647,7 +682,11 @@ export async function getPostsPage(opts: PostsPageOptions): Promise<PostsPageRes
   if (opts.view === "campaign") query = query.eq("match_status", "matched");
   if (opts.view === "review") query = query.eq("match_status", "needs_review");
   if (term) query = query.or(`caption.ilike.%${term}%${accountIdFilter}`);
-  query = query.order("posted_at", { ascending: false });
+  // Only the latest snapshot of each post is needed for the list, not its whole history.
+  query = query
+    .order("snapshot_date", { referencedTable: "post_snapshots", ascending: false })
+    .limit(1, { referencedTable: "post_snapshots" })
+    .order("posted_at", { ascending: false });
 
   if (sort === "engagement") {
     const { data, error, count } = await query.range(0, ENGAGEMENT_SORT_CAP - 1);
@@ -710,8 +749,12 @@ export async function getVolunteerDetails(
     return null;
   }
 
-  // If multiple platforms share this handle and none specified, select the first match
-  const account = accounts[0];
+  // If several platforms share this handle and none was specified, pick deterministically
+  // (Instagram, then Facebook, then X) instead of whatever order the database returned.
+  const PLATFORM_ORDER = ["instagram", "facebook", "x"];
+  const account = [...accounts].sort(
+    (a, b) => PLATFORM_ORDER.indexOf(a.platform as string) - PLATFORM_ORDER.indexOf(b.platform as string)
+  )[0];
 
   // 2. Fetch latest account snapshot for follower count
   const { data: latestAccSnap } = await supabase
@@ -722,30 +765,33 @@ export async function getVolunteerDetails(
     .limit(1)
     .single();
 
-  // 3. Fetch ALL posts for this account + their snapshots (no date filter — client handles filtering)
-  const postsQuery = supabase
-    .from("posts")
-    .select(`
-      id,
-      platform_post_id,
-      url,
-      caption,
-      media_type,
-      posted_at,
-      post_snapshots (
-        snapshot_date,
-        likes,
-        comments,
-        views,
-        shares,
-        quotes
-      )
-    `)
-    .eq("account_id", account.id);
-
-  const { data: rawPosts, error: postsErr } = await postsQuery.order("posted_at", { ascending: false });
-
-  if (postsErr) throw new Error(postsErr.message);
+  // 3. Fetch ALL posts for this account + their snapshots (no date filter — client handles
+  // filtering). Paged: an active account passes 1000 posts over a 5-6 month campaign.
+  const rawPosts = await fetchAllPages<Record<string, unknown>>(async (from, to) => {
+    const res = await supabase
+      .from("posts")
+      .select(`
+        id,
+        platform_post_id,
+        url,
+        caption,
+        media_type,
+        posted_at,
+        post_snapshots (
+          snapshot_date,
+          likes,
+          comments,
+          views,
+          shares,
+          quotes
+        )
+      `)
+      .eq("account_id", account.id)
+      .order("posted_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, to);
+    return { data: res.data as Record<string, unknown>[] | null, error: res.error };
+  });
 
   const posts: VolunteerPostDetail[] = [];
   let totalLikes = 0;
@@ -801,9 +847,7 @@ export async function getVolunteerDetails(
       url: (p.url as string) ?? "",
       caption: p.caption as string | null,
       mediaType: (p.media_type as string | null) ?? "Post",
-      postedAt: p.posted_at
-        ? new Date(p.posted_at as string).toISOString().replace("T", " ").slice(0, 16)
-        : "",
+      postedAt: formatIstDateTime(p.posted_at as string | null),
       likes,
       comments,
       views,

@@ -1,6 +1,6 @@
 # Socio: Setup & Operations Guide
 
-Socio tracks volunteers' Instagram (and optionally Facebook / X) posts, matches them to campaign captions, and shows engagement on a private dashboard. Apify does the scraping; Supabase stores the data; Vercel hosts the app.
+Socio tracks volunteers' Instagram (and optionally Facebook / X) posts, matches them to campaign captions, and shows engagement on a private dashboard. Apify does the scraping; Supabase stores the data. The admin starts collection from their own (locally run) copy of the app; the dashboard can also be deployed (e.g. Vercel) behind login for the team.
 
 > **Who this is for:** the admin who sets Socio up and keeps it running. No coding needed for anything in sections 1–5.
 
@@ -10,13 +10,13 @@ Socio tracks volunteers' Instagram (and optionally Facebook / X) posts, matches 
 
 | # | Step | Where |
 |---|------|-------|
-| 1 | Run the SQL migrations **in order** (the newest is `20261121_integrations_and_usage_tracking.sql`) | Supabase → SQL Editor |
-| 2 | Add the environment variables in the table below | Vercel → Project → Settings → Environment Variables |
-| 3 | Deploy, sign in as admin | Your Vercel URL |
-| 4 | **Settings → Apify Connection** → paste your token → *Detect & Connect* | Socio |
-| 5 | Same card → *Generate secret* → *Register on Apify* | Socio |
-| 6 | Create the daily **Apify Schedule** (08:00 IST = 02:30 UTC) for your Instagram task | Apify console |
-| 7 | **Settings → Apify Credit Usage** → set a monthly budget | Socio |
+| 1 | Run the SQL migrations **in order** (the newest is `20261126_security_and_tracking_fixes.sql`) | Supabase → SQL Editor |
+| 2 | Turn **off** "Allow new users to sign up" unless you want open sign-ups (admins add members from Settings) | Supabase → Authentication → Providers / Settings |
+| 3 | Add the environment variables in the table below | `.env.local` (and Vercel, if you deploy the dashboard) |
+| 4 | Start the app, sign in as admin (the first user created becomes admin) | `npm run dev` |
+| 5 | **Settings → Apify Connection** → paste your token → *Detect & Connect* | Socio |
+| 6 | **Settings → Apify Credit Usage** → set a monthly budget | Socio |
+| 7 | Each day: **Collect data → Run all platforms** | Socio top bar |
 
 ### Environment variables (only these are required)
 
@@ -25,12 +25,12 @@ Socio tracks volunteers' Instagram (and optionally Facebook / X) posts, matches 
 | `NEXT_PUBLIC_SUPABASE_URL` | yes | Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | yes | Supabase public (anon) key |
 | `SUPABASE_SERVICE_ROLE_KEY` | yes | Supabase service key. **Server only, never share** |
-| `NEXT_PUBLIC_APP_URL` | yes | Your public URL, e.g. `https://socio.vercel.app` (used to build the webhook URL) |
 | `SETTINGS_ENCRYPTION_KEY` | recommended | Any random 32+ character string. Encrypts credentials saved in Settings |
 | `APIFY_API_TOKEN` | **no** | Optional now. Prefer pasting it in Settings |
-| `APIFY_WEBHOOK_SECRET`, `APIFY_TASK_ID`, actor IDs | **no** | Optional now. Managed in Settings |
+| `APIFY_TASK_ID`, actor IDs | **no** | Optional now. Managed in Settings |
+| `BOOTSTRAP_TOKEN` | no | Only to create the very first admin through the API |
 
-> **Set `SETTINGS_ENCRYPTION_KEY` once and never change it.** If it changes, saved credentials can't be decrypted and you'll have to paste them again. If you don't set it, Socio uses your Supabase service key as the encryption key instead (works, but rotating that key then locks your saved credentials).
+> **Set `SETTINGS_ENCRYPTION_KEY` once and never change it.** If it changes, saved credentials can't be decrypted and you'll have to paste them again. If you don't set it, Socio uses your Supabase service key as the encryption key instead. Credentials saved under the service key keep working after you add `SETTINGS_ENCRYPTION_KEY` later (Socio tries both); re-save them to move them to the new key.
 
 ---
 
@@ -44,7 +44,6 @@ Socio tracks volunteers' Instagram (and optionally Facebook / X) posts, matches 
    - test the token against Apify **before saving anything**,
    - save it encrypted (AES-256-GCM),
    - look through your Apify tasks and pick your Instagram task automatically (if several match, it asks you to choose).
-3. Click **Register on Apify**. Socio creates the webhook on your Apify account for you (or refreshes it if it exists).
 
 **About "AI":** the detection is deliberate, rule-based code, *not* a language model. That's on purpose: your token never leaves your server except to Apify itself. An optional AI helper that explains Apify errors in plain English could be added later, working only on error text with secrets removed.
 
@@ -55,21 +54,23 @@ Socio tracks volunteers' Instagram (and optionally Facebook / X) posts, matches 
 ## 3. How the daily flow works
 
 ```
-Apify Schedule (08:00 IST)
-        │  runs your Instagram task
+Admin clicks "Run all platforms"  (one Apify run per enabled platform)
         ▼
-Apify finishes ──► webhook POST /api/webhooks/apify  (secret checked)
+The app polls the run (/api/scraper/status) until Apify finishes
         ▼
-Socio downloads the dataset ──► matches posts to captions ──► saves posts + daily snapshots
+The first poll to claim the finished run downloads the dataset ──► keeps today's posts (IST day
+the run STARTED) ──► labels them against captions ──► saves posts + daily snapshots
         ▼
 Socio asks Apify what the run cost ──► saves it  (Credit Usage card)
         ▼
 Dashboard shows fresh numbers
 ```
 
-- **No cron jobs in Socio.** Apify Schedules is the only scheduler.
-- **Safe to repeat.** Re-running the same day, or Apify re-sending the webhook, never creates duplicates: posts are upserted and each post has at most one snapshot per day.
-- **Weekly refresh** (re-checking likes/comments on older posts) is started from Settings → *Refresh Eligible Posts Now*. Its results arrive through the same webhook, which is why step 5 of setup matters.
+- **No cron jobs, no schedule, no webhook.** Collection is started by the admin; the app polls and saves the data itself.
+- **No duplicate paid runs.** If a run for the same platform is already going, *Run* follows that run instead of starting another.
+- **Safe to repeat.** Re-saving a run never creates duplicates: posts are upserted and each post has at most one snapshot per day. A run is saved by exactly one request even if several pages poll it.
+- **Nothing gets stuck.** If Apify fails or saving fails, the run is marked *failed* on the Health page and can be retried with *Ingest now*.
+- **Engagement refresh** (re-checking likes/comments on older posts) is started from *Collect data → Refresh engagement*. Posts whose caption match an admin rejected are kept but not refreshed.
 
 ---
 
@@ -125,8 +126,8 @@ Dashboard shows fresh numbers
 | "Could not read usage… run …20261121…sql" | Migration not applied | Run it in Supabase SQL Editor |
 | Cost shows "pending" for hours | Run still going, or Apify hasn't published cost | Click **Sync costs**; try again later |
 | "Could not decrypt stored credential" | `SETTINGS_ENCRYPTION_KEY` / service key changed | Paste the token again in Settings |
-| "Apify cannot reach localhost" | Registering webhook from a local machine | Do it from the deployed site, or type your Vercel URL in the box |
-| Data doesn't update after a run | Webhook missing or secret mismatch | Click **Register on Apify** again (it re-syncs the secret) |
+| Data doesn't update after a run | The page was closed before the run finished | Health → *Ingest now* on that run (safe to repeat) |
+| "A … run for … is already in progress" | Someone already started that run | Nothing to do: the panel follows the existing run |
 | "Platform 'facebook' is disabled" | Toggle is off | Settings → Multi-Platform → enable it |
 | Dashboard Settings page shows no admin cards | You're a Standard Member | Ask an admin to change your role |
 
@@ -135,9 +136,10 @@ Dashboard shows fresh numbers
 ## 7. Security notes
 
 - Tokens saved in Settings are encrypted in the `integration_secrets` table. That table has **no** access for logged-in users, only the server's service key.
-- Secrets are never sent to the browser. The UI only ever sees a masked value (`apify_api_…x9Zq`). The one exception: a freshly generated webhook secret is displayed once, for manual setups.
-- The webhook rejects requests without the correct secret and compares it in constant time.
-- See [AUDIT.md](./AUDIT.md) for open security items (notably the Next.js version and the first-admin bootstrap).
+- Secrets are never sent to the browser. The UI only ever sees a masked value (`apify_api_…x9Zq`).
+- Roles come only from server-set app metadata; a person signing up cannot give themselves admin.
+- There is no public webhook endpoint. Every API route requires a signed-in team member, except the session check (`/api/auth/me`, which tells anonymous callers nothing) and first-admin bootstrap (`/api/admin/users`, which needs `BOOTSTRAP_TOKEN`).
+- See [AUDIT.md](./AUDIT.md) for the audit history and anything still open.
 
 ---
 
@@ -151,7 +153,7 @@ Dashboard shows fresh numbers
 | Cost tracking, budget, forecast | `lib/services/apify-usage.ts`, SQL view `apify_usage_daily` |
 | Admin APIs | `app/api/admin/integrations`, `app/api/admin/usage`, `app/api/admin/settings` |
 | UI | `components/settings/IntegrationsCard.tsx`, `ApifyUsageCard.tsx` |
-| Scraping pipeline | `lib/services/scraper-orchestrator.ts`, `lib/scrapers/*`, `app/api/webhooks/apify` |
+| Scraping pipeline | `lib/services/scraper-orchestrator.ts`, `lib/services/ingestion.ts`, `lib/services/post-routing.ts`, `lib/scrapers/*`, `app/api/scraper/*` |
 
 ```bash
 npm test          # all unit tests (pure logic, no network)
@@ -160,4 +162,6 @@ npm run lint
 npm run build
 ```
 
-Rules the code follows are in `AGENTS.md` (strict TypeScript, Zod at boundaries, idempotent upserts, no cron outside Apify).
+Rules the code follows are in `AGENTS.md` (strict TypeScript, Zod at boundaries, idempotent upserts, admin-triggered collection, no cron).
+
+`npm run clean-db` and `npm run seed-demo` **delete data in the project `.env.local` points at** (normally the shared campaign database). They refuse to run without `-- --yes` and typing the project ref.

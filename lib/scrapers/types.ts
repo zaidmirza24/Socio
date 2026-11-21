@@ -7,7 +7,6 @@ export interface ScraperDiscoveryOptions {
   postLimit?: number;
   onlyPostsNewerThan?: string;
   customHandles?: string[];
-  customInput?: Record<string, unknown>;
   taskId?: string;
   actorId?: string;
 }
@@ -15,7 +14,6 @@ export interface ScraperDiscoveryOptions {
 export interface ScraperRefreshOptions {
   platform?: import("../../types/database.ts").PlatformType;
   postUrls?: string[];
-  customInput?: Record<string, unknown>;
 }
 
 export interface ScraperJobTriggerResult {
@@ -62,16 +60,6 @@ export interface ScraperPreflightResult {
   provider: ScraperProviderType;
 }
 
-export interface ScraperWebhookResult {
-  verified: boolean;
-  jobId: string;
-  provider: ScraperProviderType;
-  datasetOrSnapshotId?: string;
-  status: "completed" | "failed";
-  rawItems?: unknown[];
-  error?: string;
-}
-
 export interface IScraperProvider {
   readonly name: ScraperProviderType;
 
@@ -87,7 +75,7 @@ export interface IScraperProvider {
     options?: ScraperRefreshOptions
   ): Promise<ScraperJobTriggerResult>;
 
-  fetchDirectPost(postUrl: string): Promise<DirectPostDetails | null>;
+  fetchDirectPost(postUrl: string, platform?: import("../../types/database.ts").PlatformType): Promise<DirectPostDetails | null>;
 
   checkJobStatus(jobId: string): Promise<ScraperJobStatusResult>;
 
@@ -103,9 +91,4 @@ export interface IScraperProvider {
   };
 
   cleanupDataset(datasetOrSnapshotId: string): Promise<boolean>;
-
-  parseWebhook(
-    request: Request,
-    body: unknown
-  ): Promise<ScraperWebhookResult>;
 }

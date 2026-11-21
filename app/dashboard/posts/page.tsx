@@ -207,6 +207,14 @@ export default async function PostsPage({ searchParams }: PostsPageProps) {
                           Needs review
                         </Link>
                       )}
+                      {post.matchStatus === "rejected" && (
+                        <span
+                          className="mr-1.5 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-semibold text-slate-600 border border-slate-200"
+                          title="An admin rejected this caption match. The post and its history are kept but no longer refreshed."
+                        >
+                          Rejected
+                        </span>
+                      )}
                       {post.caption || <span className="text-slate-500 italic">No caption</span>}
                     </td>
                     <td className="px-5 py-3.5">

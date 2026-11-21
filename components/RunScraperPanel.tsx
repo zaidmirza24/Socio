@@ -24,6 +24,9 @@ interface PlatformRun {
   gains: RunGain[];
   /** Batches that finished but were already saved earlier, so no gain could be measured. */
   gainUnavailable: number;
+  /** Batches of this platform that failed (the others are still polled and saved). */
+  failedCount: number;
+  lastError: string | null;
 }
 
 const PLATFORMS: { id: Platform; label: string }[] = [
@@ -75,7 +78,7 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
   const [scope, setScope] = useState<Scope>("all");
   const [force, setForce] = useState(false);
   const [runs, setRuns] = useState<PlatformRun[]>([]);
-  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const runsRef = useRef<PlatformRun[]>([]);
   runsRef.current = runs;
 
@@ -95,12 +98,19 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
             const res = await fetch(`/api/scraper/status?runId=${encodeURIComponent(runId)}`);
             const data: StatusResponse = await res.json();
             if (!res.ok || data.status === "FAILED") {
-              patchRun(r.platform, (cur) => ({
-                ...cur,
-                pendingIds: cur.pendingIds.filter((id) => id !== runId),
-                state: "FAILED",
-                message: data.error || "The run failed.",
-              }));
+              // Drop only this run id; other batches of the same platform keep being polled and
+              // saved. The platform is marked FAILED once nothing is left to wait for.
+              patchRun(r.platform, (cur) => {
+                const pendingIds = cur.pendingIds.filter((id) => id !== runId);
+                return {
+                  ...cur,
+                  pendingIds,
+                  failedCount: cur.failedCount + 1,
+                  lastError: data.error || "The run failed.",
+                  state: pendingIds.length === 0 ? "FAILED" : cur.state,
+                  message: data.error || "The run failed.",
+                };
+              });
             } else if (data.status === "SUCCEEDED") {
               patchRun(r.platform, (cur) => {
                 const pendingIds = cur.pendingIds.filter((id) => id !== runId);
@@ -111,7 +121,16 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
                   snapshotsCreated: cur.snapshotsCreated + (data.snapshotsCreated ?? 0),
                   gains: data.gain ? [...cur.gains, data.gain] : cur.gains,
                   gainUnavailable: cur.gainUnavailable + (data.gain ? 0 : 1),
-                  state: pendingIds.length === 0 && cur.state === "RUNNING" ? "SUCCEEDED" : cur.state,
+                  state:
+                    pendingIds.length === 0 && cur.state === "RUNNING"
+                      ? cur.failedCount > 0
+                        ? "FAILED"
+                        : "SUCCEEDED"
+                      : cur.state,
+                  message:
+                    pendingIds.length === 0 && cur.failedCount > 0
+                      ? `${cur.failedCount} batch(es) failed: ${cur.lastError ?? "unknown error"}`
+                      : cur.message,
                 };
               });
             }
@@ -123,12 +142,22 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
     );
   }, [patchRun]);
 
+  // Poll with a setTimeout chain, not setInterval: saving a large dataset takes longer than one
+  // interval, and overlapping polls would pile up requests for the same run.
+  const pollingRef = useRef(false);
   useEffect(() => {
-    if (busy && !timer.current) {
-      timer.current = setInterval(poll, POLL_MS);
+    if (busy && !pollingRef.current) {
+      pollingRef.current = true;
+      const tick = async (): Promise<void> => {
+        await poll();
+        if (!pollingRef.current) return;
+        timer.current = setTimeout(() => void tick(), POLL_MS);
+      };
+      timer.current = setTimeout(() => void tick(), POLL_MS);
     }
-    if (!busy && timer.current) {
-      clearInterval(timer.current);
+    if (!busy && pollingRef.current) {
+      pollingRef.current = false;
+      if (timer.current) clearTimeout(timer.current);
       timer.current = null;
       if (runsRef.current.some((r) => r.state === "SUCCEEDED")) {
         router.refresh();
@@ -141,7 +170,8 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
 
   useEffect(
     () => () => {
-      if (timer.current) clearInterval(timer.current);
+      pollingRef.current = false;
+      if (timer.current) clearTimeout(timer.current);
     },
     []
   );
@@ -157,6 +187,8 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
       snapshotsCreated: 0,
       gains: [],
       gainUnavailable: 0,
+      failedCount: 0,
+      lastError: null,
     });
     setRuns(targets.map(blank));
 

@@ -37,6 +37,19 @@ interface Props {
 }
 
 /** null = not reported; sorts below any real number. */
+interface VolunteerPlatformTotals {
+  volunteer_id: string;
+  name: string;
+  platform: string;
+  accounts_count: number;
+  posts_count: number;
+  total_likes: number | null;
+  total_comments: number | null;
+  total_shares: number | null;
+  total_views: number | null;
+  last_posted_at: string | null;
+}
+
 function num(v: number | null): number {
   return v ?? -1;
 }
@@ -55,10 +68,39 @@ export default async function VolunteersPage({ searchParams }: Props) {
 
   try {
     const [totals, accounts] = await Promise.all([
-      fetchAllPages<VolunteerTotals>(async (from, to) => {
-        const res = await admin.from("volunteer_totals").select("*").order("volunteer_id").range(from, to);
-        return { data: res.data as VolunteerTotals[] | null, error: res.error };
-      }),
+      // With a platform filter, totals must only count that platform's posts (volunteer_totals
+      // sums every platform), so read the per-platform view and shape it like VolunteerTotals.
+      platform === "all"
+        ? fetchAllPages<VolunteerTotals>(async (from, to) => {
+            const res = await admin.from("volunteer_totals").select("*").order("volunteer_id").range(from, to);
+            return { data: res.data as VolunteerTotals[] | null, error: res.error };
+          })
+        : fetchAllPages<VolunteerPlatformTotals>(async (from, to) => {
+            const res = await admin
+              .from("volunteer_platform_totals")
+              .select("*")
+              .eq("platform", platform)
+              .order("volunteer_id")
+              .range(from, to);
+            return { data: res.data as VolunteerPlatformTotals[] | null, error: res.error };
+          }).then((rows) =>
+            rows.map(
+              (r): VolunteerTotals => ({
+                volunteer_id: r.volunteer_id,
+                name: r.name,
+                accounts_count: r.accounts_count,
+                instagram_accounts: r.platform === "instagram" ? r.accounts_count : 0,
+                facebook_accounts: r.platform === "facebook" ? r.accounts_count : 0,
+                x_accounts: r.platform === "x" ? r.accounts_count : 0,
+                posts_count: r.posts_count,
+                total_likes: r.total_likes,
+                total_comments: r.total_comments,
+                total_shares: r.total_shares,
+                total_views: r.total_views,
+                last_posted_at: r.last_posted_at,
+              })
+            )
+          ),
       fetchAllPages<AccountLink>(async (from, to) => {
         const res = await admin
           .from("accounts")

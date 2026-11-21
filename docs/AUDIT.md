@@ -1,5 +1,124 @@
 # Socio Codebase Audit
 
+## Second pass (2026-11-21): scale and concurrency
+
+These problems only appear at campaign scale (about 1800 accounts and about 100k posts) or when requests overlap. Small test runs do not show them.
+
+Before and after the changes, type-check, lint, every test suite and the production build all pass. **Migration `20261126_security_and_tracking_fixes.sql` must be applied** before deploying this code.
+
+### Fixed
+
+| # | Problem | Fix |
+|---|---------|-----|
+| S1 | **Self-signup could become admin.** The `handle_new_user` trigger took `role` from `raw_user_meta_data`, which whoever signs up controls | The role is now read from `raw_app_meta_data` (service-role only) and only `admin` or `member` is accepted. The trigger also sets `search_path` and takes an advisory lock for the first admin. `/api/admin/users` writes `app_metadata.role` |
+| S2 | Bootstrap token comparison could throw (500) on non-ASCII input. A failed profile count was read as "no users", which turned bootstrap mode on | Uses `safeEqual`. A failed count now refuses the request |
+| S3 | **1000-row truncation.** Unpaged reads of active accounts (ingestion skipped posts from accounts past row 1000), refresh candidates (most posts were never refreshed), the review map, volunteer assignment, caption stats and the review queue | All paged with `fetchAllRows`. Large `.in()` lists are split with `chunk` |
+| S4 | **The same run could be ingested twice at once.** Polls every 4 seconds overlapped while a large dataset was still saving, and the dataset deleted by one request made the other report FAILED | A request must claim the run first (`status → 'ingesting'`, which can be re-claimed after 15 minutes). The client now chains `setTimeout` calls so polls never overlap |
+| S5 | **Runs could stay `started` forever.** A failure reported by Apify or thrown during ingestion was never written. A missing run row made ingestion assume Instagram/discovery. A failed ingestion was reported as success | Every terminal outcome is now written to `collection_runs`. Ingestion refuses a run that has no row. A failed ingestion returns FAILED. Writes to the run-log row are checked |
+| S6 | **Duplicate paid runs** from a double-click, two tabs or two admins | A trigger first looks for a run of the same platform and job type that is still `started` or `ingesting` (within 6 hours) and follows that run instead (409 from `/api/scraper/trigger`). A refresh batch that fails to start no longer abandons the batches that did start |
+| S7 | **A run started before midnight IST and saved after it lost all its posts,** and the dataset was then deleted | The day window and snapshot date use the run's `started_at`. The per-account daily cap from Settings is now applied |
+| S8 | **Review decisions were undone.** The review upsert wrote `status: 'pending'` over existing rows | `status` is no longer included in the upsert. New rows get the column default (`pending`) and existing rows keep the admin's decision |
+| S9 | **Rejecting a review deleted the post and its history.** Approving left the post labelled `needs_review` | Rejecting keeps the post, sets `match_status = 'rejected'` and excludes it from refresh. Approving sets `match_status = 'matched'` and the caption. Write errors are checked |
+
+New tests: `tests/paginate.test.ts`, and a day-window test for runs that cross midnight.
+
+### Third pass (2026-11-21): the remaining medium and low items
+
+All checks still pass after this pass: type-check, lint, `npm test` (81 tests, now run with `node --test` across every file) and the production build. The schema changes are in the same migration, `20261126_security_and_tracking_fixes.sql`.
+
+**Metric integrity**
+- `metric_snapshots.delta_*` are nullable. A delta is `null` when either side was not measured (`lib/metrics/integrity.ts`). The migration also clears historic fake zeros.
+- Snapshot upserts leave out unmeasured metrics, so a re-run on the same day never overwrites a measured value with `null`.
+- Values that were never measured now show "n/a" instead of 0:
+  - leaderboard followers
+  - caption totals
+  - volunteer-page totals
+- Instagram view counts below zero are treated as unmeasured.
+- A missing Instagram media type stays `null`; it is no longer guessed as "Image".
+
+**IST**
+- Post times are shown in IST (`formatIstDateTime`).
+- Day labels are timezone-proof (`formatDayLabel`).
+- `formatDisplayDate*` use `Asia/Kolkata`.
+- The volunteer timeline groups posts by IST day.
+- "7d" now means 7 calendar days.
+- Snapshot-date column defaults are the IST date.
+
+**Old webhook removed**
+- Removed:
+  - `app/api/webhooks/apify`
+  - `app/api/apify/*`
+  - `lib/apify/trigger.ts`
+  - the webhook secret, `parseWebhook` and the middleware exemption
+  - the Settings actions for webhooks
+  - `NEXT_PUBLIC_APP_URL`, `APIFY_WEBHOOK_SECRET` and the Bright Data env vars
+- The middleware now refuses requests (503) when the Supabase env is missing, instead of letting them through.
+
+**Security**
+- CSV export: cells that start with `= + - @` are prefixed with `'`, so they can't run as formulas.
+- `customInput` is removed from the trigger, and the `handles` / `urls` lists have size limits.
+- `getCampaignCaptions`, `getMatrixData` and `getReviewQueueItems` check the caller themselves.
+- `/api/settings/test-connection` is admin-only.
+- `/api/review-queue/count` checks the session itself and sends a `private` cache header.
+- `/api/auth/me` tells anonymous callers nothing.
+- Routes that members can call return generic errors and log the details on the server (`lib/api/errors.ts`).
+- Security headers are set: `X-Frame-Options`, `frame-ancestors`, `nosniff`, `Referrer-Policy`, `Permissions-Policy` and HSTS.
+- `createAdminClient` refuses to run in the browser.
+- Encryption:
+  - new secrets use scrypt to derive the key
+  - a 16-byte auth tag is required
+  - an empty `SETTINGS_ENCRYPTION_KEY` counts as unset, the same as in `env.ts`
+  - secrets saved under the service-role key still decrypt after a dedicated key is added
+- `clean-db` and `seed-demo` require `--yes` plus typing the project ref.
+
+**Correctness**
+- Accounts that simply didn't post today are no longer flagged "not visible".
+- Posts only match an account on the same platform; the bare-handle fallback is gone.
+- Posts from handles that aren't monitored accounts are counted in `collection_runs.posts_skipped_unknown`. Posts dropped by the day window are counted in `posts_outside_day_window`. `posts_found` is now the number fetched before the day window.
+- Facebook handles come from the first segment of the post URL (not the `pfbid…` post ID). A display name is never used as a handle.
+- With the caption filter off, no matching is done at all.
+- The per-post routing rules live in one pure function, `lib/services/post-routing.ts`, which both ingestion and the tests use. `tests/matching_workflow_integration.test.ts` now tests the real rules ("keep everything, label it") instead of its own copy of the pipeline.
+- Review approval works for Facebook and X, because it uses that platform's refresh actor. Instagram refresh uses the refresh actor configured in Settings.
+- When a refresh gets no data back for a post (deleted or private), the post isn't re-sent until its next interval.
+- X discovery skips pinned posts.
+- Reading settings throws on a database error instead of silently using defaults.
+- `matchStoredPosts` processes 8 posts at a time, and calls that overlap are merged into one run plus one follow-up run.
+
+**Performance**
+- Dashboard widgets share one snapshot load per request (React `cache()`), instead of about seven full reloads.
+- The matrix and caption stats use the SQL views `matched_post_latest_metrics` and `post_latest_snapshot`, instead of downloading every snapshot.
+- The matrix shows 100 rows per page.
+- The Posts list fetches only each post's latest snapshot.
+- The leaderboard's account lookup is a map lookup (it was quadratic), and its accounts query is paged.
+- The account search filter is capped so the request URL can't get too long.
+- New indexes: on `posts.matched_caption_id`, a status + date index, a platform + date index, and a trigram index on `caption`.
+- Account snapshots are written in batches.
+- `raw_json` is stored only on a post's first snapshot. Storing it every day would have grown by tens of GB over the campaign.
+
+**Dashboard accuracy**
+- "Top posts" and the Content tab rank by engagement across the period, not just the newest 60 posts.
+- The Health page totals cover the whole range, computed on the server, not just the runs listed.
+- The Volunteers page totals follow the platform filter (new view `volunteer_platform_totals`).
+- The matrix "Volunteers" count is people, not accounts.
+- The volunteer page picks the account deterministically, pages its posts, and its labels say it shows current totals, not growth.
+
+**Other**
+- `types/database.ts` matches the migrations again.
+- A CI workflow runs type-check, lint, tests and build (`.github/workflows/ci.yml`).
+- `docs/GUIDE.md` describes the admin-triggered flow.
+
+### Deliberately not changed
+
+- **Splitting the large client components** (Accounts 1528 lines, Analytics 1053, Settings 888). This is a pure refactor with no behaviour change. It is best done with UI tests in place, so it has its own task.
+- **Computing the period gains entirely in SQL.** The snapshots are now loaded once per request, which removes the repeated-load problem. A full SQL function for gain over a period is a larger redesign of `lib/metrics/gain.ts`.
+- **A full Content-Security-Policy with nonces.** Framing is blocked now. A script CSP needs nonces for Next's inline scripts and Recharts.
+- **Re-labelling matched posts when a caption is archived.** This is intentional: a post that matched a caption at the time it was posted stays a campaign post.
+- **Counting a null baseline as 0 in run gain.** This is intentional and matches `gain.ts`; the doc comment was corrected.
+- **`collection_runs.error` also holds the targeted handles and URLs.** This is how the design works; the code now keeps them on failure so a retry can use them.
+- **`rules/AGENTS.md`** is an older copy of `AGENTS.md` that still describes webhooks. Delete it or sync it with the root file.
+
+---
+
 > **Note (2026-11-21):** This audit predates the move to admin-triggered collection. Items that mention Apify webhooks, "Register on Apify", Schedules (L6) or webhook hardening (#7, #9, L7) no longer reflect the intended design in `AGENTS.md`: there is no webhook or schedule, and the app polls and ingests itself via `/api/scraper/status`. Dashboard follow-ups done since: platform filter, per-volunteer leaderboard, real daily top-volunteer chart, server-side post paging/search, and a reworked Health page.
 
 _Date: 2026-11-20. Baseline before changes: type-check, lint and all tests passed. After: same, plus 19 new tests and a clean production build._

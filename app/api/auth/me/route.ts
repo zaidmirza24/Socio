@@ -1,31 +1,25 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+import { internalError } from "@/lib/api/errors";
 import { createServerComponentClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-export async function GET(request: NextRequest) {
+// Per-user data read with session cookies: never prerender or cache.
+export const dynamic = "force-dynamic";
+
+export async function GET() {
   try {
     const supabase = createServerComponentClient();
     const { data: { user }, error: authError } = await supabase.auth.getUser();
 
+    // Anonymous callers learn nothing about the system (not even how many users exist).
+    if (authError || !user) {
+      return NextResponse.json({ user: null, profile: null, isAdmin: false });
+    }
+
     const admin = createAdminClient();
-
-    // Check count of profiles to see if the system has any users yet
-    const { count, error: countError } = await admin
-      .from("profiles")
-      .select("*", { count: "exact", head: true });
-
+    const { count } = await admin.from("profiles").select("*", { count: "exact", head: true });
     const totalUsers = count ?? 0;
     const isFirstUser = totalUsers === 0;
-
-    if (authError || !user) {
-      return NextResponse.json({
-        user: null,
-        profile: null,
-        isAdmin: false,
-        isFirstUser,
-        totalUsers,
-      });
-    }
 
     // Fetch user's profile
     const { data: profile } = await admin
@@ -52,8 +46,7 @@ export async function GET(request: NextRequest) {
       totalUsers,
     });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Failed to fetch user session";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return internalError(err, "Failed to fetch user session");
   }
 }
 

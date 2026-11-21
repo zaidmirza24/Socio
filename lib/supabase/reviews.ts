@@ -6,7 +6,38 @@ import { createServerComponentClient } from "@/lib/supabase/server";
 import { processCaption } from "@/lib/matching/normalizer.ts";
 import { fetchSinglePostDetails } from "@/lib/services/scraper-orchestrator";
 import { formatDate } from "@/lib/utils";
-import type { ReviewStatus } from "@/types/database";
+import { fetchAllRows } from "@/lib/supabase/paginate";
+import type { PlatformType, ReviewStatus } from "@/types/database";
+
+/** Supabase returns a to-one embed as an object, or as an array without generated types. */
+function one<T>(value: T | T[] | null | undefined): T | null {
+  if (Array.isArray(value)) return value[0] ?? null;
+  return value ?? null;
+}
+
+interface CaptionEmbed {
+  title: string | null;
+  canonical_caption: string | null;
+}
+interface AccountEmbed {
+  handle: string | null;
+  volunteer_name: string | null;
+}
+interface ReviewQueueRow {
+  id: string;
+  caption_id: string;
+  account_id: string;
+  platform: string;
+  platform_post_id: string;
+  post_url: string;
+  candidate_caption: string;
+  similarity_score: number | null;
+  status: string;
+  created_at: string;
+  reviewed_at: string | null;
+  campaign_captions: CaptionEmbed | CaptionEmbed[] | null;
+  accounts: AccountEmbed | AccountEmbed[] | null;
+}
 
 async function verifyAdminCaller() {
   const authClient = createServerComponentClient();
@@ -53,9 +84,19 @@ export interface ReviewQueueDisplayItem {
 export async function getReviewQueueItems(
   statusFilter: ReviewStatus | "ALL" = "pending"
 ): Promise<ReviewQueueDisplayItem[]> {
+  // This is a server action (callable as an endpoint) that reads with the service role, so it
+  // checks the caller itself instead of relying only on page middleware.
+  const authClient = createServerComponentClient();
+  const {
+    data: { user },
+  } = await authClient.auth.getUser();
+  if (!user) return [];
+
   const supabase = createAdminClient();
 
-  let query = supabase
+  // Paged: the queue passes 1000 rows during the campaign and older pending items would vanish.
+  const build = (from: number, to: number) => {
+    let query = supabase
     .from("review_queue")
     .select(`
       id,
@@ -78,22 +119,26 @@ export async function getReviewQueueItems(
         volunteer_name
       )
     `)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: true });
 
-  if (statusFilter !== "ALL") {
-    query = query.eq("status", statusFilter);
-  }
+    if (statusFilter !== "ALL") {
+      query = query.eq("status", statusFilter);
+    }
+    return query.range(from, to);
+  };
 
-  const { data, error } = await query;
-
-  if (error || !data) {
+  let data: ReviewQueueRow[];
+  try {
+    data = (await fetchAllRows<unknown>(build)) as ReviewQueueRow[];
+  } catch (error: unknown) {
     console.error("Failed to fetch review queue items:", error);
     return [];
   }
 
   return data.map((item) => {
-    const caption = item.campaign_captions as any;
-    const account = item.accounts as any;
+    const caption = one(item.campaign_captions);
+    const account = one(item.accounts);
 
     return {
       id: item.id,
@@ -154,7 +199,7 @@ export async function approveReviewItem(
 
   try {
     // 2. Cache variant hash in caption_approved_variants
-    await supabase.from("caption_approved_variants").upsert(
+    const { error: variantError } = await supabase.from("caption_approved_variants").upsert(
       {
         caption_id: targetCaptionId,
         variant_hash: hash,
@@ -166,12 +211,15 @@ export async function approveReviewItem(
         onConflict: "variant_hash",
       }
     );
+    if (variantError) {
+      return { success: false, error: `Failed to save the approved caption variant: ${variantError.message}` };
+    }
 
     // 3. Fetch live metrics from the scraper. Never invent numbers: if the live fetch fails we
     //    stop and let the admin retry, so wrong metrics or a wrong post date are never saved.
     let postDetails = null;
     try {
-      postDetails = await fetchSinglePostDetails(item.post_url);
+      postDetails = await fetchSinglePostDetails(item.post_url, item.platform as PlatformType);
     } catch (scraperErr) {
       const reason = scraperErr instanceof Error ? scraperErr.message : String(scraperErr);
       return {
@@ -219,22 +267,24 @@ export async function approveReviewItem(
       .select("id")
       .single();
 
-    if (matchError) {
-      return { success: false, error: `Failed to match post: ${matchError.message}` };
+    if (matchError || !matchedPost) {
+      return { success: false, error: `Failed to match post: ${matchError?.message ?? "no row returned"}` };
     }
 
     // 5. Upsert metric_snapshots for matched_posts
-    if (matchedPost) {
-      await supabase.from("metric_snapshots").upsert(
+    {
+      const { error: metricError } = await supabase.from("metric_snapshots").upsert(
         {
           post_id: matchedPost.id,
           snapshot_date: targetDate,
           likes,
           comments,
           views,
-          delta_likes: 0,
-          delta_comments: 0,
-          delta_views: 0,
+          // First snapshot for this matched post: there is nothing to compare with yet.
+          delta_likes: null,
+          delta_comments: null,
+          delta_views: null,
+          delta_shares: null,
           source: "direct_url",
           fetched_at: now,
         },
@@ -242,10 +292,13 @@ export async function approveReviewItem(
           onConflict: "post_id,snapshot_date",
         }
       );
+      if (metricError) {
+        return { success: false, error: `Failed to save the post's metrics: ${metricError.message}` };
+      }
     }
 
     // 6. Mirror to legacy posts and post_snapshots so Analytics, KPIs, and Leaderboard display it immediately
-    const { data: legacyPost } = await supabase
+    const { data: legacyPost, error: legacyPostError } = await supabase
       .from("posts")
       .upsert(
         {
@@ -259,6 +312,9 @@ export async function approveReviewItem(
           last_seen_at: now,
           last_metrics_refresh_at: now,
           thumbnail_url: postDetails?.thumbnailUrl ?? null,
+          // Approved: it now counts as a campaign post ("Campaign posts only" view, refresh).
+          match_status: "matched",
+          matched_caption_id: targetCaptionId,
         },
         {
           onConflict: "platform,platform_post_id",
@@ -267,8 +323,15 @@ export async function approveReviewItem(
       .select("id")
       .single();
 
-    if (legacyPost) {
-      await supabase.from("post_snapshots").upsert(
+    if (legacyPostError || !legacyPost) {
+      return {
+        success: false,
+        error: `Failed to save the post for the dashboard: ${legacyPostError?.message ?? "no row returned"}`,
+      };
+    }
+
+    {
+      const { error: postSnapError } = await supabase.from("post_snapshots").upsert(
         {
           post_id: legacyPost.id,
           snapshot_date: targetDate,
@@ -282,6 +345,9 @@ export async function approveReviewItem(
           onConflict: "post_id,snapshot_date",
         }
       );
+      if (postSnapError) {
+        return { success: false, error: `Failed to save the post's snapshot: ${postSnapError.message}` };
+      }
     }
 
     // 7. Update review_queue status
@@ -313,7 +379,8 @@ export async function approveReviewItem(
 
 /**
  * Rejects a fuzzy match review item:
- * Marks the review item as `rejected` and stops tracking.
+ * Marks the review item as `rejected` and stops tracking. The post and its engagement history
+ * are kept (nothing is discarded), labelled `rejected`, and excluded from engagement refresh.
  */
 export async function rejectReviewItem(
   reviewId: string
@@ -333,21 +400,29 @@ export async function rejectReviewItem(
     .eq("id", reviewId)
     .single();
 
-  if (item) {
-    // If it was previously tracked, stop tracking it...
-    await supabase
-      .from("matched_posts")
-      .update({ tracking_status: "archived" })
-      .eq("platform", item.platform)
-      .eq("platform_post_id", item.platform_post_id);
+  if (!item) {
+    return { success: false, error: "Review item not found." };
+  }
 
-    // ...and remove it from the dashboard copy too (its snapshots go with it), otherwise the
-    // rejected post would keep showing up and keep being re-scraped on every refresh.
-    await supabase
-      .from("posts")
-      .delete()
-      .eq("platform", item.platform)
-      .eq("platform_post_id", item.platform_post_id);
+  // If it was previously tracked as a campaign post, stop tracking it...
+  const { error: archiveError } = await supabase
+    .from("matched_posts")
+    .update({ tracking_status: "archived" })
+    .eq("platform", item.platform)
+    .eq("platform_post_id", item.platform_post_id);
+  if (archiveError) {
+    return { success: false, error: `Failed to stop tracking the post: ${archiveError.message}` };
+  }
+
+  // ...and label the stored copy 'rejected'. It keeps its engagement history, drops out of
+  // "Campaign posts only", and is no longer re-scraped by engagement refresh.
+  const { error: labelError } = await supabase
+    .from("posts")
+    .update({ match_status: "rejected", matched_caption_id: null })
+    .eq("platform", item.platform)
+    .eq("platform_post_id", item.platform_post_id);
+  if (labelError) {
+    return { success: false, error: `Failed to label the post as rejected: ${labelError.message}` };
   }
 
   const { error } = await supabase

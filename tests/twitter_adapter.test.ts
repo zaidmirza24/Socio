@@ -86,7 +86,7 @@ describe("Twitter/X Adapter & Normalizer Tests", () => {
       "https://x.com/rohit_activist",
     ]);
     assert.strictEqual(discoveryInput.resultsLimit, 10);
-    assert.strictEqual(discoveryInput.skipPinnedPosts, false);
+    assert.strictEqual(discoveryInput.skipPinnedPosts, true); // pinned old posts would waste a daily slot
 
     // Refresh input (Part B per-tweet URLs)
     const refreshInput = adapter.buildRefreshInput([

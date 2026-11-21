@@ -5,7 +5,7 @@
  * community volunteers, student leads, campus ambassadors, and grassroots creators.
  *
  * Verifies exact caption matching, boundary edge cases, localized variations,
- * and discard accuracy for unrelated personal lifestyle/social posts.
+ * and no-match accuracy for unrelated personal lifestyle/social posts.
  *
  * Run: node --no-warnings --experimental-strip-types tests/public_personal_accounts.test.ts
  */
@@ -199,7 +199,7 @@ const PUBLIC_PERSONAL_POSTS: PublicPersonalPostTestCase[] = [
     description: "Quotes core paragraph from 3-paragraph press release -> captured by paragraph containment",
   },
 
-  // ── SCENARIO F: Unrelated Routine Personal Lifestyle Posts (Must be DISCARDED) ──
+  // ── SCENARIO F: Unrelated Routine Personal Lifestyle Posts (Must NOT match: kept as unmatched) ──
   {
     id: "post-birthday-personal",
     volunteerName: "Kunal Joshi",
@@ -207,7 +207,7 @@ const PUBLIC_PERSONAL_POSTS: PublicPersonalPostTestCase[] = [
     role: "Volunteer Member",
     caption: "Heartiest birthday greetings to my best friend @AdityaK! Wishing you another incredible year of adventures and fun memories ahead.",
     expectedMatch: false,
-    description: "Personal friend birthday greeting -> immediately discarded (zero storage)",
+    description: "Personal friend birthday greeting -> not matched (kept, labelled unmatched)",
   },
   {
     id: "post-exam-update",
@@ -216,7 +216,7 @@ const PUBLIC_PERSONAL_POSTS: PublicPersonalPostTestCase[] = [
     role: "Student Member",
     caption: "Finally done with semester final exams! Time to relax, read novels, and catch up on sleep this week. #SemesterDone #CollegeLife",
     expectedMatch: false,
-    description: "College exam study update -> immediately discarded (zero storage)",
+    description: "College exam study update -> not matched (kept, labelled unmatched)",
   },
   {
     id: "post-coffee-lifestyle",
@@ -225,7 +225,7 @@ const PUBLIC_PERSONAL_POSTS: PublicPersonalPostTestCase[] = [
     role: "Photography Volunteer",
     caption: "Sunday morning filter coffee with good books. Recharging for a hectic week ahead! #SundayVibes #ReadingTime #CoffeeLover",
     expectedMatch: false,
-    description: "Personal lifestyle / coffee photo -> immediately discarded (zero storage)",
+    description: "Personal lifestyle / coffee photo -> not matched (kept, labelled unmatched)",
   },
   {
     id: "post-travel-vlog",
@@ -234,7 +234,7 @@ const PUBLIC_PERSONAL_POSTS: PublicPersonalPostTestCase[] = [
     role: "Adventure Volunteer",
     caption: "Sunrise at Triund trek today! The Himalayas never fail to amaze me. Truly blessed to witness this view. #HikingLife #HimachalPradesh",
     expectedMatch: false,
-    description: "Personal travel and hiking post -> immediately discarded (zero storage)",
+    description: "Personal travel and hiking post -> not matched (kept, labelled unmatched)",
   },
 
   // ── SCENARIO G: Unrelated Social Rally (Similar Hashtags, Different Content) ──
@@ -245,7 +245,7 @@ const PUBLIC_PERSONAL_POSTS: PublicPersonalPostTestCase[] = [
     role: "Unrelated Account",
     caption: "Join our National College Dance Competition 2026. Register now to win exciting cash prizes and trophies! #YouthPower #DanceFest",
     expectedMatch: false,
-    description: "Commercial fest competition using #YouthPower hashtag -> strictly discarded (< threshold)",
+    description: "Commercial fest competition using #YouthPower hashtag -> not matched (< threshold)",
   },
 
   // ── SCENARIO H: Short Slogan Disambiguation (Defense against Generic Post Match) ──
@@ -300,13 +300,13 @@ export function runPublicPersonalAccountsTest(): void {
     } else {
       if (result.matched) {
         testPassed = false;
-        reason = `Expected post to be DISCARDED, but it MATCHED as ${result.tier} (id=${result.captionId}, conf=${result.confidence})`;
+        reason = `Expected post NOT to match, but it MATCHED as ${result.tier} (id=${result.captionId}, conf=${result.confidence})`;
       }
     }
 
     if (testPassed) {
       passed++;
-      const tierLabel = result.matched ? `[${result.tier.toUpperCase()}]` : "[DISCARDED]";
+      const tierLabel = result.matched ? `[${result.tier.toUpperCase()}]` : "[UNMATCHED]";
       console.log(`  ✓ @${testCase.handle.padEnd(24)} ${tierLabel.padEnd(16)} ${testCase.description}`);
     } else {
       failed++;
@@ -366,11 +366,11 @@ export function runPublicPersonalAccountsTest(): void {
   console.log(`  ✓ Pipeline Ingestion Summary:`);
   console.log(`      - Matched Posts (Tier 1 Verified) : ${matchedPostsCount} (Auto-tracked in production)`);
   console.log(`      - Review Queue (Tier 2 Pending)   : ${reviewQueueCount} (Routed for admin approval)`);
-  console.log(`      - Discarded (Zero DB Storage)     : ${discardedCount} (Non-campaign posts safely rejected)`);
+  console.log(`      - Unmatched (kept, labelled)      : ${discardedCount} (non-campaign posts kept as unmatched)`);
 
   assert(matchedPostsCount === 4, `Expected 4 Tier 1 matches, got ${matchedPostsCount}`);
   assert(reviewQueueCount === 5, `Expected 5 Review Queue items, got ${reviewQueueCount}`);
-  assert(discardedCount === 6, `Expected 6 Discarded posts, got ${discardedCount}`);
+  assert(discardedCount === 6, `Expected 6 unmatched posts, got ${discardedCount}`);
 
   console.log("  ✓ Ingestion pipeline metrics verified: 0 false positives, 0 false negatives\n");
 

@@ -43,6 +43,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     rows: [],
     stats: {
       totalVolunteers: 0,
+      totalAccounts: 0,
       activeCaptionsCount: 0,
       totalPosted: 0,
       totalPending: 0,
@@ -90,7 +91,9 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
       getAccountComparison(range, platform),
       getVolunteerLeaderboard(range, platform),
       getKPISummary(range, platform),
-      getRecentMonitoredPosts(60, range, platform),
+      // Highest engagement in the period (ranked in SQL order over up to 1,000 posts), not just the
+      // newest 60: an older post with strong engagement must still show up as a top post.
+      getRecentMonitoredPosts(60, range, platform, "engagement"),
     ]);
 
     matrixData = matrix;

@@ -1,4 +1,5 @@
 import { createAdminClient } from "../supabase/admin.ts";
+import { fetchAllRows } from "../supabase/paginate.ts";
 import type { PlatformType } from "../../types/database.ts";
 
 export interface AccountInput {
@@ -93,12 +94,20 @@ export function assignVolunteers(
 export async function resolveVolunteerIds(inputs: AccountInput[]): Promise<Map<string, string>> {
   const admin = createAdminClient();
 
-  const [{ data: vols, error: vErr }, { data: accs, error: aErr }] = await Promise.all([
-    admin.from("volunteers").select("id, name"),
-    admin.from("accounts").select("platform, handle, volunteer_id"),
+  // Paged: ~600 volunteers and ~1800 accounts exceed Supabase's 1000-row response cap, and a
+  // missing account would be treated as new (duplicate volunteer / unique-constraint failure).
+  const [vols, accs] = await Promise.all([
+    fetchAllRows<{ id: string; name: string }>((from, to) =>
+      admin.from("volunteers").select("id, name").order("id").range(from, to)
+    ).catch((err: unknown) => {
+      throw new Error(`Failed to load volunteers: ${err instanceof Error ? err.message : String(err)}`);
+    }),
+    fetchAllRows<{ platform: string; handle: string; volunteer_id: string | null }>((from, to) =>
+      admin.from("accounts").select("platform, handle, volunteer_id").order("id").range(from, to)
+    ).catch((err: unknown) => {
+      throw new Error(`Failed to load accounts: ${err instanceof Error ? err.message : String(err)}`);
+    }),
   ]);
-  if (vErr) throw new Error(`Failed to load volunteers: ${vErr.message}`);
-  if (aErr) throw new Error(`Failed to load accounts: ${aErr.message}`);
 
   const platformsByVolunteer = new Map<string, Set<PlatformType>>();
   for (const a of accs ?? []) {

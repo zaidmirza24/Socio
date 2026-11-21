@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import fs from "node:fs";
+import { confirmDestructive } from "./confirm-destructive.mjs";
 
 // Load environment variables from .env.local
 const envContent = fs.readFileSync(".env.local", "utf8");
@@ -49,5 +50,5 @@ async function cleanDatabase() {
   }
 }
 
+await confirmDestructive("Delete all accounts, posts, snapshots, captions and runs", url);
 cleanDatabase();
-

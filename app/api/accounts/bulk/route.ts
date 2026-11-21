@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { internalError } from "@/lib/api/errors";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createServerComponentClient } from "@/lib/supabase/server";
@@ -96,10 +97,7 @@ export async function POST(request: NextRequest) {
       .select("id, platform, handle, volunteer_id, volunteer_name, status, added_at, updated_at");
 
     if (error) {
-      return NextResponse.json(
-        { error: `Database error during bulk upsert: ${error.message}` },
-        { status: 500 }
-      );
+      return internalError(error, "Database error during bulk upsert");
     }
 
     return NextResponse.json(
@@ -112,8 +110,7 @@ export async function POST(request: NextRequest) {
       { status: 201 }
     );
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal Server Error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return internalError(err, "Internal Server Error");
   }
 }
 

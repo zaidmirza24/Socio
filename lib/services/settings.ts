@@ -21,31 +21,31 @@ export const DEFAULT_PLATFORM_SETTINGS: SystemPlatformSettings = {
 };
 
 /**
+ * Reads one system_settings value. Returns null only when the row does not exist (then callers
+ * use their defaults). A database error THROWS: silently falling back to defaults would e.g. turn
+ * Facebook/X off for a run, or let an update overwrite the real settings with defaults.
+ */
+async function readSetting(key: string): Promise<unknown | null> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase.from("system_settings").select("value").eq("key", key).maybeSingle();
+  if (error) {
+    throw new Error(`Could not read setting '${key}': ${error.message}`);
+  }
+  return data?.value ?? null;
+}
+
+/**
  * Loads the active multi-platform enablement settings from system_settings table.
  */
 export async function getPlatformSettings(): Promise<SystemPlatformSettings> {
-  try {
-    const supabase = createAdminClient();
-    const { data, error } = await supabase
-      .from("system_settings")
-      .select("value")
-      .eq("key", "platform_enablement_settings")
-      .maybeSingle();
-
-    if (error || !data?.value) {
-      return DEFAULT_PLATFORM_SETTINGS;
-    }
-
-    const val = data.value as Partial<SystemPlatformSettings>;
-    return {
-      instagram: { enabled: val.instagram?.enabled ?? true },
-      facebook: { enabled: val.facebook?.enabled ?? false },
-      x: { enabled: val.x?.enabled ?? false },
-    };
-  } catch (err: unknown) {
-    console.warn("[settings] Could not query platform_enablement_settings, using defaults:", err);
-    return DEFAULT_PLATFORM_SETTINGS;
-  }
+  const raw = await readSetting("platform_enablement_settings");
+  if (!raw) return DEFAULT_PLATFORM_SETTINGS;
+  const val = raw as Partial<SystemPlatformSettings>;
+  return {
+    instagram: { enabled: val.instagram?.enabled ?? true },
+    facebook: { enabled: val.facebook?.enabled ?? false },
+    x: { enabled: val.x?.enabled ?? false },
+  };
 }
 
 /**
@@ -94,24 +94,15 @@ export const DEFAULT_FEATURE_SETTINGS: FeatureSettings = {
 
 /** Loads feature on/off flags from system_settings (defaults to everything on). */
 export async function getFeatureSettings(): Promise<FeatureSettings> {
-  try {
-    const supabase = createAdminClient();
-    const { data, error } = await supabase
-      .from("system_settings")
-      .select("value")
-      .eq("key", "feature_settings")
-      .maybeSingle();
-
-    if (error || !data?.value) return DEFAULT_FEATURE_SETTINGS;
-
-    const val = data.value as Partial<FeatureSettings>;
-    return {
-      campaign_captions_enabled: val.campaign_captions_enabled ?? true,
-    };
-  } catch (err: unknown) {
-    console.warn("[settings] Could not query feature_settings, using defaults:", err);
-    return DEFAULT_FEATURE_SETTINGS;
-  }
+  const raw = await readSetting("feature_settings");
+  if (!raw) return DEFAULT_FEATURE_SETTINGS;
+  const val = raw as Partial<FeatureSettings>;
+  return {
+    campaign_captions_enabled:
+      typeof val.campaign_captions_enabled === "boolean"
+        ? val.campaign_captions_enabled
+        : DEFAULT_FEATURE_SETTINGS.campaign_captions_enabled,
+  };
 }
 
 /** Updates feature flags in system_settings. Admin-only operation. */
@@ -145,22 +136,14 @@ export async function updateFeatureSettings(
 
 /**
  * Loads the active scraper refresh strategy from the system_settings table.
- * Falls back to DEFAULT_REFRESH_STRATEGY (30-day cutoff, 7-day interval) if missing or on error.
+ * Falls back to DEFAULT_REFRESH_STRATEGY (30-day cutoff, 7-day interval) when not saved yet.
+ * Throws on a database error.
  */
 export async function getScraperRefreshStrategy(): Promise<ScraperRefreshStrategy> {
-  try {
-    const supabase = createAdminClient();
-    const { data, error } = await supabase
-      .from("system_settings")
-      .select("value")
-      .eq("key", "scraper_refresh_strategy")
-      .maybeSingle();
-
-    if (error || !data?.value) {
-      return DEFAULT_REFRESH_STRATEGY;
-    }
-
-    const val = data.value as Partial<ScraperRefreshStrategy>;
+  const raw = await readSetting("scraper_refresh_strategy");
+  if (!raw) return DEFAULT_REFRESH_STRATEGY;
+  {
+    const val = raw as Partial<ScraperRefreshStrategy>;
     return {
       mode: val.mode === "continuous" ? "continuous" : "30_day_cutoff",
       refresh_interval_days:
@@ -176,9 +159,6 @@ export async function getScraperRefreshStrategy(): Promise<ScraperRefreshStrateg
           ? val.discovery_post_limit
           : 10,
     };
-  } catch (err: unknown) {
-    console.warn("[settings] Could not query system_settings, using defaults:", err);
-    return DEFAULT_REFRESH_STRATEGY;
   }
 }
 

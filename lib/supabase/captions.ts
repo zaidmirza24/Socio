@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createServerComponentClient } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { processCaption } from "@/lib/matching/normalizer.ts";
 import type { CampaignCaption, CampaignCaptionStatus } from "@/types/database";
 
@@ -29,9 +30,10 @@ async function verifyAdminCaller() {
 
 export interface CaptionWithStats extends CampaignCaption {
   matchedPostsCount: number;
-  totalLikes: number;
-  totalComments: number;
-  totalViews: number;
+  /** null = no matched post has a measured value yet (shown as "n/a"). */
+  totalLikes: number | null;
+  totalComments: number | null;
+  totalViews: number | null;
   variantsCount: number;
 }
 
@@ -39,6 +41,13 @@ export interface CaptionWithStats extends CampaignCaption {
  * Loads all campaign captions along with aggregated post and engagement metrics.
  */
 export async function getCampaignCaptions(): Promise<CaptionWithStats[]> {
+  // Server action reading with the service role: verify the caller is a signed-in team member.
+  const authClient = createServerComponentClient();
+  const {
+    data: { user },
+  } = await authClient.auth.getUser();
+  if (!user) return [];
+
   const supabase = createAdminClient();
 
   const { data: captions, error: captionsError } = await supabase
@@ -51,50 +60,51 @@ export async function getCampaignCaptions(): Promise<CaptionWithStats[]> {
     return [];
   }
 
-  // Fetch matched posts with their IDs
-  const { data: matchedPosts } = await supabase
-    .from("matched_posts")
-    .select("id, caption_id");
-
-  // Fetch metric snapshots for those posts ordered by snapshot_date DESC
-  const postIds = (matchedPosts || []).map((p) => p.id);
-  const { data: snapshots } = postIds.length > 0
-    ? await supabase
-        .from("metric_snapshots")
-        .select("post_id, snapshot_date, likes, comments, views")
-        .in("post_id", postIds)
-        .order("snapshot_date", { ascending: false })
-    : { data: [] };
+  // Matched posts (paged) and their latest metrics. The latest snapshot per post is computed in
+  // SQL (view matched_post_latest_metrics) instead of downloading every snapshot of every post.
+  let matchedPosts: { id: string; caption_id: string }[];
+  let latestRows: { post_id: string; likes: number | null; comments: number | null; views: number | null }[];
+  try {
+    [matchedPosts, latestRows] = await Promise.all([
+      fetchAllRows<{ id: string; caption_id: string }>((from, to) =>
+        supabase.from("matched_posts").select("id, caption_id").order("id").range(from, to)
+      ),
+      fetchAllRows<{ post_id: string; likes: number | null; comments: number | null; views: number | null }>(
+        (from, to) =>
+          supabase
+            .from("matched_post_latest_metrics")
+            .select("post_id, likes, comments, views")
+            .order("post_id")
+            .range(from, to)
+      ),
+    ]);
+  } catch (statsError: unknown) {
+    console.error("Failed to load caption stats:", statsError);
+    matchedPosts = [];
+    latestRows = [];
+  }
 
   // Fetch approved variants count
   const { data: variants } = await supabase
     .from("caption_approved_variants")
     .select("caption_id");
 
-  // Group latest metrics by post_id (first occurrence is the latest snapshot)
-  const latestPostMetrics = new Map<string, { likes: number; comments: number; views: number }>();
-  for (const s of snapshots || []) {
-    if (!latestPostMetrics.has(s.post_id)) {
-      latestPostMetrics.set(s.post_id, {
-        likes: s.likes ?? 0,
-        comments: s.comments ?? 0,
-        views: s.views ?? 0,
-      });
-    }
-  }
+  const latestPostMetrics = new Map(latestRows.map((r) => [r.post_id, r]));
 
-  // Aggregate by caption_id
+  // Aggregate by caption_id. Totals stay null until at least one post has a measured value, so
+  // the UI shows "n/a" rather than a made-up 0 (e.g. hidden likes, image posts without views).
+  type Totals = { likes: number | null; comments: number | null; views: number | null };
+  const add = (sum: number | null, v: number | null | undefined) => (typeof v === "number" ? (sum ?? 0) + v : sum);
   const postsByCaption = new Map<string, number>();
-  const metricsByCaption = new Map<string, { likes: number; comments: number; views: number }>();
+  const metricsByCaption = new Map<string, Totals>();
 
-  for (const p of matchedPosts || []) {
+  for (const p of matchedPosts) {
     postsByCaption.set(p.caption_id, (postsByCaption.get(p.caption_id) || 0) + 1);
-
-    const m = latestPostMetrics.get(p.id) || { likes: 0, comments: 0, views: 0 };
-    const cm = metricsByCaption.get(p.caption_id) || { likes: 0, comments: 0, views: 0 };
-    cm.likes += m.likes;
-    cm.comments += m.comments;
-    cm.views += m.views;
+    const m = latestPostMetrics.get(p.id);
+    const cm = metricsByCaption.get(p.caption_id) ?? { likes: null, comments: null, views: null };
+    cm.likes = add(cm.likes, m?.likes);
+    cm.comments = add(cm.comments, m?.comments);
+    cm.views = add(cm.views, m?.views);
     metricsByCaption.set(p.caption_id, cm);
   }
 
@@ -104,7 +114,7 @@ export async function getCampaignCaptions(): Promise<CaptionWithStats[]> {
   }
 
   return captions.map((c) => {
-    const cm = metricsByCaption.get(c.id) || { likes: 0, comments: 0, views: 0 };
+    const cm = metricsByCaption.get(c.id) ?? { likes: null, comments: null, views: null };
     return {
       id: c.id,
       title: c.title,

@@ -2,7 +2,6 @@ import {
   getApifyClientAsync,
   getApifyTaskIdAsync,
   getApifyActorIdAsync,
-  verifyWebhookSecretAsync,
   deleteApifyDataset,
   ApifyConfigError,
 } from "../../apify/client.ts";
@@ -17,7 +16,6 @@ import type {
   ScraperJobStatusResult,
   DirectPostDetails,
   ScraperPreflightResult,
-  ScraperWebhookResult,
 } from "../types.ts";
 import type { NormalizedPostItem, NormalizedAccountItem, ScraperJobType, PlatformType } from "../../../types/database.ts";
 
@@ -75,7 +73,6 @@ export class ApifyScraperProvider implements IScraperProvider {
         resultsType: "posts",
         searchType: "user",
         ...(options.onlyPostsNewerThan ? { onlyPostsNewerThan: options.onlyPostsNewerThan } : {}),
-        ...(options.customInput || {}),
       };
       taskId = await getApifyTaskIdAsync(options.taskId);
       targetActorId = await getApifyActorIdAsync(options.actorId);
@@ -86,7 +83,6 @@ export class ApifyScraperProvider implements IScraperProvider {
       dynamicInput = {
         ...baseInput,
         ...(options.postLimit ? { resultsLimit: options.postLimit, count: options.postLimit } : {}),
-        ...(options.customInput || {}),
       };
       targetActorId = options.actorId || apifyConfig.actors[platform].discovery;
     }
@@ -140,17 +136,13 @@ export class ApifyScraperProvider implements IScraperProvider {
       dynamicInput = {
         username: postUrls,
         resultsLimit: 1,
-        ...(options.customInput || {}),
       };
-      targetActorId = await getApifyActorIdAsync();
+      // Honour the refresh actor configured in Settings (defaults to the discovery actor).
+      targetActorId = (await getApifyConfig()).actors.instagram.refresh;
     } else {
       const apifyConfig = await getApifyConfig();
       const adapter = getPlatformAdapter(platform);
-      const baseInput = adapter.buildRefreshInput(postUrls);
-      dynamicInput = {
-        ...baseInput,
-        ...(options.customInput || {}),
-      };
+      dynamicInput = adapter.buildRefreshInput(postUrls);
       targetActorId = apifyConfig.actors[platform].refresh;
     }
 
@@ -172,17 +164,19 @@ export class ApifyScraperProvider implements IScraperProvider {
   }
 
   /**
-   * Fetches metrics and metadata for a single Instagram post URL synchronously.
+   * Fetches metrics and metadata for a single post URL synchronously, using the platform's
+   * refresh actor (so Facebook and X review items can be approved too).
    */
-  async fetchDirectPost(postUrl: string): Promise<DirectPostDetails | null> {
+  async fetchDirectPost(postUrl: string, platform: PlatformType = "instagram"): Promise<DirectPostDetails | null> {
     try {
       const client = await getApifyClientAsync();
-      const actorId = await getApifyActorIdAsync();
+      const apifyConfig = await getApifyConfig();
 
-      const run = await client.actor(actorId).call({
-        username: [postUrl], // actor requires `username`; accepts post URLs
-        resultsLimit: 1,
-      });
+      const input =
+        platform === "instagram"
+          ? { username: [postUrl], resultsLimit: 1 } // actor requires `username`; accepts post URLs
+          : getPlatformAdapter(platform).buildRefreshInput([postUrl]);
+      const run = await client.actor(apifyConfig.actors[platform].refresh).call(input);
 
       if (!run.defaultDatasetId) {
         return null;
@@ -191,7 +185,10 @@ export class ApifyScraperProvider implements IScraperProvider {
       const dataset = await client.dataset(run.defaultDatasetId).listItems({ clean: true });
       await deleteApifyDataset(run.defaultDatasetId);
 
-      const normalized = normalizeApifyInstagramDataset(dataset.items || []);
+      const normalized =
+        platform === "instagram"
+          ? normalizeApifyInstagramDataset(dataset.items || [])
+          : normalizePlatformDataset(platform, dataset.items || []);
       if (normalized.posts.length > 0) {
         const p = normalized.posts[0];
         return {
@@ -285,60 +282,5 @@ export class ApifyScraperProvider implements IScraperProvider {
    */
   async cleanupDataset(datasetId: string): Promise<boolean> {
     return deleteApifyDataset(datasetId);
-  }
-
-  /**
-   * Validates and extracts payload from incoming Apify webhooks.
-   */
-  async parseWebhook(
-    request: Request,
-    body: unknown
-  ): Promise<ScraperWebhookResult> {
-    const url = new URL(request.url);
-    const headerSecret = request.headers.get("x-apify-webhook-secret");
-    const querySecret = url.searchParams.get("secret");
-    const secret = headerSecret || querySecret;
-
-    if (!(await verifyWebhookSecretAsync(secret))) {
-      return {
-        verified: false,
-        jobId: "unverified",
-        provider: "apify",
-        status: "failed",
-        error: "Unauthorized: Invalid or missing Apify webhook secret",
-      };
-    }
-
-    const payload = body as Record<string, unknown> | null;
-    const eventData = payload?.eventData as Record<string, unknown> | undefined;
-    const resource = payload?.resource as Record<string, unknown> | undefined;
-
-    const actorRunId =
-      (eventData?.actorRunId as string) || (resource?.id as string) || "unknown-run";
-    const datasetId =
-      (eventData?.defaultDatasetId as string) ||
-      (resource?.defaultDatasetId as string) ||
-      undefined;
-    const runStatus =
-      ((eventData?.status as string) || (resource?.status as string) || "SUCCEEDED").toUpperCase();
-
-    if (["FAILED", "TIMED-OUT", "ABORTED"].includes(runStatus)) {
-      return {
-        verified: true,
-        jobId: actorRunId,
-        provider: "apify",
-        datasetOrSnapshotId: datasetId,
-        status: "failed",
-        error: `Apify run finished with failure status: ${runStatus}`,
-      };
-    }
-
-    return {
-      verified: true,
-      jobId: actorRunId,
-      provider: "apify",
-      datasetOrSnapshotId: datasetId,
-      status: "completed",
-    };
   }
 }

@@ -61,7 +61,9 @@ export function normalizeApifyInstagramDataset(rawData: unknown[]): AdapterResul
     const postedAt = parsedDate.toISOString();
 
     // Determine views: videoViewCount, videoPlayCount, or null (Instagram photos don't have views)
-    const views = data.videoViewCount ?? data.videoPlayCount ?? null;
+    const rawViews = data.videoViewCount ?? data.videoPlayCount ?? null;
+    // Negative values are vendor sentinels (e.g. -1 = hidden), i.e. not measured.
+    const views = typeof rawViews === "number" && rawViews >= 0 ? rawViews : null;
 
     // Likes & Comments: preserve null if hidden/unmeasured (-1 in Apify or null/undefined), 0 only if explicitly zero
     const likes = typeof data.likesCount === "number" && data.likesCount >= 0 ? data.likesCount : null;
@@ -79,7 +81,7 @@ export function normalizeApifyInstagramDataset(rawData: unknown[]): AdapterResul
       platform_post_id: data.id,
       url: data.url,
       caption: data.caption ?? null,
-      media_type: data.type ?? "Image",
+      media_type: data.type ?? null, // unknown stays unknown (never invent "Image")
       posted_at: postedAt,
       thumbnail_url: thumbnailUrl,
       metrics: {

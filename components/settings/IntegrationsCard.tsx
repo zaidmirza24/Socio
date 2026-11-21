@@ -5,13 +5,11 @@ import { useCallback, useEffect, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
-  Copy,
   KeyRound,
   Loader2,
   Plug,
   Sparkles,
   Trash2,
-  Webhook,
 } from "lucide-react";
 
 type ValueSource = "database" | "environment" | "none";
@@ -19,11 +17,9 @@ type Platform = "instagram" | "facebook" | "x";
 
 interface IntegrationStatus {
   apifyToken: { configured: boolean; source: ValueSource; masked: string | null };
-  webhookSecret: { configured: boolean; source: ValueSource; masked: string | null };
   taskId: string | null;
   taskSource: ValueSource;
   actors: Record<Platform, { discovery: string; refresh: string }>;
-  webhookUrl: string | null;
   encryptionKeySource: string;
 }
 
@@ -62,12 +58,10 @@ export function IntegrationsCard() {
   const [status, setStatus] = useState<IntegrationStatus | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [pasted, setPasted] = useState("");
-  const [removeTarget, setRemoveTarget] = useState<"apify_api_token" | "apify_webhook_secret" | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<"apify_api_token" | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [setup, setSetup] = useState<SetupResult | null>(null);
-  const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
-  const [appUrl, setAppUrl] = useState("");
   const [actorDraft, setActorDraft] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
@@ -125,23 +119,7 @@ export function IntegrationsCard() {
     }
   };
 
-  const handleGenerateSecret = async () => {
-    const data = await call("generate-webhook-secret");
-    if (data) {
-      setRevealedSecret(data.revealedOnce);
-      setNotice({ type: "success", message: "New webhook secret generated. Click “Register on Apify” to push it to Apify." });
-    }
-  };
-
-  const handleRegister = async () => {
-    const data = await call("register-webhook", appUrl ? { appUrl } : {});
-    if (data) {
-      setRevealedSecret(null);
-      setNotice({ type: "success", message: data.message });
-    }
-  };
-
-  const handleRemove = (name: "apify_api_token" | "apify_webhook_secret") => setRemoveTarget(name);
+  const handleRemove = (name: "apify_api_token") => setRemoveTarget(name);
 
   const confirmRemove = async () => {
     const name = removeTarget;
@@ -160,10 +138,6 @@ export function IntegrationsCard() {
       setActorDraft((d) => ({ ...d, [`${platform}:discovery`]: "", [`${platform}:refresh`]: "" }));
       setNotice({ type: "success", message: `${PLATFORM_LABEL[platform]} actor IDs saved.` });
     }
-  };
-
-  const copy = (text: string) => {
-    navigator.clipboard?.writeText(text).catch(() => undefined);
   };
 
   const allGood = !!status?.apifyToken.configured;
@@ -345,7 +319,7 @@ export function IntegrationsCard() {
         onConfirm={confirmRemove}
         onCancel={() => setRemoveTarget(null)}
       >
-        The saved {removeTarget === "apify_webhook_secret" ? "webhook secret" : "Apify token"} will be deleted. If the same value exists as an environment variable, the app falls back to that; otherwise collection stops working until you add a new one.
+        The saved Apify token will be deleted. If the same value exists as an environment variable, the app falls back to that; otherwise collection stops working until you add a new one.
       </ConfirmDialog>
     </div>
   );

@@ -1,6 +1,6 @@
 import { createAdminClient } from "../supabase/admin.ts";
 import { getApifyClientAsync } from "../apify/client.ts";
-import { getScraperRefreshStrategy } from "./settings.ts";
+import { getPlatformSettings, getScraperRefreshStrategy } from "./settings.ts";
 
 /**
  * Apify credit (USD) accounting for this platform.
@@ -379,14 +379,25 @@ export async function getUsageReport(): Promise<UsageReport> {
   }
 
   // 3. Forecast from current settings
-  const strategy = await getScraperRefreshStrategy();
+  const [strategy, platformSettings] = await Promise.all([getScraperRefreshStrategy(), getPlatformSettings()]);
+  // Only platforms that are switched on are collected, so only they cost money.
+  const enabledPlatforms = (["instagram", "facebook", "x"] as const).filter(
+    (p) => p === "instagram" || platformSettings[p].enabled
+  );
   const [{ count: activeAccounts }, { count: trackedPosts }] = await Promise.all([
-    supabase.from("accounts").select("*", { count: "exact", head: true }).eq("status", "active"),
+    supabase
+      .from("accounts")
+      .select("*", { count: "exact", head: true })
+      .eq("status", "active")
+      .in("platform", enabledPlatforms),
     (() => {
+      // Refresh covers every stored post (matched or not) except admin-rejected ones; see
+      // getRefreshCandidates in scraper-orchestrator.ts.
       let q = supabase
-        .from("matched_posts")
+        .from("posts")
         .select("*", { count: "exact", head: true })
-        .eq("tracking_status", "tracking");
+        .neq("match_status", "rejected")
+        .in("platform", enabledPlatforms);
       if (strategy.mode === "30_day_cutoff") {
         q = q.gte("posted_at", new Date(now.getTime() - strategy.cutoff_days * DAY_MS).toISOString());
       }

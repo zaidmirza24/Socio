@@ -1,12 +1,24 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createServerComponentClient } from "@/lib/supabase/server";
 
-// Let the client/CDN cache the count for 60 s; revalidate in background.
-// This means tab-focus events within the stale window cost zero DB queries.
 export const dynamic = "force-dynamic";
 
+// Per-user browser cache only: the count is team data, so shared caches (CDN) must not store it.
+const CACHE_HEADERS = { "Cache-Control": "private, max-age=30" };
+
+/** GET /api/review-queue/count - number of pending review items, for signed-in team members. */
 export async function GET() {
   try {
+    // Checked here as well as in middleware, because this reads with the service-role key.
+    const authClient = createServerComponentClient();
+    const {
+      data: { user },
+    } = await authClient.auth.getUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized: Team login required" }, { status: 401 });
+    }
+
     const supabase = createAdminClient();
     const { count, error } = await supabase
       .from("review_queue")
@@ -14,18 +26,12 @@ export async function GET() {
       .eq("status", "pending");
 
     if (error) {
-      return NextResponse.json({ count: 0 }, {
-        status: 200,
-        headers: { "Cache-Control": "public, s-maxage=60, stale-while-revalidate=120" },
-      });
+      console.error("[review-queue/count]", error.message);
+      return NextResponse.json({ count: null }, { status: 200, headers: CACHE_HEADERS });
     }
 
-    return NextResponse.json(
-      { count: count ?? 0 },
-      { headers: { "Cache-Control": "public, s-maxage=60, stale-while-revalidate=120" } }
-    );
+    return NextResponse.json({ count: count ?? 0 }, { headers: CACHE_HEADERS });
   } catch {
-    return NextResponse.json({ count: 0 }, { status: 200 });
+    return NextResponse.json({ count: null }, { status: 200 });
   }
 }
-

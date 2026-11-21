@@ -1,17 +1,14 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getApifyClientAsync } from "@/lib/apify/client";
 import { getIntegrationStatus } from "@/lib/services/integrations";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createServerComponentClient } from "@/lib/supabase/server";
+import { requireAdmin } from "@/lib/supabase/require-admin";
 
-export async function GET(request: NextRequest) {
+/** GET /api/settings/test-connection - admin-only: it calls Apify and reveals account details. */
+export async function GET() {
   try {
-    const supabaseUser = createServerComponentClient();
-    const { data: { user } } = await supabaseUser.auth.getUser();
-
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized: Team login required" }, { status: 401 });
-    }
+    const guard = await requireAdmin();
+    if (!guard.ok) return guard.response;
 
     const integration = await getIntegrationStatus().catch(() => null);
     if (!integration) {

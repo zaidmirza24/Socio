@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { internalError } from "@/lib/api/errors";
 import { createServerComponentClient } from "@/lib/supabase/server";
 import { getFeatureSettings } from "@/lib/services/settings";
 
@@ -18,5 +19,9 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  return NextResponse.json(await getFeatureSettings());
+  try {
+    return NextResponse.json(await getFeatureSettings());
+  } catch (err: unknown) {
+    return internalError(err, "Could not load feature settings");
+  }
 }

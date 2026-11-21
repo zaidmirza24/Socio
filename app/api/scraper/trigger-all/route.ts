@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/supabase/require-admin";
-import { triggerDailyDiscovery, triggerWeeklyRefresh } from "@/lib/services/scraper-orchestrator";
+import {
+  RunAlreadyActiveError,
+  triggerDailyDiscovery,
+  triggerWeeklyRefresh,
+} from "@/lib/services/scraper-orchestrator";
 import { getPlatformSettings } from "@/lib/services/settings";
 import type { PlatformType } from "@/types/database";
 
@@ -43,7 +47,15 @@ export async function POST(request: NextRequest) {
   }
   const { jobType, postLimit, force, platform: onlyPlatform } = parsed.data;
 
-  const platformSettings = await getPlatformSettings();
+  let platformSettings: Awaited<ReturnType<typeof getPlatformSettings>>;
+  try {
+    platformSettings = await getPlatformSettings();
+  } catch (err: unknown) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Could not read platform settings" },
+      { status: 500 }
+    );
+  }
   const platforms: PlatformType[] = ["instagram"];
   if (platformSettings.facebook?.enabled) platforms.push("facebook");
   if (platformSettings.x?.enabled) platforms.push("x");
@@ -82,6 +94,11 @@ export async function POST(request: NextRequest) {
         });
       }
     } catch (err: unknown) {
+      if (err instanceof RunAlreadyActiveError) {
+        // Resume polling the run that is already going instead of paying for a duplicate.
+        results.push({ platform, ok: true, runIds: err.runIds, message: err.message });
+        continue;
+      }
       results.push({
         platform,
         ok: false,

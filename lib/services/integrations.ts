@@ -4,19 +4,18 @@ import { PLATFORM_CONFIG } from "../config/platforms.ts";
 import type { PlatformType } from "../../types/database.ts";
 
 /**
- * Runtime integration config: lets admins manage the Apify token, webhook secret,
+ * Runtime integration config: lets admins manage the Apify token,
  * task and actor IDs from the Settings page instead of editing .env files.
  *
  * Resolution order for every value:  database (Settings UI)  →  environment variable  →  built-in default.
  * Secrets are AES-256-GCM encrypted in `integration_secrets` (service-role only).
  */
 
-export type SecretName = "apify_api_token" | "apify_webhook_secret";
+export type SecretName = "apify_api_token";
 export type ValueSource = "database" | "environment" | "none";
 
 const SECRET_ENV_FALLBACK: Record<SecretName, string> = {
   apify_api_token: "APIFY_API_TOKEN",
-  apify_webhook_secret: "APIFY_WEBHOOK_SECRET",
 };
 
 const CACHE_TTL_MS = 30_000;
@@ -187,37 +186,19 @@ export async function getApifyConfig(): Promise<ResolvedApifyConfig> {
 
 export interface IntegrationStatus {
   apifyToken: { configured: boolean; source: ValueSource; masked: string | null };
-  webhookSecret: { configured: boolean; source: ValueSource; masked: string | null };
   taskId: string | null;
   taskSource: ValueSource;
   actors: ResolvedApifyConfig["actors"];
-  webhookUrl: string | null;
   encryptionKeySource: "SETTINGS_ENCRYPTION_KEY" | "SUPABASE_SERVICE_ROLE_KEY (fallback)";
 }
 
-export function getWebhookUrl(appUrlOverride?: string): string | null {
-  const base = (appUrlOverride ?? process.env.NEXT_PUBLIC_APP_URL ?? "").trim().replace(/\/+$/, "");
-  if (!base) return null;
-  return `${base}/api/webhooks/apify`;
-}
-
 export async function getIntegrationStatus(): Promise<IntegrationStatus> {
-  const [token, whSecret, config] = await Promise.all([
-    getSecret("apify_api_token"),
-    getSecret("apify_webhook_secret"),
-    getApifyConfig(),
-  ]);
+  const [token, config] = await Promise.all([getSecret("apify_api_token"), getApifyConfig()]);
   return {
     apifyToken: { configured: !!token.value, source: token.source, masked: token.value ? maskSecret(token.value) : null },
-    webhookSecret: {
-      configured: !!whSecret.value,
-      source: whSecret.source,
-      masked: whSecret.value ? maskSecret(whSecret.value) : null,
-    },
     taskId: config.taskId,
     taskSource: config.taskSource,
     actors: config.actors,
-    webhookUrl: getWebhookUrl(),
     encryptionKeySource: process.env.SETTINGS_ENCRYPTION_KEY
       ? "SETTINGS_ENCRYPTION_KEY"
       : "SUPABASE_SERVICE_ROLE_KEY (fallback)",

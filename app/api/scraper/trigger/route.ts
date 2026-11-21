@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/supabase/require-admin";
 import {
+  RunAlreadyActiveError,
   triggerDailyDiscovery,
   triggerWeeklyRefresh,
 } from "@/lib/services/scraper-orchestrator";
@@ -13,11 +14,11 @@ const triggerPayloadSchema = z.object({
   jobType: z.enum(["discovery", "refresh"]).default("discovery"),
   platform: z.enum(["instagram", "facebook", "x"]).default("instagram"),
   postLimit: z.number().int().min(1).max(50).optional(),
-  handles: z.array(z.string()).optional(),
-  urls: z.array(z.string().url()).optional(),
+  // Bounded so a single request cannot start an arbitrarily large (expensive) run.
+  handles: z.array(z.string().trim().min(1).max(100)).max(1000).optional(),
+  urls: z.array(z.string().url().max(500)).max(2000).optional(),
   force: z.boolean().optional(),
-  provider: z.enum(["apify", "brightdata"]).optional(),
-  customInput: z.record(z.unknown()).optional(),
+  provider: z.enum(["apify"]).optional(),
 });
 
 /**
@@ -46,7 +47,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { jobType, platform, postLimit, handles, urls, force, provider, customInput } = parsed.data;
+    const { jobType, platform, postLimit, handles, urls, force, provider } = parsed.data;
 
     // Check platform toggle saved in Settings (system_settings table), not a hardcoded flag
     const platformSettings = await getPlatformSettings();
@@ -87,7 +88,6 @@ export async function POST(request: NextRequest) {
         platform: platform as PlatformType,
         postLimit,
         customHandles: handles,
-        customInput,
       },
       provider as ScraperProviderType
     );
@@ -107,6 +107,12 @@ export async function POST(request: NextRequest) {
       message: `Discovery run dispatched for ${discoveryResult.accountsCount} active ${platform} account(s) via ${discoveryResult.provider}.`,
     });
   } catch (err: unknown) {
+    if (err instanceof RunAlreadyActiveError) {
+      return NextResponse.json(
+        { error: err.message, errorType: "RUN_ACTIVE", runIds: err.runIds, runId: err.runIds[0] ?? null },
+        { status: 409 }
+      );
+    }
     const errorMsg = err instanceof Error ? err.message : "Failed to trigger scraper run";
     return NextResponse.json(
       {

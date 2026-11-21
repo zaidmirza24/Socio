@@ -4,24 +4,14 @@ import { ApifyClient } from "apify-client";
 import { requireAdmin } from "@/lib/supabase/require-admin";
 import { parseApifyError, getApifyClientAsync } from "@/lib/apify/client";
 import { detectCredentials, pickInstagramTask, type TaskSummary } from "@/lib/services/smart-setup";
-import { generateSecret } from "@/lib/services/crypto";
 import {
-  getApifyConfig,
   getIntegrationStatus,
   getSecret,
-  getWebhookUrl,
   deleteSecret,
   saveStoredApifyConfig,
   setSecret,
 } from "@/lib/services/integrations";
 import { PLATFORM_CONFIG } from "@/lib/config/platforms";
-
-const WEBHOOK_EVENTS = [
-  "ACTOR.RUN.SUCCEEDED",
-  "ACTOR.RUN.FAILED",
-  "ACTOR.RUN.TIMED_OUT",
-  "ACTOR.RUN.ABORTED",
-] as const;
 
 const bodySchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("smart-setup"), text: z.string().min(1).max(20_000) }),
@@ -32,9 +22,7 @@ const bodySchema = z.discriminatedUnion("action", [
     discovery: z.string().min(3).max(64).optional(),
     refresh: z.string().min(3).max(64).optional(),
   }),
-  z.object({ action: z.literal("generate-webhook-secret") }),
-  z.object({ action: z.literal("register-webhook"), appUrl: z.string().url().optional() }),
-  z.object({ action: z.literal("remove-secret"), name: z.enum(["apify_api_token", "apify_webhook_secret"]) }),
+  z.object({ action: z.literal("remove-secret"), name: z.enum(["apify_api_token"]) }),
 ]);
 
 /** GET /api/admin/integrations - masked status only. Never returns a raw secret. */
@@ -100,10 +88,6 @@ export async function POST(request: NextRequest) {
         if (detected.apifyToken) {
           await setSecret("apify_api_token", detected.apifyToken, guard.userId);
           actions.push("Saved Apify token (encrypted)");
-        }
-        if (detected.webhookSecret) {
-          await setSecret("apify_webhook_secret", detected.webhookSecret, guard.userId);
-          actions.push("Saved webhook secret (encrypted)");
         }
 
         // Discover the account's tasks and choose the Instagram one
@@ -171,87 +155,6 @@ export async function POST(request: NextRequest) {
         };
         await saveStoredApifyConfig({ actors }, guard.userId);
         return NextResponse.json({ success: true, status: await getIntegrationStatus() });
-      }
-
-      case "generate-webhook-secret": {
-        const secret = generateSecret();
-        await setSecret("apify_webhook_secret", secret, guard.userId);
-        // Returned ONCE so the admin can copy it for a manual Apify setup. "Register webhook" needs no copying.
-        return NextResponse.json({ success: true, revealedOnce: secret, status: await getIntegrationStatus() });
-      }
-
-      case "register-webhook": {
-        const webhookUrl = getWebhookUrl(body.appUrl);
-        if (!webhookUrl) {
-          return NextResponse.json(
-            { error: "Set NEXT_PUBLIC_APP_URL to your deployed (Vercel) URL, or pass it in the request." },
-            { status: 400 }
-          );
-        }
-        const host = new URL(webhookUrl).hostname;
-        if (host === "localhost" || host === "127.0.0.1" || host.endsWith(".local")) {
-          return NextResponse.json(
-            { error: "Apify cannot reach localhost. Deploy to Vercel first, then register the webhook with your public URL." },
-            { status: 400 }
-          );
-        }
-
-        let secret = (await getSecret("apify_webhook_secret")).value;
-        if (!secret) {
-          secret = generateSecret();
-          await setSecret("apify_webhook_secret", secret, guard.userId);
-        }
-
-        const client = await getApifyClientAsync();
-        const config = await getApifyConfig();
-
-        // Conditions: the scheduled task + every actor the app can start (so refresh runs are ingested too)
-        const conditions: Array<{ key: string; condition: { actorTaskId: string } | { actorId: string } }> = [];
-        if (config.taskId) conditions.push({ key: `task:${config.taskId}`, condition: { actorTaskId: config.taskId } });
-        const actorIds = new Set<string>();
-        for (const p of Object.values(config.actors)) {
-          actorIds.add(p.discovery);
-          actorIds.add(p.refresh);
-        }
-        for (const id of actorIds) conditions.push({ key: `actor:${id}`, condition: { actorId: id } });
-
-        const existing = await client.webhooks().list({ limit: 1000 });
-        const headersTemplate = JSON.stringify({ "x-apify-webhook-secret": secret });
-        let created = 0;
-        let updated = 0;
-
-        for (const c of conditions) {
-          const match = existing.items.find((w) => {
-            const cond = w.condition as unknown as Record<string, string | undefined>;
-            return (
-              w.requestUrl === webhookUrl &&
-              (("actorTaskId" in c.condition && cond.actorTaskId === c.condition.actorTaskId) ||
-                ("actorId" in c.condition && cond.actorId === c.condition.actorId && !cond.actorTaskId))
-            );
-          });
-          if (match) {
-            await client.webhook(match.id).update({ eventTypes: [...WEBHOOK_EVENTS], headersTemplate });
-            updated++;
-          } else {
-            await client.webhooks().create({
-              eventTypes: [...WEBHOOK_EVENTS],
-              condition: c.condition,
-              requestUrl: webhookUrl,
-              headersTemplate,
-              description: "Socio ingestion webhook (managed from Settings)",
-            });
-            created++;
-          }
-        }
-
-        return NextResponse.json({
-          success: true,
-          webhookUrl,
-          created,
-          updated,
-          message: `Webhook ready: ${created} created, ${updated} refreshed (${webhookUrl}).`,
-          status: await getIntegrationStatus(),
-        });
       }
 
       case "remove-secret": {

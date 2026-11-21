@@ -3,7 +3,8 @@
  *
  * Compares each post's new numbers with the most recent snapshot stored before this run wrote its
  * own. Rules match lib/metrics/gain.ts:
- * - null means "not measured": it never counts as a gain and never as a loss.
+ * - null means "not measured": a null NEW value never counts as a gain or a loss. A null EARLIER
+ *   value (hidden before, visible now) counts from 0, exactly like the dashboard's gain.ts.
  * - Gain never goes below 0 (likes can drop when people un-like).
  * - A post with no earlier snapshot is NEW. It is counted separately, not as gain, so a refresh
  *   total only reflects growth on posts we were already tracking.

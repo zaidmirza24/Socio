@@ -1,6 +1,7 @@
 export type PlatformType = "instagram" | "facebook" | "x";
 export type AccountStatus = "active" | "paused" | "archived";
-export type RunStatus = "started" | "success" | "failed" | "partial";
+/** `ingesting`: one request has claimed the finished run and is saving it. */
+export type RunStatus = "started" | "ingesting" | "success" | "failed" | "partial";
 export type UserRole = "admin" | "member";
 
 // ==========================================
@@ -52,10 +53,11 @@ export interface MetricSnapshot {
   comments: number | null;
   views: number | null; // null for images/carousels, number for videos/reels
   shares?: number | null; // null if unavailable/hidden, number for Facebook/X
-  delta_likes: number;
-  delta_comments: number;
-  delta_views: number;
-  delta_shares?: number;
+  /** Growth since the previous snapshot; null when either side was not measured. */
+  delta_likes: number | null;
+  delta_comments: number | null;
+  delta_views: number | null;
+  delta_shares: number | null;
   source: MetricSnapshotSource;
   fetched_at: string;
 }
@@ -104,8 +106,12 @@ export interface Account {
   updated_at: string;
 }
 
-/** Caption-match label on a stored post. Posts are never hidden or deleted because of it. */
-export type PostMatchStatus = "unmatched" | "matched" | "needs_review";
+/**
+ * Caption-match label on a stored post. Posts are never hidden or deleted because of it.
+ * `rejected`: an admin rejected the fuzzy caption match; the post and its history are kept but it
+ * is no longer refreshed.
+ */
+export type PostMatchStatus = "unmatched" | "matched" | "needs_review" | "rejected";
 
 export interface Volunteer {
   id: string;
@@ -153,8 +159,10 @@ export interface Post {
   posted_at: string;
   first_seen_at: string;
   last_seen_at: string;
-  last_metrics_refresh_at?: string;
-  thumbnail_url?: string | null;
+  last_metrics_refresh_at: string | null;
+  thumbnail_url: string | null;
+  match_status: PostMatchStatus;
+  matched_caption_id: string | null;
 }
 
 export interface PostSnapshot {
@@ -165,6 +173,8 @@ export interface PostSnapshot {
   comments: number | null;
   shares: number | null;
   views: number | null;
+  /** X quote posts; null on platforms without quotes. */
+  quotes: number | null;
   raw_json: Record<string, unknown> | null;
   created_at: string;
 }
@@ -196,7 +206,55 @@ export interface CollectionRun {
   posts_new?: number;
   posts_refreshed?: number;
   snapshots_created: number;
+  /** Posts from handles that are not monitored accounts (tagged users etc.). */
+  posts_skipped_unknown: number;
+  /** Discovery posts dropped because they were not made on the run's IST day. */
+  posts_outside_day_window: number;
   error: Record<string, unknown> | null;
+  /** Set when a request claims the finished run for ingestion. */
+  ingest_claimed_at: string | null;
+  usage_usd: number | string | null;
+  usage_breakdown: Record<string, unknown> | null;
+  compute_units: number | string | null;
+  usage_synced_at: string | null;
+}
+
+/** Row of the account_stats view. */
+export interface AccountStats {
+  account_id: string;
+  posts_count: number;
+  followers: number | null;
+}
+
+/** Row of the apify_usage_daily view (IST days). */
+export interface ApifyUsageDaily {
+  usage_date: string;
+  platform: PlatformType;
+  job_type: ScraperJobType;
+  runs: number;
+  runs_pending_cost: number;
+  usage_usd: number | string;
+  compute_units: number | string;
+  posts_found: number;
+  posts_upserted: number;
+}
+
+/** Row of post_latest_snapshot / matched_post_latest_metrics (newest snapshot per post). */
+export interface LatestPostMetrics {
+  post_id: string;
+  snapshot_date: string;
+  likes: number | null;
+  comments: number | null;
+  views: number | null;
+  shares: number | null;
+}
+
+/** integration_secrets row (service-role only; ciphertext is "v2:<iv>:<tag>:<data>"). */
+export interface IntegrationSecret {
+  key: string;
+  ciphertext: string;
+  updated_at: string;
+  updated_by: string | null;
 }
 
 // ==========================================

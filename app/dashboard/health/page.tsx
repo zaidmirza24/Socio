@@ -23,7 +23,7 @@ import { PlatformBadge } from "@/components/ui/PlatformBadge";
 import { formatDisplayDateTime } from "@/lib/utils";
 import type { DateRangePreset } from "@/lib/supabase/queries";
 
-type RunStatus = "started" | "success" | "failed" | "partial";
+type RunStatus = "started" | "ingesting" | "success" | "failed" | "partial";
 
 interface RunItem {
   id: string;
@@ -41,6 +41,16 @@ interface RunItem {
   error?: Record<string, unknown> | null;
 }
 
+interface RunSummary {
+  total: number;
+  ok: number;
+  failed: number;
+  stuck: number;
+  spend: number;
+  lastOk: { started_at: string; posts_upserted: number } | null;
+  rate: number | null;
+}
+
 interface Notice {
   tone: "ok" | "error";
   text: string;
@@ -49,6 +59,7 @@ interface Notice {
 const STATUS_STYLE: Record<RunStatus, string> = {
   success: "bg-emerald-100 text-emerald-800",
   started: "bg-blue-100 text-blue-800 animate-pulse",
+  ingesting: "bg-indigo-100 text-indigo-800 animate-pulse",
   partial: "bg-amber-100 text-amber-800",
   failed: "bg-red-100 text-red-800",
 };
@@ -94,6 +105,8 @@ export default function SystemHealthPage() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [busyRun, setBusyRun] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  // Totals for the whole selected range, computed by the server (the list itself is capped).
+  const [serverSummary, setServerSummary] = useState<RunSummary | null>(null);
 
   const fetchRuns = useCallback(async () => {
     setLoading(true);
@@ -102,8 +115,9 @@ export default function SystemHealthPage() {
       const params = new URLSearchParams({ range, limit: "200" });
       if (platform !== "all") params.set("platform", platform);
       if (status !== "all") params.set("status", status);
-      const data = await fetchJson<{ runs?: RunItem[] }>(`/api/runs?${params.toString()}`);
+      const data = await fetchJson<{ runs?: RunItem[]; summary?: RunSummary }>(`/api/runs?${params.toString()}`);
       setRuns(data.runs ?? []);
+      setServerSummary(data.summary ?? null);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Error fetching runs");
     } finally {
@@ -140,14 +154,15 @@ export default function SystemHealthPage() {
   };
 
   const summary = useMemo(() => {
+    if (serverSummary) return serverSummary;
     const total = runs.length;
     const ok = runs.filter((r) => r.status === "success").length;
     const failed = runs.filter((r) => r.status === "failed").length;
-    const stuck = runs.filter((r) => r.status === "started").length;
+    const stuck = runs.filter((r) => r.status === "started" || r.status === "ingesting").length;
     const spend = runs.reduce((s, r) => s + (toUsd(r.usage_usd) ?? 0), 0);
     const lastOk = runs.find((r) => r.status === "success") ?? null;
     return { total, ok, failed, stuck, spend, lastOk, rate: total > 0 ? Math.round((ok / total) * 100) : null };
-  }, [runs]);
+  }, [runs, serverSummary]);
 
   const pill = (active: boolean) =>
     `px-2.5 py-1 rounded-md capitalize transition ${active ? "bg-slate-900 text-white font-semibold" : "text-slate-600 hover:text-slate-900"}`;
@@ -302,7 +317,7 @@ export default function SystemHealthPage() {
                   {runs.map((run) => {
                     const hasError = !!run.error && Object.keys(run.error).length > 0;
                     const isOpen = expanded === run.id;
-                    const canIngest = !!run.actor_run_id && (run.status === "started" || run.status === "failed");
+                    const canIngest = !!run.actor_run_id && (run.status === "started" || run.status === "failed" || run.status === "partial");
                     return (
                       <Fragment key={run.id}>
                         <tr className="hover:bg-slate-50/70 transition">

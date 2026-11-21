@@ -27,7 +27,8 @@ import {
   BarChart3,
   Users,
 } from "lucide-react";
-import { formatMetric, formatNumber, formatDate, getDateFilterSince } from "@/lib/utils";
+import { formatMetric, formatNumber, formatDayLabel, getDateFilterSince } from "@/lib/utils";
+import { sumMeasured } from "@/lib/metrics/integrity";
 import { EngagementTrendChart } from "@/components/charts/EngagementTrendChart";
 import { DateRangeFilter } from "@/components/analytics/DateRangeFilter";
 import type { VolunteerProfileData, DateRangePreset } from "@/lib/supabase/queries";
@@ -106,29 +107,24 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
     return getDateFilterSince(dateFilter);
   }, [dateFilter]);
 
-  // Filter posts by date — postedAt is a UTC ISO string ("2026-11-10 09:30").
-  // We replace the space with T to get a valid ISO string, parse it as UTC,
-  // then convert to IST date for comparison so early-morning IST posts aren't dropped.
+  // Filter posts by date. postedAt is already IST ("2026-11-10 09:30"), so its first 10
+  // characters are the IST calendar day.
   const dateFilteredPosts = useMemo(() => {
     if (!cutoffDate) return posts;
-    return posts.filter((p) => {
-      if (!p.postedAt) return false;
-      const isoString = p.postedAt.replace(" ", "T") + ":00Z";
-      const postDate = formatDate(new Date(isoString));
-      return postDate >= cutoffDate;
-    });
+    return posts.filter((p) => !!p.postedAt && p.postedAt.slice(0, 10) >= cutoffDate);
   }, [posts, cutoffDate]);
 
   // Recalculate metrics for the selected date range
   const metrics = useMemo(() => {
-    const totalLikes = dateFilteredPosts.reduce((acc, p) => acc + (p.likes ?? 0), 0);
-    const totalComments = dateFilteredPosts.reduce((acc, p) => acc + (p.comments ?? 0), 0);
-    const totalViews = dateFilteredPosts.reduce((acc, p) => acc + (p.views ?? 0), 0);
+    // null = nothing measured (e.g. hidden likes): shown as "n/a", never as a made-up 0.
+    const totalLikes = sumMeasured(dateFilteredPosts.map((p) => p.likes));
+    const totalComments = sumMeasured(dateFilteredPosts.map((p) => p.comments));
+    const totalViews = sumMeasured(dateFilteredPosts.map((p) => p.views));
     const totalMonitoredPosts = dateFilteredPosts.length;
     const avgEngagementPerPost =
-      totalMonitoredPosts > 0
-        ? Math.round((totalLikes + totalComments) / totalMonitoredPosts)
-        : 0;
+      totalMonitoredPosts > 0 && (totalLikes !== null || totalComments !== null)
+        ? Math.round(((totalLikes ?? 0) + (totalComments ?? 0)) / totalMonitoredPosts)
+        : null;
 
     return {
       totalMonitoredPosts,
@@ -156,7 +152,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
     return Array.from(byDate.entries())
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([date, v]) => ({
-        date: new Date(date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+        date: formatDayLabel(date),
         likes: v.likes,
         comments: v.comments,
       }));
@@ -374,10 +370,10 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-3xl font-bold text-slate-900">
-              {formatNumber(metrics.totalLikes)}
+              {formatMetric(metrics.totalLikes)}
             </span>
           </div>
-          <span className="mt-1 block text-xs text-slate-500">Aggregated across posts</span>
+          <span className="mt-1 block text-xs text-slate-500" title="The dashboard leaderboard shows engagement GAINED in the period; this page shows each post's current total.">Current totals of posts published in this period</span>
         </div>
 
         {/* Total Comments */}
@@ -392,7 +388,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-3xl font-bold text-slate-900">
-              {formatNumber(metrics.totalComments)}
+              {formatMetric(metrics.totalComments)}
             </span>
           </div>
           <span className="mt-1 block text-xs text-slate-500">Audience replies & discussions</span>
@@ -410,7 +406,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-3xl font-bold text-slate-900">
-              {formatNumber(metrics.avgEngagementPerPost)}
+              {formatMetric(metrics.avgEngagementPerPost)}
             </span>
           </div>
           <span className="mt-1 block text-xs text-slate-500">Likes + comments / post</span>

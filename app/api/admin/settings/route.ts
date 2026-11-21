@@ -136,6 +136,7 @@ export async function POST(request: NextRequest) {
           matched: 0,
           needsReview: 0,
           unmatched: 0,
+          rejected: 0,
           errors: [matchErr instanceof Error ? matchErr.message : "Matching failed"],
         };
       }
