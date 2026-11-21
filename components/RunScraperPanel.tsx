@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/Modal";
+import { RunGainSummary } from "@/components/RunGainSummary";
+import { mergeRunGains, type RunGain } from "@/lib/metrics/run-gain";
 import { Play, Loader2, CheckCircle2, AlertCircle, MinusCircle, X } from "lucide-react";
 
 type Platform = "instagram" | "facebook" | "x";
@@ -18,6 +20,10 @@ interface PlatformRun {
   message: string;
   postsUpserted: number;
   snapshotsCreated: number;
+  /** Gain reported by each batch of this platform that was saved by this session. */
+  gains: RunGain[];
+  /** Batches that finished but were already saved earlier, so no gain could be measured. */
+  gainUnavailable: number;
 }
 
 const PLATFORMS: { id: Platform; label: string }[] = [
@@ -51,6 +57,7 @@ interface StatusResponse {
   status?: "READY" | "RUNNING" | "SUCCEEDED" | "FAILED";
   postsUpserted?: number;
   snapshotsCreated?: number;
+  gain?: RunGain | null;
   message?: string;
   error?: string;
 }
@@ -102,6 +109,8 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
                   pendingIds,
                   postsUpserted: cur.postsUpserted + (data.postsUpserted ?? 0),
                   snapshotsCreated: cur.snapshotsCreated + (data.snapshotsCreated ?? 0),
+                  gains: data.gain ? [...cur.gains, data.gain] : cur.gains,
+                  gainUnavailable: cur.gainUnavailable + (data.gain ? 0 : 1),
                   state: pendingIds.length === 0 && cur.state === "RUNNING" ? "SUCCEEDED" : cur.state,
                 };
               });
@@ -124,6 +133,8 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
       if (runsRef.current.some((r) => r.state === "SUCCEEDED")) {
         router.refresh();
         onCompleted?.();
+        // Show what changed straight away, even if the dialog was closed while waiting.
+        setOpen(true);
       }
     }
   }, [busy, poll, router, onCompleted]);
@@ -144,6 +155,8 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
       message: "Starting...",
       postsUpserted: 0,
       snapshotsCreated: 0,
+      gains: [],
+      gainUnavailable: 0,
     });
     setRuns(targets.map(blank));
 
@@ -204,7 +217,7 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
       </button>
 
       {open && (
-        <Modal size="md" labelledBy="collect-title" onClose={() => setOpen(false)} className="p-5">
+        <Modal size="lg" labelledBy="collect-title" onClose={() => setOpen(false)} className="p-5">
           <div>
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -295,6 +308,13 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
                   </li>
                 ))}
               </ul>
+            )}
+
+            {finished && runs.some((r) => r.state === "SUCCEEDED") && (
+              <RunGainSummary
+                gain={mergeRunGains(runs.flatMap((r) => r.gains))}
+                unavailable={runs.reduce((n, r) => n + r.gainUnavailable, 0)}
+              />
             )}
 
             {finished && (

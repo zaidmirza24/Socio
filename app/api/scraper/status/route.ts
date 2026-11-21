@@ -62,6 +62,8 @@ export async function GET(request: NextRequest) {
         postsUpserted: ingestionResult.summary?.postsUpserted ?? 0,
         snapshotsCreated: ingestionResult.summary?.snapshotsCreated ?? 0,
         postsFound: ingestionResult.summary?.postsFound ?? 0,
+        // Present only for the request that actually saved the data; null if it was saved earlier.
+        gain: ingestionResult.summary?.gain ?? null,
         accountsProcessed: ingestionResult.summary?.accountsProcessed ?? 0,
         message: ingestionResult.message,
       });

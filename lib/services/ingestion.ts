@@ -2,6 +2,7 @@ import { createAdminClient } from "../supabase/admin.ts";
 import { formatDate } from "../utils.ts";
 import { applyDayWindowAndCap } from "../utils/day-window.ts";
 import { getFeatureSettings } from "./settings.ts";
+import { RunGainAccumulator, type RunGain } from "../metrics/run-gain.ts";
 import type { AdapterResult } from "../collectors/instagram.ts";
 import type { PlatformType, RunStatus, ScraperJobType, PostMatchStatus } from "../../types/database.ts";
 import {
@@ -36,6 +37,8 @@ export interface IngestionSummary {
   postsNew?: number;
   postsRefreshed?: number;
   snapshotsCreated: number;
+  /** Engagement gained on already-tracked posts during this run (new posts are counted separately). */
+  gain?: RunGain;
   errors: string[];
 }
 
@@ -62,6 +65,7 @@ export async function processIngestion(
   let postsDiscarded = 0;
   let reviewsQueued = 0;
   let snapshotsCreated = 0;
+  const runGain = new RunGainAccumulator();
 
   // 1. Check or initialize collection_run audit record
   let runId: string;
@@ -320,6 +324,17 @@ export async function processIngestion(
           return false;
         }
 
+        // The latest snapshot stored BEFORE this write (today's own, if an earlier run already
+        // saved one, otherwise the most recent earlier day). Used only for the run's gain summary.
+        const { data: prevSnap } = await supabase
+          .from("post_snapshots")
+          .select("likes, comments, views")
+          .eq("post_id", legacyPost.id)
+          .lte("snapshot_date", targetDate)
+          .order("snapshot_date", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
         const { error: snapErr } = await supabase.from("post_snapshots").upsert(
           {
             post_id: legacyPost.id,
@@ -341,6 +356,13 @@ export async function processIngestion(
           );
           return false;
         }
+        runGain.record(
+          { url: post.url, handle: post.account_handle, platform: post.platform },
+          prevSnap
+            ? { likes: prevSnap.likes ?? null, comments: prevSnap.comments ?? null, views: prevSnap.views ?? null }
+            : null,
+          { likes: post.metrics.likes, comments: post.metrics.comments, views: post.metrics.views }
+        );
         return true;
       } catch (err: unknown) {
         errors.push(
@@ -602,6 +624,7 @@ export async function processIngestion(
       postsNew: options.jobType === "refresh" ? 0 : postsMatched,
       postsRefreshed: options.jobType === "refresh" ? postsMatched : 0,
       snapshotsCreated,
+      gain: runGain.result(),
       errors,
     };
   } catch (err: unknown) {
