@@ -5,6 +5,7 @@ import { getPostsPage, type PostsPageResult, type DateRangePreset } from "@/lib/
 import { DateRangeFilter } from "@/components/analytics/DateRangeFilter";
 import { PlatformFilter } from "@/components/analytics/PlatformFilter";
 import { PlatformBadge } from "@/components/ui/PlatformBadge";
+import { ErrorState } from "@/components/ui/ErrorState";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Pagination } from "@/components/ui/Pagination";
 import { parsePlatformFilter } from "@/lib/platform";
@@ -130,9 +131,15 @@ export default async function PostsPage({ searchParams }: PostsPageProps) {
       </PageHeader>
 
       {loadError && (
-        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-          Could not load posts: {loadError}
-        </div>
+        <ErrorState
+          title="Couldn't load posts"
+          message="The list can't be shown right now. Reload the page to try again."
+          detail={loadError}
+        >
+          <a href="" className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+            Reload page
+          </a>
+        </ErrorState>
       )}
 
       {result.sortCapped && (
@@ -142,6 +149,7 @@ export default async function PostsPage({ searchParams }: PostsPageProps) {
         </div>
       )}
 
+      {!loadError && (
       <div className="rounded-xl border border-slate-200/90 bg-white shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs text-slate-600">
@@ -249,6 +257,7 @@ export default async function PostsPage({ searchParams }: PostsPageProps) {
 
         <Pagination page={pageNum} pageSize={PAGE_SIZE} total={total} hrefFor={(n) => buildUrl({ page: n })} />
       </div>
+      )}
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { fetchAllPages } from "@/lib/supabase/metrics-data";
 import { formatMetric, formatDisplayDate } from "@/lib/utils";
 import { PlatformFilter } from "@/components/analytics/PlatformFilter";
 import { PlatformBadge } from "@/components/ui/PlatformBadge";
+import { ErrorState } from "@/components/ui/ErrorState";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Pagination } from "@/components/ui/Pagination";
 import { parsePlatformFilter } from "@/lib/platform";
@@ -164,9 +165,15 @@ export default async function VolunteersPage({ searchParams }: Props) {
       </PageHeader>
 
       {loadError && (
-        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-          Could not load volunteers: {loadError}. Ask a developer to check that the volunteers database migration has been applied.
-        </div>
+        <ErrorState
+          title="Couldn't load volunteers"
+          message="The list can't be shown right now. Reload the page to try again."
+          detail={loadError}
+        >
+          <a href="" className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+            Reload page
+          </a>
+        </ErrorState>
       )}
 
       {!loadError && sorted.length === 0 && (

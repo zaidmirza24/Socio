@@ -68,6 +68,8 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     totalViews: 0,
   };
 
+  let loadError: string | null = null;
+
   try {
     const [
       matrix,
@@ -102,10 +104,12 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     recentPosts = posts;
   } catch (err) {
     console.error("[DashboardPage] Failed to load dashboard data:", err);
+    loadError = err instanceof Error ? err.message : "Failed to load dashboard data";
   }
 
   return (
     <DashboardTabs
+      loadError={loadError}
       matrixData={matrixData}
       analyticsData={{
         currentRange: range,

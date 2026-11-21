@@ -1,6 +1,9 @@
 "use client";
 
 import { platformLabel } from "@/lib/platform";
+import { Skeleton, TableSkeleton } from "@/components/ui/Skeleton";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { fetchJson } from "@/lib/fetch-json";
 import { Modal } from "@/components/ui/Modal";
 import { Notice } from "@/components/ui/Notice";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
@@ -106,11 +109,7 @@ export default function AccountsPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/accounts");
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to load accounts");
-      }
+      const data = await fetchJson<{ accounts?: AccountItem[] }>("/api/accounts");
       setAccounts(data.accounts || []);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Error fetching accounts");
@@ -594,6 +593,12 @@ export default function AccountsPage() {
         }
       />
 
+      {error && accounts.length > 0 && (
+        <Notice tone="error" onDismiss={() => setError(null)}>
+          Couldn&apos;t refresh the list: {error} Showing the last loaded data.
+        </Notice>
+      )}
+
       {pageError && (
         <Notice tone="error" onDismiss={() => setPageError(null)}>
           {pageError}
@@ -616,19 +621,19 @@ export default function AccountsPage() {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Accounts</span>
-          <div className="mt-1 text-2xl font-bold text-slate-900">{totalAccounts}</div>
+          <div className="mt-1 text-2xl font-bold text-slate-900">{loading && accounts.length === 0 ? <Skeleton className="h-8 w-14" /> : totalAccounts}</div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Active</span>
-          <div className="mt-1 text-2xl font-bold text-emerald-600">{activeCount}</div>
+          <div className="mt-1 text-2xl font-bold text-emerald-600">{loading && accounts.length === 0 ? <Skeleton className="h-8 w-14" /> : activeCount}</div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Posts collected</span>
-          <div className="mt-1 text-2xl font-bold text-blue-600">{totalPostsTracked}</div>
+          <div className="mt-1 text-2xl font-bold text-blue-600">{loading && accounts.length === 0 ? <Skeleton className="h-8 w-14" /> : totalPostsTracked}</div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total followers</span>
-          <div suppressHydrationWarning className="mt-1 text-2xl font-bold text-slate-900">{formatNumber(totalFollowers)}</div>
+          <div suppressHydrationWarning className="mt-1 text-2xl font-bold text-slate-900">{loading && accounts.length === 0 ? <Skeleton className="h-8 w-20" /> : formatNumber(totalFollowers)}</div>
         </div>
       </div>
 
@@ -721,23 +726,11 @@ export default function AccountsPage() {
       </div>
 
       {/* Main Table */}
-      <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-        {loading ? (
-          <div className="p-12 flex flex-col items-center justify-center text-slate-500">
-            <Loader2 className="h-8 w-8 animate-spin text-blue-600 mb-2" />
-            <span className="text-sm">Loading accounts from database...</span>
-          </div>
-        ) : error ? (
-          <div className="p-8 text-center text-red-600">
-            <AlertCircle className="h-8 w-8 mx-auto mb-2 text-red-500" />
-            <p className="text-sm font-semibold">{error}</p>
-            <button
-              onClick={fetchAccounts}
-              className="mt-3 text-xs underline font-medium text-slate-600"
-            >
-              Retry
-            </button>
-          </div>
+      <div className={`rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden transition-opacity ${loading && accounts.length > 0 ? "opacity-60" : ""}`} aria-busy={loading}>
+        {loading && accounts.length === 0 ? (
+          <TableSkeleton rows={8} columns={6} />
+        ) : error && accounts.length === 0 ? (
+          <ErrorState compact title="Couldn't load accounts" message={error} onRetry={fetchAccounts} />
         ) : filteredAccounts.length === 0 ? (
           <div className="p-12 text-center text-slate-500">
             <Users className="h-10 w-10 mx-auto mb-2 text-slate-300" />

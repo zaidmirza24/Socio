@@ -3,6 +3,7 @@
 import React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Grid, BarChart3 } from "lucide-react";
+import { ErrorState } from "@/components/ui/ErrorState";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { VolunteersMatrixView } from "@/components/matrix/VolunteersMatrixView";
 import { CampaignAnalyticsView } from "@/components/analytics/CampaignAnalyticsView";
@@ -21,6 +22,8 @@ import type {
 } from "@/lib/supabase/queries";
 
 interface DashboardTabsProps {
+  /** Set when the server could not load the data; the numbers below are then NOT real zeros. */
+  loadError?: string | null;
   matrixData: MatrixData;
   analyticsData: {
     currentRange: DateRangePreset;
@@ -36,7 +39,7 @@ interface DashboardTabsProps {
   };
 }
 
-export function DashboardTabs({ matrixData, analyticsData }: DashboardTabsProps) {
+export function DashboardTabs({ matrixData, analyticsData, loadError }: DashboardTabsProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -86,7 +89,14 @@ export function DashboardTabs({ matrixData, analyticsData }: DashboardTabsProps)
       />
 
       {/* Tab Content */}
-      {activeTab === "matrix" ? (
+      {loadError ? (
+        <ErrorState
+          title="Couldn't load the dashboard data"
+          message="The numbers can't be shown right now, and zeros would be misleading. Reload the page to try again."
+          detail={loadError}
+          onRetry={() => router.refresh()}
+        />
+      ) : activeTab === "matrix" ? (
         <VolunteersMatrixView data={matrixData} />
       ) : (
         <CampaignAnalyticsView

@@ -14,6 +14,9 @@ import {
   Loader2,
   RefreshCw,
 } from "lucide-react";
+import { TableSkeleton, StatCardsSkeleton } from "@/components/ui/Skeleton";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { fetchJson } from "@/lib/fetch-json";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { DateRangeFilter } from "@/components/analytics/DateRangeFilter";
 import { PlatformBadge } from "@/components/ui/PlatformBadge";
@@ -99,9 +102,7 @@ export default function SystemHealthPage() {
       const params = new URLSearchParams({ range, limit: "200" });
       if (platform !== "all") params.set("platform", platform);
       if (status !== "all") params.set("status", status);
-      const res = await fetch(`/api/runs?${params.toString()}`);
-      const data = (await res.json()) as { runs?: RunItem[]; error?: string };
-      if (!res.ok) throw new Error(data.error || "Failed to fetch runs");
+      const data = await fetchJson<{ runs?: RunItem[] }>(`/api/runs?${params.toString()}`);
       setRuns(data.runs ?? []);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Error fetching runs");
@@ -119,9 +120,9 @@ export default function SystemHealthPage() {
     setBusyRun(run.id);
     setNotice(null);
     try {
-      const res = await fetch(`/api/scraper/status?runId=${encodeURIComponent(run.actor_run_id)}`);
-      const data = (await res.json()) as { error?: string; message?: string; status?: string; postsUpserted?: number };
-      if (!res.ok) throw new Error(data.error || "Could not check this run");
+      const data = await fetchJson<{ message?: string; status?: string; postsUpserted?: number }>(
+        `/api/scraper/status?runId=${encodeURIComponent(run.actor_run_id)}`
+      );
       setNotice({
         tone: data.status === "FAILED" ? "error" : "ok",
         text:
@@ -188,6 +189,9 @@ export default function SystemHealthPage() {
         </div>
       )}
 
+      {loading && runs.length === 0 && !error ? (
+        <StatCardsSkeleton />
+      ) : (
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between text-sm font-medium text-slate-500">
@@ -229,6 +233,7 @@ export default function SystemHealthPage() {
           <div className="text-xs text-slate-500 mt-0.5">Budget and forecast live in Settings</div>
         </div>
       </div>
+      )}
 
       <div className="space-y-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -263,16 +268,10 @@ export default function SystemHealthPage() {
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-          {loading ? (
-            <div className="p-10 flex flex-col items-center justify-center text-slate-500">
-              <Loader2 className="h-7 w-7 animate-spin text-blue-600 mb-2" />
-              <span className="text-sm">Fetching run audit logs...</span>
-            </div>
+          {loading && runs.length === 0 && !error ? (
+            <TableSkeleton rows={6} columns={7} />
           ) : error ? (
-            <div className="p-8 text-center text-red-600">
-              <AlertCircle className="h-7 w-7 mx-auto mb-2 text-red-500" />
-              <p className="text-sm font-semibold">{error}</p>
-            </div>
+            <ErrorState compact title="Couldn't load runs" message={error} onRetry={() => void fetchRuns()} />
           ) : runs.length === 0 ? (
             <div className="p-10 text-center text-slate-500">
               <Clock className="h-9 w-9 mx-auto mb-2 text-slate-300" />

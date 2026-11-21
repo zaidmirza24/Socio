@@ -3,6 +3,9 @@
 import { PageHeader } from "@/components/ui/PageHeader";
 import { useState, useEffect, useCallback } from "react";
 import { Database, Cloud, CheckCircle2, AlertCircle, Loader2, RefreshCw, UserPlus, Trash2, Lock, Mail, User } from "lucide-react";
+import { CardsSkeleton } from "@/components/ui/Skeleton";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { fetchJson } from "@/lib/fetch-json";
 import { Modal } from "@/components/ui/Modal";
 import { Notice, type NoticeTone } from "@/components/ui/Notice";
 import { Switch } from "@/components/ui/Switch";
@@ -46,6 +49,9 @@ export default function SettingsPage() {
   } | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [loadingUser, setLoadingUser] = useState(true);
+  const [userLoadError, setUserLoadError] = useState<string | null>(null);
+  const [membersError, setMembersError] = useState<string | null>(null);
+  const [settingsLoadError, setSettingsLoadError] = useState<string | null>(null);
 
   // Team users list (Admin only)
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
@@ -131,17 +137,20 @@ export default function SettingsPage() {
 
   const fetchStrategy = useCallback(async () => {
     setLoadingStrategy(true);
+    setSettingsLoadError(null);
     try {
-      const res = await fetch("/api/admin/settings");
-      if (res.ok) {
-        const data = await res.json();
-        if (data.strategy) setStrategy(data.strategy);
-        if (data.platformSettings) setPlatformSettings(data.platformSettings);
-        if (data.featureSettings) setCaptionsEnabled(data.featureSettings.campaign_captions_enabled);
-        if (data.stats) setStrategyStats(data.stats);
-      }
-    } catch {
-      // Ignored
+      const data = await fetchJson<{
+        strategy?: typeof strategy;
+        platformSettings?: typeof platformSettings;
+        featureSettings?: { campaign_captions_enabled: boolean };
+        stats?: { totalTrackedPosts: number; eligibleForRefresh: number };
+      }>("/api/admin/settings");
+      if (data.strategy) setStrategy(data.strategy);
+      if (data.platformSettings) setPlatformSettings(data.platformSettings);
+      if (data.featureSettings) setCaptionsEnabled(data.featureSettings.campaign_captions_enabled);
+      if (data.stats) setStrategyStats(data.stats);
+    } catch (err: unknown) {
+      setSettingsLoadError(err instanceof Error ? err.message : "Could not load settings.");
     } finally {
       setLoadingStrategy(false);
     }
@@ -206,14 +215,12 @@ export default function SettingsPage() {
 
   const fetchTeamMembers = useCallback(async () => {
     setLoadingMembers(true);
+    setMembersError(null);
     try {
-      const res = await fetch("/api/admin/users");
-      if (res.ok) {
-        const data = await res.json();
-        setTeamMembers(data.users || []);
-      }
-    } catch {
-      // Ignored
+      const data = await fetchJson<{ users?: TeamMember[] }>("/api/admin/users");
+      setTeamMembers(data.users || []);
+    } catch (err: unknown) {
+      setMembersError(err instanceof Error ? err.message : "Could not load the team list.");
     } finally {
       setLoadingMembers(false);
     }
@@ -222,30 +229,25 @@ export default function SettingsPage() {
   // Fetch current user and role
   const fetchCurrentUser = useCallback(async () => {
     setLoadingUser(true);
+    setUserLoadError(null);
     try {
-      const res = await fetch("/api/auth/me");
-      if (res.ok) {
-        const data = await res.json();
-        if (data.user) {
-          setCurrentUser({
-            id: data.user.id,
-            email: data.user.email,
-            role: data.profile?.role || "member",
-            full_name: data.profile?.full_name || null,
-          });
-          setIsAdmin(data.isAdmin);
-
-          // Load strategy
-          fetchStrategy();
-
-          // If admin, load team members
-          if (data.isAdmin) {
-            fetchTeamMembers();
-          }
-        }
-      }
-    } catch {
-      // Ignored
+      const data = await fetchJson<{
+        user?: { id: string; email: string };
+        profile?: { role?: string; full_name?: string | null } | null;
+        isAdmin?: boolean;
+      }>("/api/auth/me");
+      if (!data.user) throw new Error("Your session has expired. Please sign in again.");
+      setCurrentUser({
+        id: data.user.id,
+        email: data.user.email,
+        role: data.profile?.role || "member",
+        full_name: data.profile?.full_name || null,
+      });
+      setIsAdmin(Boolean(data.isAdmin));
+      fetchStrategy();
+      if (data.isAdmin) fetchTeamMembers();
+    } catch (err: unknown) {
+      setUserLoadError(err instanceof Error ? err.message : "Could not load your account.");
     } finally {
       setLoadingUser(false);
     }
@@ -376,6 +378,26 @@ export default function SettingsPage() {
           {pageNotice.message}
         </Notice>
       )}
+
+      {loadingUser && <CardsSkeleton count={4} />}
+
+      {!loadingUser && userLoadError && (
+        <ErrorState title="Couldn't load your settings" message={userLoadError} onRetry={fetchCurrentUser} />
+      )}
+
+      {!loadingUser && settingsLoadError && !userLoadError && (
+        <Notice tone="error">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>Couldn&apos;t load the saved settings: {settingsLoadError} The values below may not be current.</span>
+            <button type="button" onClick={fetchStrategy} className="font-semibold underline">
+              Try again
+            </button>
+          </div>
+        </Notice>
+      )}
+
+      {!loadingUser && !userLoadError && (
+        <>
 
       {/* Your account */}
       <SettingsCard title="Your account">
@@ -619,7 +641,9 @@ export default function SettingsPage() {
         }
       >
         {isAdmin ? (
-          loadingMembers ? (
+          membersError ? (
+            <ErrorState compact title="Couldn't load the team" message={membersError} onRetry={fetchTeamMembers} />
+          ) : loadingMembers ? (
             <div className="flex items-center justify-center gap-2 py-6 text-sm text-slate-500">
               <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
               Loading team members...
@@ -744,6 +768,9 @@ export default function SettingsPage() {
         Secret keys stay on the server and are never sent to the browser.
         {isAdmin ? " The status of your Apify token is shown in the Apify card above." : ""}
       </p>
+
+        </>
+      )}
 
       <ConfirmDialog
         open={memberToRemove !== null}
