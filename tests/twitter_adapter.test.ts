@@ -50,6 +50,8 @@ describe("Twitter/X Adapter & Normalizer Tests", () => {
     assert.strictEqual(post1.metrics.shares, 35);
     // Views present on all Twitter/X post types
     assert.strictEqual(post1.metrics.views, 2450);
+    assert.strictEqual(post1.metrics.quotes, 4);
+    assert.strictEqual(result.accounts.get("volunteer_anita")?.following, 310);
     assert.strictEqual(post1.thumbnail_url, "https://pbs.twimg.com/media/sample_tweet_pic.jpg");
     assert.strictEqual(post1.media_type, "IMAGE");
 
@@ -60,6 +62,8 @@ describe("Twitter/X Adapter & Normalizer Tests", () => {
     assert.strictEqual(post2.metrics.comments, 0);
     assert.strictEqual(post2.metrics.shares, 0);
     assert.strictEqual(post2.metrics.views, 112);
+    assert.strictEqual(post2.metrics.quotes, null); // quoteCount absent -> null, never 0
+    assert.strictEqual(result.accounts.get("rohit_activist")?.following, null);
     assert.strictEqual(post2.media_type, "TEXT");
 
     // Post 3: Sneha Action (Refresh item format)

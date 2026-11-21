@@ -15,6 +15,7 @@ const triggerPayloadSchema = z.object({
   postLimit: z.number().int().min(1).max(50).optional(),
   handles: z.array(z.string()).optional(),
   urls: z.array(z.string().url()).optional(),
+  force: z.boolean().optional(),
   provider: z.enum(["apify", "brightdata"]).optional(),
   customInput: z.record(z.unknown()).optional(),
 });
@@ -45,7 +46,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { jobType, platform, postLimit, handles, urls, provider, customInput } = parsed.data;
+    const { jobType, platform, postLimit, handles, urls, force, provider, customInput } = parsed.data;
 
     // Check platform toggle saved in Settings (system_settings table), not a hardcoded flag
     const platformSettings = await getPlatformSettings();
@@ -64,6 +65,7 @@ export async function POST(request: NextRequest) {
       const refreshResult = await triggerWeeklyRefresh({
         platform: platform as PlatformType,
         customUrls: urls,
+        force,
         providerOverride: provider as ScraperProviderType,
       });
 

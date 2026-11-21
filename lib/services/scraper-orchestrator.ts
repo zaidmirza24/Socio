@@ -276,6 +276,8 @@ export async function triggerWeeklyRefresh(
     maxBatchSize?: number;
     providerOverride?: ScraperProviderType;
     customUrls?: string[];
+    /** Admin override: refresh every tracked post inside the age cutoff, even if not yet due. */
+    force?: boolean;
   } = {}
 ): Promise<{
   success: boolean;
@@ -309,10 +311,13 @@ export async function triggerWeeklyRefresh(
   } else {
     const posts = await getRefreshCandidates(platform, ageCutoff);
 
-    // Filter to posts whose last refresh was >= refresh_interval_days ago (or newly discovered / null)
-    const eligible = posts.filter(
-      (p) => !p.last_metrics_refresh_at || p.last_metrics_refresh_at <= refreshThreshold
-    );
+    // Filter to posts whose last refresh was >= refresh_interval_days ago (or newly discovered / null).
+    // `force` skips the interval check but still honours the age cutoff applied in getRefreshCandidates.
+    const eligible = options.force
+      ? posts
+      : posts.filter(
+          (p) => !p.last_metrics_refresh_at || p.last_metrics_refresh_at <= refreshThreshold
+        );
 
     targetUrls = eligible.map((p) => p.url);
   }
@@ -366,7 +371,9 @@ export async function triggerWeeklyRefresh(
     jobIds,
     eligiblePostsCount: targetUrls.length,
     dispatchedBatchesCount: batches.length,
-    message: `Dispatched ${batches.length} batch(es) for ${targetUrls.length} post(s) due for ${strategy.refresh_interval_days}-day refresh.`,
+    message: options.force
+      ? `Dispatched ${batches.length} batch(es) to force-refresh ${targetUrls.length} post(s).`
+      : `Dispatched ${batches.length} batch(es) for ${targetUrls.length} post(s) due for ${strategy.refresh_interval_days}-day refresh.`,
   };
 }
 

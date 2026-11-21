@@ -55,11 +55,13 @@ export const rawTwitterItemSchema = z.object({
   favouriteCount: z.number().int().optional().nullable(),
   replyCount: z.number().int().optional().nullable(),
   repostCount: z.number().int().optional().nullable(),
+  quoteCount: z.number().int().optional().nullable(),
   viewCount: z.number().int().optional().nullable(),
   author: z.object({
     name: z.string().optional().nullable(),
     screenName: z.string().optional().nullable(),
     followersCount: z.number().int().optional().nullable(),
+    friendsCount: z.number().int().optional().nullable(),
     profileImageUrl: z.string().optional().nullable(),
   }).optional().nullable(),
 
@@ -145,6 +147,9 @@ export function normalizeTwitterDataset(rawData: unknown[]): AdapterResult {
     // Shares / Reposts
     const shares = typeof data.repostCount === "number" && data.repostCount >= 0 ? data.repostCount : null;
 
+    // Quotes: null if absent (e.g. refresh actor), 0 only if genuinely zero
+    const quotes = typeof data.quoteCount === "number" && data.quoteCount >= 0 ? data.quoteCount : null;
+
     // Views: Twitter/X public view count is available for ALL post types on discovery
     const views = typeof data.viewCount === "number" && data.viewCount >= 0 ? data.viewCount : null;
 
@@ -177,6 +182,7 @@ export function normalizeTwitterDataset(rawData: unknown[]): AdapterResult {
         comments,
         shares,
         views,
+        quotes,
       },
       raw_json: data as Record<string, unknown>,
     };
@@ -189,7 +195,10 @@ export function normalizeTwitterDataset(rawData: unknown[]): AdapterResult {
         platform: "x",
         handle: cleanHandle,
         followers: data.author?.followersCount ?? null,
-        following: null,
+        following:
+          typeof data.author?.friendsCount === "number" && data.author.friendsCount >= 0
+            ? data.author.friendsCount
+            : null,
         post_count: null,
       });
     }

@@ -8,6 +8,8 @@ import type { PlatformType } from "@/types/database";
 const payloadSchema = z.object({
   jobType: z.enum(["discovery", "refresh"]).default("discovery"),
   postLimit: z.number().int().min(1).max(50).optional(),
+  /** Refresh only: include posts that are not yet due for their interval refresh. */
+  force: z.boolean().optional(),
   /** Limit the run to one platform. Omit to run every enabled platform. */
   platform: z.enum(["instagram", "facebook", "x"]).optional(),
 });
@@ -39,7 +41,7 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   }
-  const { jobType, postLimit, platform: onlyPlatform } = parsed.data;
+  const { jobType, postLimit, force, platform: onlyPlatform } = parsed.data;
 
   const platformSettings = await getPlatformSettings();
   const platforms: PlatformType[] = ["instagram"];
@@ -62,7 +64,7 @@ export async function POST(request: NextRequest) {
   for (const platform of platforms) {
     try {
       if (jobType === "refresh") {
-        const res = await triggerWeeklyRefresh({ platform });
+        const res = await triggerWeeklyRefresh({ platform, force });
         results.push({
           platform,
           ok: res.success, // success with no runIds = nothing was due

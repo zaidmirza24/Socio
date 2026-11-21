@@ -22,6 +22,7 @@ interface SnapshotExportRow {
   likes: number | null;
   comments: number | null;
   shares: number | null;
+  quotes: number | null;
   views: number | null;
   posts: {
     url: string;
@@ -66,7 +67,7 @@ export async function GET() {
       const { data, error } = await supabase
         .from("post_snapshots")
         .select(
-          `post_id, snapshot_date, likes, comments, shares, views,
+          `post_id, snapshot_date, likes, comments, shares, quotes, views,
            posts!inner (
              url, platform, posted_at, match_status,
              accounts!inner ( handle, volunteer_name ),
@@ -98,6 +99,7 @@ export async function GET() {
       "Likes",
       "Comments",
       "Shares",
+      "Quotes",
       "Views",
       "Growth Likes",
       "Growth Comments",
@@ -127,6 +129,7 @@ export async function GET() {
           escapeCSV(metric(s.likes)),
           escapeCSV(metric(s.comments)),
           escapeCSV(metric(s.shares)),
+          escapeCSV(metric(s.quotes)),
           escapeCSV(metric(s.views)),
           escapeCSV(growth(s.likes, before?.likes)),
           escapeCSV(growth(s.comments, before?.comments)),

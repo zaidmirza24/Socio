@@ -22,6 +22,7 @@ import {
   Calendar,
   Sparkles,
   Share2,
+  Quote,
   Grid,
   BarChart3,
   Users,
@@ -536,7 +537,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
 
                   <div>
                     {/* Metrics Bar */}
-                    <div className="grid grid-cols-3 gap-2 py-3 px-3 rounded-xl bg-slate-50 border border-slate-100 mb-4 text-center">
+                    <div className={`grid ${post.quotes !== null ? "grid-cols-4" : "grid-cols-3"} gap-2 py-3 px-3 rounded-xl bg-slate-50 border border-slate-100 mb-4 text-center`}>
                       <div>
                         <span className="flex items-center justify-center gap-1 text-xs font-medium text-slate-500">
                           <Heart className="h-3 w-3 text-rose-500" /> Likes
@@ -561,6 +562,16 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
                           {formatMetric(post.views)}
                         </span>
                       </div>
+                      {post.quotes !== null && (
+                        <div>
+                          <span className="flex items-center justify-center gap-1 text-xs font-medium text-slate-500">
+                            <Quote className="h-3 w-3 text-violet-500" /> Quotes
+                          </span>
+                          <span className="text-sm font-bold text-slate-900">
+                            {formatMetric(post.quotes)}
+                          </span>
+                        </div>
+                      )}
                     </div>
 
                     {/* Actionable buttons: View on IG & Copy Link */}
@@ -616,6 +627,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
                     <th className="px-6 py-3 text-right">Likes</th>
                     <th className="px-6 py-3 text-right">Comments</th>
                     <th className="px-6 py-3 text-right">Views</th>
+                    <th className="px-6 py-3 text-right">Quotes</th>
                     <th className="px-6 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -648,6 +660,9 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
                         </td>
                         <td className="px-6 py-3.5 text-right font-medium text-slate-600">
                           {formatMetric(post.views)}
+                        </td>
+                        <td className="px-6 py-3.5 text-right font-medium text-slate-600">
+                          {formatMetric(post.quotes)}
                         </td>
                         <td className="px-6 py-3.5 text-right">
                           <div className="flex items-center justify-end gap-2">

@@ -98,6 +98,7 @@ export interface VolunteerPostDetail {
   comments: number | null;
   views: number | null;
   shares: number | null;
+  quotes: number | null;
   engagement: number;
 }
 
@@ -736,7 +737,8 @@ export async function getVolunteerDetails(
         likes,
         comments,
         views,
-        shares
+        shares,
+        quotes
       )
     `)
     .eq("account_id", account.id);
@@ -760,6 +762,7 @@ export async function getVolunteerDetails(
       comments: number | null;
       views: number | null;
       shares: number | null;
+      quotes: number | null;
     }>) ?? [];
 
     if (since) {
@@ -773,6 +776,7 @@ export async function getVolunteerDetails(
     const comments = latest?.comments ?? null;
     const views = latest?.views ?? null;
     const shares = latest?.shares ?? null;
+    const quotes = latest?.quotes ?? null;
     const engagement = coerce(likes) + coerce(comments);
 
     totalLikes += coerce(likes);
@@ -804,6 +808,7 @@ export async function getVolunteerDetails(
       comments,
       views,
       shares,
+      quotes,
       engagement,
     });
   }

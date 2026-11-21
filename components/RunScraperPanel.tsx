@@ -66,6 +66,7 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<JobType>("discovery");
   const [scope, setScope] = useState<Scope>("all");
+  const [force, setForce] = useState(false);
   const [runs, setRuns] = useState<PlatformRun[]>([]);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const runsRef = useRef<PlatformRun[]>([]);
@@ -150,7 +151,11 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
       const res = await fetch("/api/scraper/trigger-all", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobType: mode, ...(scope !== "all" ? { platform: scope } : {}) }),
+        body: JSON.stringify({
+          jobType: mode,
+          ...(mode === "refresh" && force ? { force: true } : {}),
+          ...(scope !== "all" ? { platform: scope } : {}),
+        }),
       });
       const data: TriggerResponse = await res.json();
       const results = data.results ?? [];
@@ -229,6 +234,19 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
                   ))}
                 </div>
                 <p className="mt-1.5 text-xs leading-relaxed text-slate-500">{modeInfo.help}</p>
+                {mode === "refresh" && (
+                  <label className="mt-2 flex cursor-pointer items-start gap-2 text-xs text-slate-600">
+                    <input
+                      type="checkbox"
+                      checked={force}
+                      onChange={(e) => setForce(e.target.checked)}
+                      className="mt-0.5 h-3.5 w-3.5 rounded border-slate-300"
+                    />
+                    <span>
+                      Refresh now, even if not due. Updates every stored post inside the age cutoff. Uses more Apify credit.
+                    </span>
+                  </label>
+                )}
               </div>
 
               <div>

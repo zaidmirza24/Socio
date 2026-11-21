@@ -328,6 +328,7 @@ export async function processIngestion(
             comments: post.metrics.comments,
             shares: post.metrics.shares,
             views: post.metrics.views,
+            quotes: post.metrics.quotes ?? null,
             raw_json: post.raw_json,
           },
           {

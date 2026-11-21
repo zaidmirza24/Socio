@@ -264,6 +264,7 @@ export interface NormalizedPostItem {
     comments: number | null;
     shares: number | null;
     views: number | null;
+    quotes?: number | null; // X only; null/undefined if unavailable
   };
   raw_json: Record<string, unknown>;
 }
