@@ -373,9 +373,8 @@ export async function refreshTrackedPostsOutsideWindow(options: {
     try {
       // Execute actor synchronously
       const run = await client.actor(actorId).call({
-        directUrls: urls,
-        resultsType: "posts",
-        searchType: "hashtag", // Scraper direct URL mode
+        username: urls, // actor requires `username`; accepts post URLs
+        resultsLimit: 1,
       });
 
       if (!run.defaultDatasetId) {
@@ -521,9 +520,8 @@ export async function fetchDirectPostDetails(
     const actorId = getApifyActorId();
 
     const run = await client.actor(actorId).call({
-      directUrls: [postUrl],
-      resultsType: "posts",
-      searchType: "hashtag",
+      username: [postUrl], // actor requires `username`; accepts post URLs
+      resultsLimit: 1,
     });
 
     if (!run.defaultDatasetId) {

@@ -135,10 +135,11 @@ export class ApifyScraperProvider implements IScraperProvider {
     let targetActorId: string;
 
     if (platform === "instagram") {
+      // This actor requires `username`; it accepts direct post URLs there (verified against the live
+      // actor). `directUrls` alone is rejected with "Field input.username is required".
       dynamicInput = {
-        directUrls: postUrls,
-        resultsType: "posts",
-        searchType: "hashtag", // Apify Instagram Scraper direct URL mode
+        username: postUrls,
+        resultsLimit: 1,
         ...(options.customInput || {}),
       };
       targetActorId = await getApifyActorIdAsync();
@@ -179,9 +180,8 @@ export class ApifyScraperProvider implements IScraperProvider {
       const actorId = await getApifyActorIdAsync();
 
       const run = await client.actor(actorId).call({
-        directUrls: [postUrl],
-        resultsType: "posts",
-        searchType: "hashtag",
+        username: [postUrl], // actor requires `username`; accepts post URLs
+        resultsLimit: 1,
       });
 
       if (!run.defaultDatasetId) {
