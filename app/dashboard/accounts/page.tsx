@@ -33,11 +33,14 @@ import {
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { formatNumber, formatMetric } from "@/lib/utils";
+import { accountProfileHref, volunteerProfileHref } from "@/lib/utils/volunteer-links";
+import { extractHandleAndPlatform, type AccountPlatform } from "@/lib/utils/account-handles";
 
 interface AccountItem {
   id: string;
   platform: "instagram" | "facebook" | "x";
   handle: string;
+  volunteer_id?: string | null;
   volunteer_name: string;
   status: "active" | "paused" | "archived";
   postsCount: number;
@@ -157,34 +160,7 @@ export default function AccountsPage() {
     setFormError(null);
   };
 
-  // Helper to extract clean handle and auto-detect platform from URLs or raw strings
-  const extractHandleAndPlatform = (
-    raw: string,
-    defaultPlatform: "instagram" | "facebook" | "x" = "instagram"
-  ): { handle: string; platform: "instagram" | "facebook" | "x" } => {
-    let text = raw.trim();
-    let detectedPlatform = defaultPlatform;
-
-    if (/instagram\.com/i.test(text)) {
-      detectedPlatform = "instagram";
-      text = text.replace(/^https?:\/\/(www\.)?instagram\.com\//i, "").split(/[?#]/)[0];
-    } else if (/facebook\.com/i.test(text)) {
-      detectedPlatform = "facebook";
-      text = text.replace(/^https?:\/\/(www\.)?facebook\.com\//i, "").split(/[?#]/)[0];
-      if (/profile\.php/i.test(text) && raw.includes("id=")) {
-        const match = raw.match(/id=([0-9]+)/);
-        if (match) text = match[1];
-      }
-    } else if (/(twitter\.com|x\.com)/i.test(text)) {
-      detectedPlatform = "x";
-      text = text.replace(/^https?:\/\/(www\.)?(twitter|x)\.com\//i, "").split(/[?#]/)[0];
-    }
-
-    const cleanHandle = text.replace(/^@+/, "").replace(/\/+$/, "").trim().toLowerCase();
-    return { handle: cleanHandle, platform: detectedPlatform };
-  };
-
-  const normalizeHandle = (raw: string, platform: "instagram" | "facebook" | "x" = "instagram") => {
+  const normalizeHandle = (raw: string, platform: AccountPlatform = "instagram") => {
     return extractHandleAndPlatform(raw, platform).handle;
   };
 
@@ -760,7 +736,7 @@ export default function AccountsPage() {
                   <tr key={account.id} className="hover:bg-slate-50/70 transition">
                     <td className="px-6 py-4 font-semibold text-slate-900">
                       <Link
-                        href={`/dashboard/volunteers/${account.handle}?platform=${account.platform}`}
+                        href={volunteerProfileHref({ volunteerId: account.volunteer_id, handle: account.handle, platform: account.platform })}
                         className="flex items-center gap-2 hover:text-blue-600 hover:underline"
                       >
                         <UserCheck className="h-4 w-4 text-slate-500 shrink-0" />
@@ -769,7 +745,7 @@ export default function AccountsPage() {
                     </td>
                     <td className="px-6 py-4 font-medium text-blue-600">
                       <Link
-                        href={`/dashboard/volunteers/${account.handle}?platform=${account.platform}`}
+                        href={accountProfileHref(account.handle, account.platform)}
                         className="hover:underline flex items-center gap-1 font-mono text-xs"
                       >
                         @{account.handle}
