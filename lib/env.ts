@@ -19,6 +19,11 @@ const serverEnvSchema = z.object({
   APIFY_FACEBOOK_POST_ACTOR_ID: z.string().optional(),
   APIFY_TWITTER_POST_ACTOR_ID: z.string().optional(),
   FACEBOOK_COOKIES: z.string().optional(),
+  // Optional: let Apify call us when a run ends instead of relying on the open browser tab.
+  // Needs a PUBLIC https URL of this app (a deployed copy, or a tunnel while testing) and a shared
+  // secret. Leave both unset locally; polling then does the job.
+  APIFY_WEBHOOK_BASE_URL: z.string().url("APIFY_WEBHOOK_BASE_URL must be a valid URL").optional(),
+  APIFY_WEBHOOK_SECRET: z.string().min(16, "APIFY_WEBHOOK_SECRET must be at least 16 characters").optional(),
 });
 
 const clientEnvSchema = z.object({
@@ -48,6 +53,8 @@ export function getServerEnv(): ServerEnv {
     APIFY_FACEBOOK_POST_ACTOR_ID: process.env.APIFY_FACEBOOK_POST_ACTOR_ID,
     APIFY_TWITTER_POST_ACTOR_ID: process.env.APIFY_TWITTER_POST_ACTOR_ID,
     FACEBOOK_COOKIES: process.env.FACEBOOK_COOKIES,
+    APIFY_WEBHOOK_BASE_URL: process.env.APIFY_WEBHOOK_BASE_URL || undefined,
+    APIFY_WEBHOOK_SECRET: process.env.APIFY_WEBHOOK_SECRET || undefined,
   });
 
   if (!result.success) {

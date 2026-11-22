@@ -7,6 +7,18 @@ import {
 } from "../../apify/client.ts";
 import { getApifyConfig } from "../../services/integrations.ts";
 import { APIFY_RUN_MEMORY_MB } from "../../config/batching.ts";
+import { getServerEnv } from "../../env.ts";
+import { buildRunWebhooks } from "./webhook.ts";
+
+/** Start options for a run: explicit memory, plus the end-of-run webhook when one is configured. */
+function runStartOptions(platform: PlatformType) {
+  const env = getServerEnv();
+  const webhooks = buildRunWebhooks({
+    baseUrl: env.APIFY_WEBHOOK_BASE_URL,
+    secret: env.APIFY_WEBHOOK_SECRET,
+  });
+  return { memory: APIFY_RUN_MEMORY_MB[platform], ...(webhooks.length > 0 ? { webhooks } : {}) };
+}
 import { normalizeApifyInstagramDataset, type AdapterResult } from "./adapter.ts";
 import { getPlatformAdapter, normalizePlatformDataset } from "../platform-adapter.ts";
 import type {
@@ -95,11 +107,11 @@ export class ApifyScraperProvider implements IScraperProvider {
     if (taskId && platform === "instagram") {
       executionMode = "task";
       executionTarget = taskId;
-      run = await client.task(taskId).start(dynamicInput, { memory: APIFY_RUN_MEMORY_MB[platform] });
+      run = await client.task(taskId).start(dynamicInput, runStartOptions(platform));
     } else {
       executionMode = "actor";
       executionTarget = targetActorId;
-      run = await client.actor(targetActorId).start(dynamicInput, { memory: APIFY_RUN_MEMORY_MB[platform] });
+      run = await client.actor(targetActorId).start(dynamicInput, runStartOptions(platform));
     }
 
     return {
@@ -147,7 +159,7 @@ export class ApifyScraperProvider implements IScraperProvider {
       targetActorId = apifyConfig.actors[platform].refresh;
     }
 
-    const run = await client.actor(targetActorId).start(dynamicInput, { memory: APIFY_RUN_MEMORY_MB[platform] });
+    const run = await client.actor(targetActorId).start(dynamicInput, runStartOptions(platform));
 
     return {
       success: true,

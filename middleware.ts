@@ -66,7 +66,9 @@ export async function middleware(request: NextRequest) {
   const isProtectedApi =
     request.nextUrl.pathname.startsWith("/api/") &&
     !request.nextUrl.pathname.startsWith("/api/auth") &&
-    !request.nextUrl.pathname.startsWith("/api/admin/users");
+    !request.nextUrl.pathname.startsWith("/api/admin/users") &&
+    // Called by Apify, not a logged-in user; the route authenticates with a shared secret.
+    !request.nextUrl.pathname.startsWith("/api/webhooks/apify");
 
   // Deny unauthenticated API calls
   if (!user && isProtectedApi) {
