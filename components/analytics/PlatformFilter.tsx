@@ -33,7 +33,7 @@ export function PlatformFilter({ value }: { value: PlatformValue }) {
 
   return (
     <div
-      className={`inline-flex rounded-xl border border-slate-200 bg-slate-50/90 p-1 text-xs font-medium ${pending ? "opacity-70" : ""}`}
+      className={`inline-flex rounded-xl border border-slate-200 bg-slate-50/90 p-1 text-xs font-medium ${pending ? "opacity-70" : ""} `}
       role="group"
       aria-label="Platform filter"
     >
@@ -43,9 +43,8 @@ export function PlatformFilter({ value }: { value: PlatformValue }) {
           type="button"
           onClick={() => select(id)}
           disabled={pending}
-          className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 transition ${
-            value === id ? "bg-white font-semibold text-slate-900 shadow-xs" : "text-slate-600 hover:text-slate-900"
-          }`}
+          className={`inline-flex focus:bg-black items-center gap-1 rounded-lg px-2.5 py-1.5 transition ${value === id ? "bg-blue-500 text-white font-semibold  shadow-xs" : "text-slate-600 hover:bg-slate-200 "
+            }`}
         >
           <Icon className="h-3.5 w-3.5" />
           {label}
