@@ -31,14 +31,15 @@ function runIngestionTests(): void {
   // ─────────────────────────────────────────────────────────────
   // 2. Direct URL Fetch Batching
   // ─────────────────────────────────────────────────────────────
-  const mockUrls = Array.from({ length: 120 }, (_, i) => `https://instagram.com/p/post_${i + 1}/`);
+  const total = DIRECT_URL_BATCH_SIZE * 2 + 20;
+  const mockUrls = Array.from({ length: total }, (_, i) => `https://instagram.com/p/post_${i + 1}/`);
   const urlBatches = chunk(mockUrls, DIRECT_URL_BATCH_SIZE);
 
-  assert(urlBatches.length === 3, `Expected 3 batches for 120 URLs, got ${urlBatches.length}`);
-  assert(urlBatches[0].length === 50, "Batch 0 should have 50 URLs");
-  assert(urlBatches[1].length === 50, "Batch 1 should have 50 URLs");
+  assert(urlBatches.length === 3, `Expected 3 batches for ${total} URLs, got ${urlBatches.length}`);
+  assert(urlBatches[0].length === DIRECT_URL_BATCH_SIZE, `Batch 0 should have ${DIRECT_URL_BATCH_SIZE} URLs`);
+  assert(urlBatches[1].length === DIRECT_URL_BATCH_SIZE, `Batch 1 should have ${DIRECT_URL_BATCH_SIZE} URLs`);
   assert(urlBatches[2].length === 20, "Batch 2 should have 20 URLs");
-  console.log("✓ Direct URL fetch batching: 120 tracked posts partitioned into batches of [50, 50, 20]");
+  console.log(`✓ Direct URL fetch batching: ${total} tracked posts partitioned into batches of [${DIRECT_URL_BATCH_SIZE}, ${DIRECT_URL_BATCH_SIZE}, 20]`);
 
   // ─────────────────────────────────────────────────────────────
   // 3. In-Memory Discard & Matching Pipeline

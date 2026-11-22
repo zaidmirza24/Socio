@@ -2,10 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/supabase/require-admin";
 import {
+  MEMORY_FULL_MESSAGE,
   RunAlreadyActiveError,
+  isMemoryLimitError,
   triggerDailyDiscovery,
   triggerWeeklyRefresh,
 } from "@/lib/services/scraper-orchestrator";
+import { MAX_CONCURRENT_REFRESH_RUNS } from "@/lib/config/batching";
 import { getPlatformSettings } from "@/lib/services/settings";
 import type { PlatformType } from "@/types/database";
 
@@ -22,6 +25,8 @@ interface PlatformRunResult {
   platform: PlatformType;
   ok: boolean;
   runIds: string[];
+  /** Refresh batches (post URLs) waiting for a free slot / free Apify memory. */
+  queuedBatches: string[][];
   accountsCount?: number;
   message: string;
 }
@@ -73,14 +78,19 @@ export async function POST(request: NextRequest) {
   }
 
   const results: PlatformRunResult[] = [];
+  // Apify's memory limit is account-wide, so refresh batches share one concurrency budget across
+  // platforms; whatever does not fit is returned as `queuedBatches` for the client to start later.
+  let refreshSlots = MAX_CONCURRENT_REFRESH_RUNS;
   for (const platform of platforms) {
     try {
       if (jobType === "refresh") {
-        const res = await triggerWeeklyRefresh({ platform, force });
+        const res = await triggerWeeklyRefresh({ platform, force, maxStart: refreshSlots });
+        refreshSlots = Math.max(0, refreshSlots - res.jobIds.length);
         results.push({
           platform,
-          ok: res.success, // success with no runIds = nothing was due
+          ok: res.success, // success with no runIds and no queue = nothing was due
           runIds: res.jobIds,
+          queuedBatches: res.queuedBatches,
           message: res.message,
         });
       } else {
@@ -89,6 +99,7 @@ export async function POST(request: NextRequest) {
           platform,
           ok: true,
           runIds: [res.jobId],
+          queuedBatches: [],
           accountsCount: res.accountsCount,
           message: `Started for ${res.accountsCount} active ${platform} account(s).`,
         });
@@ -96,14 +107,20 @@ export async function POST(request: NextRequest) {
     } catch (err: unknown) {
       if (err instanceof RunAlreadyActiveError) {
         // Resume polling the run that is already going instead of paying for a duplicate.
-        results.push({ platform, ok: true, runIds: err.runIds, message: err.message });
+        refreshSlots = Math.max(0, refreshSlots - err.runIds.length);
+        results.push({ platform, ok: true, runIds: err.runIds, queuedBatches: [], message: err.message });
         continue;
       }
       results.push({
         platform,
         ok: false,
         runIds: [],
-        message: err instanceof Error ? err.message : "Failed to start run",
+        queuedBatches: [],
+        message: isMemoryLimitError(err)
+          ? MEMORY_FULL_MESSAGE
+          : err instanceof Error
+            ? err.message
+            : "Failed to start run",
       });
     }
   }

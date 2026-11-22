@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/supabase/require-admin";
 import {
+  MEMORY_FULL_MESSAGE,
   RunAlreadyActiveError,
+  isMemoryLimitError,
   triggerDailyDiscovery,
   triggerWeeklyRefresh,
 } from "@/lib/services/scraper-orchestrator";
@@ -75,6 +77,7 @@ export async function POST(request: NextRequest) {
         jobType: "refresh",
         platform,
         jobIds: refreshResult.jobIds,
+        queuedBatches: refreshResult.queuedBatches,
         runId: refreshResult.jobIds[0] || null, // For single-batch polling
         eligiblePostsCount: refreshResult.eligiblePostsCount,
         dispatchedBatchesCount: refreshResult.dispatchedBatchesCount,
@@ -112,6 +115,9 @@ export async function POST(request: NextRequest) {
         { error: err.message, errorType: "RUN_ACTIVE", runIds: err.runIds, runId: err.runIds[0] ?? null },
         { status: 409 }
       );
+    }
+    if (isMemoryLimitError(err)) {
+      return NextResponse.json({ error: MEMORY_FULL_MESSAGE, errorType: "MEMORY_FULL" }, { status: 429 });
     }
     const errorMsg = err instanceof Error ? err.message : "Failed to trigger scraper run";
     return NextResponse.json(

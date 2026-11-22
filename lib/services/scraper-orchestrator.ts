@@ -5,7 +5,7 @@ import { recordRunUsage } from "./apify-usage.ts";
 import { processIngestion, type IngestionSummary } from "./ingestion.ts";
 import { getScrapeBoundaryDate } from "../utils/day-window.ts";
 import { fetchAllRows } from "../supabase/paginate.ts";
-import { DIRECT_URL_BATCH_SIZE } from "../config/batching.ts";
+import { DIRECT_URL_BATCH_SIZE, MAX_CONCURRENT_REFRESH_RUNS } from "../config/batching.ts";
 import { formatDate } from "../utils.ts";
 import type { PlatformType } from "../../types/database.ts";
 import type {
@@ -18,6 +18,15 @@ import type {
 } from "../scrapers/types.ts";
 
 export const DEFAULT_DIRECT_URL_BATCH_SIZE = DIRECT_URL_BATCH_SIZE;
+
+/** True when the provider rejected a start because the account's memory limit is used up. */
+export function isMemoryLimitError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /memory limit/i.test(msg);
+}
+
+export const MEMORY_FULL_MESSAGE =
+  "Apify's memory limit is full because other runs are still going. Wait for them to finish (or abort them in the Apify Console), then try again.";
 
 /** A run still marked started/ingesting after this long is treated as abandoned. */
 const ACTIVE_RUN_WINDOW_MS = 6 * 60 * 60 * 1000;
@@ -366,10 +375,17 @@ export async function triggerWeeklyRefresh(
     customUrls?: string[];
     /** Admin override: refresh every tracked post inside the age cutoff, even if not yet due. */
     force?: boolean;
+    /**
+     * Most batches to start now. The rest are returned in `queuedBatches` for the caller to start
+     * (via `startRefreshBatch`) as running ones finish. Defaults to MAX_CONCURRENT_REFRESH_RUNS.
+     */
+    maxStart?: number;
   } = {}
 ): Promise<{
   success: boolean;
   jobIds: string[];
+  /** URL batches not started yet (concurrency limit or Apify memory full). */
+  queuedBatches: string[][];
   eligiblePostsCount: number;
   dispatchedBatchesCount: number;
   message: string;
@@ -416,6 +432,7 @@ export async function triggerWeeklyRefresh(
     return {
       success: true,
       jobIds: [],
+      queuedBatches: [],
       eligiblePostsCount: 0,
       dispatchedBatchesCount: 0,
       message: `No existing posts are currently due for their ${strategy.refresh_interval_days}-day engagement refresh (${strategy.mode === "30_day_cutoff" ? "30-day cutoff active" : "continuous mode active"}).`,
@@ -430,15 +447,21 @@ export async function triggerWeeklyRefresh(
   }
 
   const jobIds: string[] = [];
+  const maxStart = Math.max(0, options.maxStart ?? MAX_CONCURRENT_REFRESH_RUNS);
 
-  // 4. Dispatch each batch to the active scraper provider. If one batch fails (rate limit, out
-  // of credit), stop dispatching but still return the batches that started so they get polled
-  // and ingested instead of running (and costing money) unseen.
+  // 4. Start only the first wave (Apify's memory limit is account-wide, so starting every batch at
+  // once gets them rejected). The rest are handed back as a queue. If a start fails because
+  // memory is full, that batch and the rest simply stay queued. Any other failure (rate limit,
+  // out of credit) stops dispatching but still returns the batches that started so they get
+  // polled and ingested instead of running (and costing money) unseen.
   let dispatchError: string | null = null;
-  for (const batch of batches) {
+  let next = 0;
+  while (next < batches.length && jobIds.length < maxStart) {
+    const batch = batches[next];
     try {
       const triggerRes = await provider.startRefreshJob(batch, { platform });
       jobIds.push(triggerRes.jobId);
+      next++;
       await logRunStart({
         actor_run_id: triggerRes.jobId,
         platform,
@@ -449,31 +472,65 @@ export async function triggerWeeklyRefresh(
         error: { target_urls: batch },
       });
     } catch (err: unknown) {
+      if (isMemoryLimitError(err)) break; // leave this batch (and the rest) queued
       dispatchError = err instanceof Error ? err.message : String(err);
       break;
     }
   }
+
+  const queuedBatches = dispatchError ? [] : batches.slice(next);
 
   if (dispatchError) {
     if (jobIds.length === 0) throw new Error(dispatchError);
     return {
       success: true,
       jobIds,
+      queuedBatches: [],
       eligiblePostsCount: targetUrls.length,
       dispatchedBatchesCount: jobIds.length,
       message: `Started ${jobIds.length} of ${batches.length} batch(es); the rest failed to start: ${dispatchError}`,
     };
   }
 
+  const what = options.force
+    ? `force-refresh ${targetUrls.length} post(s)`
+    : `refresh ${targetUrls.length} post(s) due for the ${strategy.refresh_interval_days}-day refresh`;
   return {
     success: true,
     jobIds,
+    queuedBatches,
     eligiblePostsCount: targetUrls.length,
-    dispatchedBatchesCount: batches.length,
-    message: options.force
-      ? `Dispatched ${batches.length} batch(es) to force-refresh ${targetUrls.length} post(s).`
-      : `Dispatched ${batches.length} batch(es) for ${targetUrls.length} post(s) due for ${strategy.refresh_interval_days}-day refresh.`,
+    dispatchedBatchesCount: jobIds.length,
+    message:
+      queuedBatches.length > 0
+        ? `Started ${jobIds.length} of ${batches.length} batch(es) to ${what}. ${queuedBatches.length} more will start as these finish.`
+        : `Dispatched ${batches.length} batch(es) to ${what}.`,
   };
+}
+
+/**
+ * Starts one queued refresh batch. Used to work through `queuedBatches` as running batches finish.
+ * Throws the provider's error unchanged; callers use `isMemoryLimitError` to tell "wait and retry"
+ * from a real failure.
+ */
+export async function startRefreshBatch(
+  platform: PlatformType,
+  urls: string[],
+  providerOverride?: ScraperProviderType
+): Promise<{ jobId: string }> {
+  await assertPlatformEnabled(platform);
+  const provider = getScraperProvider(providerOverride);
+  const res = await provider.startRefreshJob(urls, { platform });
+  await logRunStart({
+    actor_run_id: res.jobId,
+    platform,
+    provider: provider.name,
+    job_type: "refresh",
+    accounts_targeted: 0,
+    posts_found: urls.length,
+    error: { target_urls: urls },
+  });
+  return { jobId: res.jobId };
 }
 
 /**
