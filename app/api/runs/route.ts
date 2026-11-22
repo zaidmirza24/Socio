@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { internalError } from "@/lib/api/errors";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createServerComponentClient } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/supabase/require-admin";
 import { getDateFilterSince } from "@/lib/utils";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 
@@ -22,14 +22,8 @@ const querySchema = z.object({
  */
 export async function GET(request: NextRequest) {
   try {
-    const supabaseUser = createServerComponentClient();
-    const {
-      data: { user },
-    } = await supabaseUser.auth.getUser();
-
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized: Team login required" }, { status: 401 });
-    }
+    const guard = await requireUser();
+    if (!guard.ok) return guard.response;
 
     const parsed = querySchema.safeParse(Object.fromEntries(new URL(request.url).searchParams));
     if (!parsed.success) {

@@ -158,7 +158,7 @@ export async function processIngestion(
       );
       postsOutsideWindow = dropped;
       if (dropped > 0) {
-        console.log(`[ingestion] Day window dropped ${dropped} of ${data.posts.length} posts not made today (IST).`);
+        console.warn(`[ingestion] Day window dropped ${dropped} of ${data.posts.length} posts not made today (IST).`);
       }
       data = { ...data, posts: kept };
     }

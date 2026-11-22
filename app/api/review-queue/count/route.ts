@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createServerComponentClient } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/supabase/require-admin";
 
 export const dynamic = "force-dynamic";
 
@@ -11,13 +11,8 @@ const CACHE_HEADERS = { "Cache-Control": "private, max-age=30" };
 export async function GET() {
   try {
     // Checked here as well as in middleware, because this reads with the service-role key.
-    const authClient = createServerComponentClient();
-    const {
-      data: { user },
-    } = await authClient.auth.getUser();
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized: Team login required" }, { status: 401 });
-    }
+    const guard = await requireUser();
+    if (!guard.ok) return guard.response;
 
     const supabase = createAdminClient();
     const { count, error } = await supabase

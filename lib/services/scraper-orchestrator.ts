@@ -527,7 +527,7 @@ async function markUnreturnedRefreshTargets(requested: string[], returned: strin
       console.error("[refresh] Could not mark unreturned posts:", a.error?.message ?? b.error?.message);
     }
   }
-  console.log(`[refresh] ${missing.length} requested post(s) returned no data (deleted or private?).`);
+  console.warn(`[refresh] ${missing.length} requested post(s) returned no data (deleted or private?).`);
 }
 
 export type IngestJobState =

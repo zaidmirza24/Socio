@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { internalError } from "@/lib/api/errors";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createServerComponentClient } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/supabase/require-admin";
 import { formatDate } from "@/lib/utils";
 
 /**
@@ -60,13 +60,8 @@ function growth(cur: number | null, prev: number | null | undefined): number | n
  */
 export async function GET() {
   try {
-    const authClient = createServerComponentClient();
-    const {
-      data: { user },
-    } = await authClient.auth.getUser();
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized: Team login required" }, { status: 401 });
-    }
+    const guard = await requireUser();
+    if (!guard.ok) return guard.response;
 
     const supabase = createAdminClient();
 
