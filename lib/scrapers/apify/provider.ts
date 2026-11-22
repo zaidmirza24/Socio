@@ -6,6 +6,7 @@ import {
   ApifyConfigError,
 } from "../../apify/client.ts";
 import { getApifyConfig } from "../../services/integrations.ts";
+import { APIFY_RUN_MEMORY_MB } from "../../config/batching.ts";
 import { normalizeApifyInstagramDataset, type AdapterResult } from "./adapter.ts";
 import { getPlatformAdapter, normalizePlatformDataset } from "../platform-adapter.ts";
 import type {
@@ -94,11 +95,11 @@ export class ApifyScraperProvider implements IScraperProvider {
     if (taskId && platform === "instagram") {
       executionMode = "task";
       executionTarget = taskId;
-      run = await client.task(taskId).start(dynamicInput);
+      run = await client.task(taskId).start(dynamicInput, { memory: APIFY_RUN_MEMORY_MB[platform] });
     } else {
       executionMode = "actor";
       executionTarget = targetActorId;
-      run = await client.actor(targetActorId).start(dynamicInput);
+      run = await client.actor(targetActorId).start(dynamicInput, { memory: APIFY_RUN_MEMORY_MB[platform] });
     }
 
     return {
@@ -146,7 +147,7 @@ export class ApifyScraperProvider implements IScraperProvider {
       targetActorId = apifyConfig.actors[platform].refresh;
     }
 
-    const run = await client.actor(targetActorId).start(dynamicInput);
+    const run = await client.actor(targetActorId).start(dynamicInput, { memory: APIFY_RUN_MEMORY_MB[platform] });
 
     return {
       success: true,
@@ -176,7 +177,7 @@ export class ApifyScraperProvider implements IScraperProvider {
         platform === "instagram"
           ? { username: [postUrl], resultsLimit: 1 } // actor requires `username`; accepts post URLs
           : getPlatformAdapter(platform).buildRefreshInput([postUrl]);
-      const run = await client.actor(apifyConfig.actors[platform].refresh).call(input);
+      const run = await client.actor(apifyConfig.actors[platform].refresh).call(input, { memory: APIFY_RUN_MEMORY_MB[platform] });
 
       if (!run.defaultDatasetId) {
         return null;
