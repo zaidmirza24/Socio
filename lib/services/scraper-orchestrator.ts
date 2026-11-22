@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createAdminClient } from "../supabase/admin.ts";
 import { getScraperProvider } from "../scrapers/factory.ts";
 import { getScraperRefreshStrategy, getPlatformSettings } from "./settings.ts";
@@ -39,13 +40,38 @@ const INGEST_CLAIM_TTL_MS = 15 * 60 * 1000;
  */
 export class RunAlreadyActiveError extends Error {
   readonly runIds: string[];
-  constructor(platform: PlatformType, jobType: "discovery" | "refresh", runIds: string[]) {
+  /** Refresh only: the queued job to follow (batches may still be waiting to start). */
+  readonly batchGroup: string | null;
+  constructor(
+    platform: PlatformType,
+    jobType: "discovery" | "refresh",
+    runIds: string[],
+    batchGroup: string | null = null
+  ) {
     super(
       `A ${jobType === "refresh" ? "refresh" : "discovery"} run for ${platform} is already in progress. Following it instead of starting another.`
     );
     this.name = "RunAlreadyActiveError";
     this.runIds = runIds;
+    this.batchGroup = batchGroup;
   }
+}
+
+/** The refresh job of this platform that still has batches waiting to start, if any (recent only). */
+async function findPendingRefreshGroup(platform: PlatformType): Promise<string | null> {
+  const supabase = createAdminClient();
+  const since = new Date(Date.now() - ACTIVE_RUN_WINDOW_MS).toISOString();
+  const { data, error } = await supabase
+    .from("refresh_queue")
+    .select("batch_group")
+    .eq("platform", platform)
+    .in("status", ["queued", "starting"])
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`Could not check the refresh queue: ${error.message}`);
+  return (data?.batch_group as string | undefined) ?? null;
 }
 
 /** Apify run ids of recent runs for this platform + job type that have not finished saving. */
@@ -71,7 +97,8 @@ export async function findActiveRunIds(
 
 async function assertNoActiveRun(platform: PlatformType, jobType: "discovery" | "refresh"): Promise<void> {
   const active = await findActiveRunIds(platform, jobType);
-  if (active.length > 0) throw new RunAlreadyActiveError(platform, jobType, active);
+  const group = jobType === "refresh" ? await findPendingRefreshGroup(platform) : null;
+  if (active.length > 0 || group) throw new RunAlreadyActiveError(platform, jobType, active, group);
 }
 
 /** Inserts the audit row for a started provider run. Throws if it cannot be written. */
@@ -375,28 +402,25 @@ export async function triggerWeeklyRefresh(
     customUrls?: string[];
     /** Admin override: refresh every tracked post inside the age cutoff, even if not yet due. */
     force?: boolean;
-    /**
-     * Most batches to start now. The rest are returned in `queuedBatches` for the caller to start
-     * (via `startRefreshBatch`) as running ones finish. Defaults to MAX_CONCURRENT_REFRESH_RUNS.
-     */
-    maxStart?: number;
   } = {}
 ): Promise<{
   success: boolean;
+  /** Apify run ids of the batches started right away. */
   jobIds: string[];
-  /** URL batches not started yet (concurrency limit or Apify memory full). */
-  queuedBatches: string[][];
+  /** Follow this job with `getRefreshGroupProgress`; null when nothing was due. */
+  batchGroup: string | null;
+  /** Batches still waiting in the queue for a free slot / free Apify memory. */
+  queuedCount: number;
   eligiblePostsCount: number;
   dispatchedBatchesCount: number;
   message: string;
 }> {
   const platform: PlatformType = options.platform || "instagram";
   await assertPlatformEnabled(platform);
-  const provider = getScraperProvider(options.providerOverride);
   const strategy = await getScraperRefreshStrategy();
   const now = new Date();
 
-  // Refresh batches still being saved would be re-sent (and paid for) a second time.
+  // Batches still queued or running would be re-sent (and paid for) a second time.
   await assertNoActiveRun(platform, "refresh");
 
   // 1. Calculate eligibility thresholds
@@ -432,7 +456,8 @@ export async function triggerWeeklyRefresh(
     return {
       success: true,
       jobIds: [],
-      queuedBatches: [],
+      batchGroup: null,
+      queuedCount: 0,
       eligiblePostsCount: 0,
       dispatchedBatchesCount: 0,
       message: `No existing posts are currently due for their ${strategy.refresh_interval_days}-day engagement refresh (${strategy.mode === "30_day_cutoff" ? "30-day cutoff active" : "continuous mode active"}).`,
@@ -446,50 +471,26 @@ export async function triggerWeeklyRefresh(
     batches.push(targetUrls.slice(i, i + batchSize));
   }
 
-  const jobIds: string[] = [];
-  const maxStart = Math.max(0, options.maxStart ?? MAX_CONCURRENT_REFRESH_RUNS);
-
-  // 4. Start only the first wave (Apify's memory limit is account-wide, so starting every batch at
-  // once gets them rejected). The rest are handed back as a queue. If a start fails because
-  // memory is full, that batch and the rest simply stay queued. Any other failure (rate limit,
-  // out of credit) stops dispatching but still returns the batches that started so they get
-  // polled and ingested instead of running (and costing money) unseen.
-  let dispatchError: string | null = null;
-  let next = 0;
-  while (next < batches.length && jobIds.length < maxStart) {
-    const batch = batches[next];
-    try {
-      const triggerRes = await provider.startRefreshJob(batch, { platform });
-      jobIds.push(triggerRes.jobId);
-      next++;
-      await logRunStart({
-        actor_run_id: triggerRes.jobId,
-        platform,
-        provider: provider.name,
-        job_type: "refresh",
-        accounts_targeted: 0,
-        posts_found: batch.length,
-        error: { target_urls: batch },
-      });
-    } catch (err: unknown) {
-      if (isMemoryLimitError(err)) break; // leave this batch (and the rest) queued
-      dispatchError = err instanceof Error ? err.message : String(err);
-      break;
-    }
+  // 4. Put every batch in the database queue, then start as many as the concurrency limit allows.
+  // Apify's memory limit is account-wide, so starting every batch at once gets them rejected; the
+  // rest start as running batches finish (see advanceRefreshQueue), even if this tab is closed.
+  const supabase = createAdminClient();
+  const batchGroup = randomUUID();
+  const { error: enqueueError } = await supabase.from("refresh_queue").insert(
+    batches.map((urls, index) => ({ batch_group: batchGroup, platform, batch_index: index, urls }))
+  );
+  if (enqueueError) {
+    throw new Error(`Could not queue the refresh batches: ${enqueueError.message}`);
   }
 
-  const queuedBatches = dispatchError ? [] : batches.slice(next);
+  const advance = await advanceRefreshQueue(options.providerOverride);
+  const progress = await getRefreshGroupProgress(batchGroup);
 
-  if (dispatchError) {
-    if (jobIds.length === 0) throw new Error(dispatchError);
-    return {
-      success: true,
-      jobIds,
-      queuedBatches: [],
-      eligiblePostsCount: targetUrls.length,
-      dispatchedBatchesCount: jobIds.length,
-      message: `Started ${jobIds.length} of ${batches.length} batch(es); the rest failed to start: ${dispatchError}`,
-    };
+  if (progress.runIds.length === 0 && advance.firstError) {
+    // Nothing started and the failure is not "memory full" (e.g. out of credit, bad token):
+    // report it now instead of retrying silently, and drop the batches we just queued.
+    await cancelRefreshGroup(batchGroup);
+    throw new Error(advance.firstError);
   }
 
   const what = options.force
@@ -497,23 +498,30 @@ export async function triggerWeeklyRefresh(
     : `refresh ${targetUrls.length} post(s) due for the ${strategy.refresh_interval_days}-day refresh`;
   return {
     success: true,
-    jobIds,
-    queuedBatches,
+    jobIds: progress.runIds,
+    batchGroup,
+    queuedCount: progress.queued + progress.starting,
     eligiblePostsCount: targetUrls.length,
-    dispatchedBatchesCount: jobIds.length,
+    dispatchedBatchesCount: progress.runIds.length,
     message:
-      queuedBatches.length > 0
-        ? `Started ${jobIds.length} of ${batches.length} batch(es) to ${what}. ${queuedBatches.length} more will start as these finish.`
+      progress.queued > 0
+        ? `Started ${progress.runIds.length} of ${batches.length} batch(es) to ${what}. ${progress.queued} more will start as these finish.`
         : `Dispatched ${batches.length} batch(es) to ${what}.`,
   };
 }
 
-/**
- * Starts one queued refresh batch. Used to work through `queuedBatches` as running batches finish.
- * Throws the provider's error unchanged; callers use `isMemoryLimitError` to tell "wait and retry"
- * from a real failure.
- */
-export async function startRefreshBatch(
+/** Thrown when a run was started at the provider but its audit row could not be written. */
+class RunLogError extends Error {
+  readonly jobId: string;
+  constructor(jobId: string, message: string) {
+    super(message);
+    this.name = "RunLogError";
+    this.jobId = jobId;
+  }
+}
+
+/** Starts one refresh batch at the provider and logs it. Used by the queue. */
+async function startRefreshBatch(
   platform: PlatformType,
   urls: string[],
   providerOverride?: ScraperProviderType
@@ -521,16 +529,157 @@ export async function startRefreshBatch(
   await assertPlatformEnabled(platform);
   const provider = getScraperProvider(providerOverride);
   const res = await provider.startRefreshJob(urls, { platform });
-  await logRunStart({
-    actor_run_id: res.jobId,
-    platform,
-    provider: provider.name,
-    job_type: "refresh",
-    accounts_targeted: 0,
-    posts_found: urls.length,
-    error: { target_urls: urls },
-  });
+  try {
+    await logRunStart({
+      actor_run_id: res.jobId,
+      platform,
+      provider: provider.name,
+      job_type: "refresh",
+      accounts_targeted: 0,
+      posts_found: urls.length,
+      error: { target_urls: urls },
+    });
+  } catch (err: unknown) {
+    // The run is already paid for, so it must not be started a second time.
+    throw new RunLogError(res.jobId, err instanceof Error ? err.message : String(err));
+  }
   return { jobId: res.jobId };
+}
+
+interface RefreshQueueRow {
+  id: string;
+  batch_group: string;
+  platform: PlatformType;
+  urls: string[];
+  attempts: number;
+}
+
+/** A batch is given up on after this many failed start attempts (memory-full waits do not count). */
+const MAX_QUEUE_START_ATTEMPTS = 3;
+
+/**
+ * Starts the next queued refresh batches, as many as the concurrency limit allows.
+ *
+ * Safe to call from anywhere and as often as you like: a webhook after a run is saved, a status
+ * poll, the Collection Runs page. The database hands each batch to exactly one caller, so two
+ * callers at once never start the same batch twice.
+ */
+export async function advanceRefreshQueue(
+  providerOverride?: ScraperProviderType
+): Promise<{ started: number; waitingForMemory: boolean; firstError: string | null }> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase.rpc("claim_refresh_batches", {
+    p_max_active: MAX_CONCURRENT_REFRESH_RUNS,
+  });
+  if (error) throw new Error(`Could not read the refresh queue: ${error.message}`);
+
+  const rows = (data ?? []) as RefreshQueueRow[];
+  let started = 0;
+  let waitingForMemory = false;
+  let firstError: string | null = null;
+  const touch = async (id: string, patch: Record<string, unknown>) => {
+    const { error: updateError } = await supabase
+      .from("refresh_queue")
+      .update({ ...patch, updated_at: new Date().toISOString() })
+      .eq("id", id);
+    if (updateError) console.error(`[refresh_queue] Could not update batch ${id}:`, updateError.message);
+  };
+
+  for (const row of rows) {
+    if (waitingForMemory) {
+      await touch(row.id, { status: "queued" }); // hand back the claim untouched
+      continue;
+    }
+    try {
+      const { jobId } = await startRefreshBatch(row.platform, row.urls, providerOverride);
+      await touch(row.id, { status: "started", run_id: jobId });
+      started++;
+    } catch (err: unknown) {
+      if (err instanceof RunLogError) {
+        await touch(row.id, { status: "started", run_id: err.jobId, last_error: err.message });
+        firstError ??= err.message;
+      } else if (isMemoryLimitError(err)) {
+        waitingForMemory = true;
+        await touch(row.id, { status: "queued" });
+      } else {
+        const message = err instanceof Error ? err.message : String(err);
+        firstError ??= message;
+        const attempts = row.attempts + 1;
+        await touch(row.id, {
+          status: attempts >= MAX_QUEUE_START_ATTEMPTS ? "failed" : "queued",
+          attempts,
+          last_error: message,
+        });
+      }
+    }
+  }
+  return { started, waitingForMemory, firstError };
+}
+
+/**
+ * `advanceRefreshQueue` for callers that are doing something else (saving a finished run): a
+ * queue problem is logged, never allowed to fail the save. Call it once a run has ended, since
+ * that frees a slot for the next batch.
+ */
+export async function advanceRefreshQueueQuietly(): Promise<void> {
+  try {
+    await advanceRefreshQueue();
+  } catch (err: unknown) {
+    console.error("[refresh_queue] Could not advance the queue:", err instanceof Error ? err.message : err);
+  }
+}
+
+export interface RefreshGroupProgress {
+  queued: number;
+  /** Batches being handed to Apify right now. */
+  starting: number;
+  /** Apify run ids of every batch of this group that has been started. */
+  runIds: string[];
+  failed: number;
+  cancelled: number;
+  /** Error of the most recent failed batch, if any. */
+  lastError: string | null;
+}
+
+/** Counts and run ids of one refresh job (all batches created by one "start refresh" click). */
+export async function getRefreshGroupProgress(batchGroup: string): Promise<RefreshGroupProgress> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("refresh_queue")
+    .select("status, run_id, last_error")
+    .eq("batch_group", batchGroup);
+  if (error) throw new Error(`Could not read the refresh queue: ${error.message}`);
+
+  const progress: RefreshGroupProgress = {
+    queued: 0,
+    starting: 0,
+    runIds: [],
+    failed: 0,
+    cancelled: 0,
+    lastError: null,
+  };
+  for (const row of (data ?? []) as { status: string; run_id: string | null; last_error: string | null }[]) {
+    if (row.status === "queued") progress.queued++;
+    else if (row.status === "starting") progress.starting++;
+    else if (row.status === "failed") progress.failed++;
+    else if (row.status === "cancelled") progress.cancelled++;
+    if (row.run_id) progress.runIds.push(row.run_id);
+    if (row.status === "failed" && row.last_error) progress.lastError = row.last_error;
+  }
+  return progress;
+}
+
+/** Stops a refresh job from starting any more batches. Batches already running are unaffected. */
+export async function cancelRefreshGroup(batchGroup: string): Promise<number> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("refresh_queue")
+    .update({ status: "cancelled", updated_at: new Date().toISOString() })
+    .eq("batch_group", batchGroup)
+    .in("status", ["queued", "starting"])
+    .select("id");
+  if (error) throw new Error(`Could not cancel the refresh job: ${error.message}`);
+  return (data ?? []).length;
 }
 
 /**

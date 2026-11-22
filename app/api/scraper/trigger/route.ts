@@ -77,7 +77,8 @@ export async function POST(request: NextRequest) {
         jobType: "refresh",
         platform,
         jobIds: refreshResult.jobIds,
-        queuedBatches: refreshResult.queuedBatches,
+        batchGroup: refreshResult.batchGroup,
+        queuedCount: refreshResult.queuedCount,
         runId: refreshResult.jobIds[0] || null, // For single-batch polling
         eligiblePostsCount: refreshResult.eligiblePostsCount,
         dispatchedBatchesCount: refreshResult.dispatchedBatchesCount,

@@ -4,11 +4,11 @@ import { requireAdmin } from "@/lib/supabase/require-admin";
 import {
   MEMORY_FULL_MESSAGE,
   RunAlreadyActiveError,
+  getRefreshGroupProgress,
   isMemoryLimitError,
   triggerDailyDiscovery,
   triggerWeeklyRefresh,
 } from "@/lib/services/scraper-orchestrator";
-import { MAX_CONCURRENT_REFRESH_RUNS } from "@/lib/config/batching";
 import { getPlatformSettings } from "@/lib/services/settings";
 import type { PlatformType } from "@/types/database";
 
@@ -25,8 +25,10 @@ interface PlatformRunResult {
   platform: PlatformType;
   ok: boolean;
   runIds: string[];
-  /** Refresh batches (post URLs) waiting for a free slot / free Apify memory. */
-  queuedBatches: string[][];
+  /** Refresh only: the queued job to follow. Batches may still be waiting to start. */
+  batchGroup: string | null;
+  /** Refresh batches waiting for a free slot / free Apify memory. */
+  queuedCount: number;
   accountsCount?: number;
   message: string;
 }
@@ -78,19 +80,18 @@ export async function POST(request: NextRequest) {
   }
 
   const results: PlatformRunResult[] = [];
-  // Apify's memory limit is account-wide, so refresh batches share one concurrency budget across
-  // platforms; whatever does not fit is returned as `queuedBatches` for the client to start later.
-  let refreshSlots = MAX_CONCURRENT_REFRESH_RUNS;
+  // Refresh batches go into a database queue shared by all platforms; the queue starts only as many
+  // as Apify's account-wide memory limit allows and the rest start as running ones finish.
   for (const platform of platforms) {
     try {
       if (jobType === "refresh") {
-        const res = await triggerWeeklyRefresh({ platform, force, maxStart: refreshSlots });
-        refreshSlots = Math.max(0, refreshSlots - res.jobIds.length);
+        const res = await triggerWeeklyRefresh({ platform, force });
         results.push({
           platform,
           ok: res.success, // success with no runIds and no queue = nothing was due
           runIds: res.jobIds,
-          queuedBatches: res.queuedBatches,
+          batchGroup: res.batchGroup,
+          queuedCount: res.queuedCount,
           message: res.message,
         });
       } else {
@@ -99,7 +100,8 @@ export async function POST(request: NextRequest) {
           platform,
           ok: true,
           runIds: [res.jobId],
-          queuedBatches: [],
+          batchGroup: null,
+          queuedCount: 0,
           accountsCount: res.accountsCount,
           message: `Started for ${res.accountsCount} active ${platform} account(s).`,
         });
@@ -107,15 +109,24 @@ export async function POST(request: NextRequest) {
     } catch (err: unknown) {
       if (err instanceof RunAlreadyActiveError) {
         // Resume polling the run that is already going instead of paying for a duplicate.
-        refreshSlots = Math.max(0, refreshSlots - err.runIds.length);
-        results.push({ platform, ok: true, runIds: err.runIds, queuedBatches: [], message: err.message });
+        // A queued refresh may still have batches waiting; report them so the panel keeps following.
+        const queued = err.batchGroup ? await getRefreshGroupProgress(err.batchGroup) : null;
+        results.push({
+          platform,
+          ok: true,
+          runIds: [...new Set([...err.runIds, ...(queued?.runIds ?? [])])],
+          batchGroup: err.batchGroup,
+          queuedCount: queued ? queued.queued + queued.starting : 0,
+          message: err.message,
+        });
         continue;
       }
       results.push({
         platform,
         ok: false,
         runIds: [],
-        queuedBatches: [],
+        batchGroup: null,
+        queuedCount: 0,
         message: isMemoryLimitError(err)
           ? MEMORY_FULL_MESSAGE
           : err instanceof Error

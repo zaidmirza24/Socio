@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerEnv } from "@/lib/env";
-import { ingestCompletedJob } from "@/lib/services/scraper-orchestrator";
+import { advanceRefreshQueueQuietly, ingestCompletedJob } from "@/lib/services/scraper-orchestrator";
 import {
   WEBHOOK_SECRET_HEADER,
   parseWebhookRunId,
@@ -35,6 +35,9 @@ export async function POST(request: NextRequest) {
 
   try {
     const result = await ingestCompletedJob(runId);
+    // The run has ended, so a slot is free: start the next queued refresh batch. This is what keeps
+    // a queued refresh going with nobody watching the Collect panel.
+    if (result.state !== "running") await advanceRefreshQueueQuietly();
     return NextResponse.json({ ok: true, runId, state: result.state, message: result.message });
   } catch (err: unknown) {
     // 500 so Apify retries (e.g. the run row was not written yet, or a transient database error).

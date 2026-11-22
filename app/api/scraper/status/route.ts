@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/supabase/require-admin";
-import { ingestCompletedJob } from "@/lib/services/scraper-orchestrator";
+import { advanceRefreshQueueQuietly, ingestCompletedJob } from "@/lib/services/scraper-orchestrator";
 
 const querySchema = z.object({
   runId: z
@@ -41,6 +41,8 @@ export async function GET(request: NextRequest) {
     const { runId, provider } = parsed.data;
 
     const result = await ingestCompletedJob(runId, provider);
+    // A finished run frees a slot for the next queued refresh batch.
+    if (result.state === "succeeded" || result.state === "failed") await advanceRefreshQueueQuietly();
 
     if (result.state === "running" || result.state === "ingesting") {
       return NextResponse.json({

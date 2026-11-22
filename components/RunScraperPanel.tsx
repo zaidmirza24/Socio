@@ -27,11 +27,17 @@ interface PlatformRun {
   /** Batches of this platform that failed (the others are still polled and saved). */
   failedCount: number;
   lastError: string | null;
-  /** Refresh batches (post URLs) not started yet; started as running ones finish. */
-  queue: string[][];
+  /** Refresh only: the server-side queue job this platform follows (null for discovery). */
+  batchGroup: string | null;
+  /** Refresh batches still waiting in the database queue for a free slot / free Apify memory. */
+  queuedCount: number;
+  /** Refresh batches the queue gave up on (could not be started). */
+  queueFailed: number;
+  /** Every run id already handed to polling, so a run that finished is never added again. */
+  seenIds: string[];
   /** Batches in the whole job, for the "x of y" progress line. */
   totalBatches: number;
-  /** The last start attempt was refused because Apify's memory is full; retrying automatically. */
+  /** Apify's memory is full; the queue is waiting and retries automatically. */
   waitingForMemory: boolean;
 }
 
@@ -57,11 +63,28 @@ const MODES: { id: JobType; label: string; help: string }[] = [
 ];
 
 const POLL_MS = 4000;
-/** Keep in step with MAX_CONCURRENT_REFRESH_RUNS: Apify's memory limit is shared by all runs. */
-const MAX_ACTIVE_RUNS = 3;
 
 interface TriggerResponse {
-  results?: { platform: Platform; ok: boolean; runIds: string[]; queuedBatches?: string[][]; message: string }[];
+  results?: {
+    platform: Platform;
+    ok: boolean;
+    runIds: string[];
+    batchGroup?: string | null;
+    queuedCount?: number;
+    message: string;
+  }[];
+  error?: string;
+}
+interface QueueResponse {
+  groups?: {
+    group: string;
+    queued: number;
+    starting: number;
+    runIds: string[];
+    failed: number;
+    lastError: string | null;
+  }[];
+  waitingForMemory?: boolean;
   error?: string;
 }
 interface StatusResponse {
@@ -115,7 +138,7 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
                   pendingIds,
                   failedCount: cur.failedCount + 1,
                   lastError: data.error || "The run failed.",
-                  state: pendingIds.length === 0 && cur.queue.length === 0 ? "FAILED" : cur.state,
+                  state: pendingIds.length === 0 && cur.queuedCount === 0 ? "FAILED" : cur.state,
                   message: data.error || "The run failed.",
                 };
               });
@@ -130,14 +153,14 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
                   gains: data.gain ? [...cur.gains, data.gain] : cur.gains,
                   gainUnavailable: cur.gainUnavailable + (data.gain ? 0 : 1),
                   state:
-                    pendingIds.length === 0 && cur.queue.length === 0 && cur.state === "RUNNING"
-                      ? cur.failedCount > 0
+                    pendingIds.length === 0 && cur.queuedCount === 0 && cur.state === "RUNNING"
+                      ? cur.failedCount + cur.queueFailed > 0
                         ? "FAILED"
                         : "SUCCEEDED"
                       : cur.state,
                   message:
-                    pendingIds.length === 0 && cur.queue.length === 0 && cur.failedCount > 0
-                      ? `${cur.failedCount} batch(es) failed: ${cur.lastError ?? "unknown error"}`
+                    pendingIds.length === 0 && cur.queuedCount === 0 && cur.failedCount + cur.queueFailed > 0
+                      ? `${cur.failedCount + cur.queueFailed} batch(es) failed: ${cur.lastError ?? "unknown error"}`
                       : cur.message,
                 };
               });
@@ -150,78 +173,78 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
     );
   }, [patchRun]);
 
-  // Starts queued refresh batches while fewer than MAX_ACTIVE_RUNS runs are in flight. When Apify
-  // reports its memory is full, the batch goes back to the front of the queue and is retried on the
-  // next tick, so a full account slows the job down instead of failing it.
-  const dispatching = useRef(false);
-  const dispatchQueued = useCallback(async () => {
-    if (dispatching.current) return;
-    dispatching.current = true;
+  // Follows the server-side refresh queue. Each call also asks the server to start any queued batch
+  // that now fits, so the queue keeps moving even without a webhook. The queue itself lives in the
+  // database: closing this dialog or the tab loses nothing.
+  const syncing = useRef(false);
+  const syncQueue = useCallback(async () => {
+    const watched = runsRef.current.filter((r) => r.state === "RUNNING" && r.batchGroup && r.queuedCount > 0);
+    if (watched.length === 0 || syncing.current) return;
+    syncing.current = true;
     try {
-      let active = runsRef.current.reduce((n, r) => n + r.pendingIds.length, 0);
-      for (const run of runsRef.current) {
-        if (run.state !== "RUNNING") continue;
-        // Work on a local copy: runsRef only updates on the next render.
-        const local = [...run.queue];
-        while (local.length > 0 && active < MAX_ACTIVE_RUNS) {
-          const batch = local.shift();
-          if (!batch) break;
-          patchRun(run.platform, (cur) => ({ ...cur, queue: cur.queue.slice(1) }));
-          try {
-            const res = await fetch("/api/scraper/refresh-batch", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ platform: run.platform, urls: batch }),
-            });
-            const data: { runId?: string; error?: string; errorType?: string } = await res.json();
-            if (res.ok && data.runId) {
-              const runId = data.runId;
-              active++;
-              patchRun(run.platform, (cur) => ({
-                ...cur,
-                pendingIds: [...cur.pendingIds, runId],
-                waitingForMemory: false,
-              }));
-            } else if (res.status === 429 || data.errorType === "MEMORY_FULL") {
-              patchRun(run.platform, (cur) => ({ ...cur, queue: [batch, ...cur.queue], waitingForMemory: true }));
-              return; // memory is account-wide: stop for every platform and retry next tick
-            } else {
-              patchRun(run.platform, (cur) => {
-                const done = cur.pendingIds.length === 0 && cur.queue.length === 0;
-                return {
-                  ...cur,
-                  failedCount: cur.failedCount + 1,
-                  lastError: data.error || "A batch could not be started.",
-                  state: done ? "FAILED" : cur.state,
-                  message: data.error || "A batch could not be started.",
-                };
-              });
-            }
-          } catch {
-            // Network error: keep the batch and try again on the next tick.
-            patchRun(run.platform, (cur) => ({ ...cur, queue: [batch, ...cur.queue] }));
-            return;
-          }
-        }
+      const res = await fetch("/api/scraper/queue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ groups: watched.map((r) => r.batchGroup) }),
+      });
+      const data: QueueResponse = await res.json();
+      if (!res.ok || !data.groups) return; // transient: try again next tick
+      for (const g of data.groups) {
+        const run = watched.find((r) => r.batchGroup === g.group);
+        if (!run) continue;
+        patchRun(run.platform, (cur) => {
+          const fresh = g.runIds.filter((id) => !cur.seenIds.includes(id));
+          const pendingIds = [...cur.pendingIds, ...fresh];
+          const queuedCount = g.queued + g.starting;
+          const failedTotal = cur.failedCount + g.failed;
+          const done = pendingIds.length === 0 && queuedCount === 0;
+          return {
+            ...cur,
+            pendingIds,
+            seenIds: [...cur.seenIds, ...fresh],
+            queuedCount,
+            queueFailed: g.failed,
+            lastError: g.lastError ?? cur.lastError,
+            waitingForMemory: Boolean(data.waitingForMemory) && queuedCount > 0,
+            state: done ? (failedTotal > 0 ? "FAILED" : "SUCCEEDED") : cur.state,
+            message:
+              done && failedTotal > 0
+                ? `${failedTotal} batch(es) failed: ${g.lastError ?? cur.lastError ?? "unknown error"}`
+                : cur.message,
+          };
+        });
       }
+    } catch {
+      // Network error: try again next tick.
     } finally {
-      dispatching.current = false;
+      syncing.current = false;
     }
   }, [patchRun]);
 
   // Gives up on batches that have not started (e.g. memory never freed up). Runs already started
   // keep being polled and saved; unstarted posts stay due and are picked up by the next refresh.
-  const stopWaiting = useCallback(() => {
+  const stopWaiting = useCallback(async () => {
+    const groups = runsRef.current.filter((r) => r.batchGroup && r.queuedCount > 0).map((r) => r.batchGroup);
+    if (groups.length === 0) return;
+    try {
+      await fetch("/api/scraper/queue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ groups, cancel: true }),
+      });
+    } catch {
+      return; // not cancelled: the queue keeps going and the button stays available
+    }
     setRuns((prev) =>
       prev.map((r) => {
-        if (r.queue.length === 0) return r;
+        if (r.queuedCount === 0) return r;
         const done = r.pendingIds.length === 0;
         return {
           ...r,
-          queue: [],
+          queuedCount: 0,
           waitingForMemory: false,
-          state: done ? (r.postsUpserted > 0 && r.failedCount === 0 ? "SUCCEEDED" : "FAILED") : r.state,
-          message: `Stopped waiting. ${r.queue.length} batch(es) were not started; they stay due for the next refresh.`,
+          state: done ? (r.postsUpserted > 0 ? "SUCCEEDED" : "SKIPPED") : r.state,
+          message: `Stopped. ${r.queuedCount} batch(es) were not started; those posts stay due for the next refresh.`,
         };
       })
     );
@@ -235,7 +258,7 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
       pollingRef.current = true;
       const tick = async (): Promise<void> => {
         await poll();
-        await dispatchQueued();
+        await syncQueue();
         if (!pollingRef.current) return;
         timer.current = setTimeout(() => void tick(), POLL_MS);
       };
@@ -252,7 +275,7 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
         setOpen(true);
       }
     }
-  }, [busy, poll, dispatchQueued, router, onCompleted]);
+  }, [busy, poll, syncQueue, router, onCompleted]);
 
   useEffect(
     () => () => {
@@ -275,7 +298,10 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
       gainUnavailable: 0,
       failedCount: 0,
       lastError: null,
-      queue: [],
+      batchGroup: null,
+      queuedCount: 0,
+      queueFailed: 0,
+      seenIds: [],
       totalBatches: 0,
       waitingForMemory: false,
     });
@@ -303,14 +329,16 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
               ? { ...blank(platform), state: "FAILED", message: data.error }
               : { ...blank(platform), state: "SKIPPED", message: "Turned off in Settings." };
           }
-          const queue = r.queuedBatches ?? [];
-          if (r.ok && (r.runIds.length > 0 || queue.length > 0)) {
+          const queuedCount = r.queuedCount ?? 0;
+          if (r.ok && (r.runIds.length > 0 || queuedCount > 0)) {
             return {
               ...blank(platform),
               state: "RUNNING",
               pendingIds: r.runIds,
-              queue,
-              totalBatches: r.runIds.length + queue.length,
+              seenIds: r.runIds,
+              batchGroup: r.batchGroup ?? null,
+              queuedCount,
+              totalBatches: r.runIds.length + queuedCount,
               message: r.message,
             };
           }
@@ -435,8 +463,8 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
                       </div>
                       {r.state === "RUNNING" && r.totalBatches > 1 && (
                         <div className="mt-0.5 text-xs text-slate-500">
-                          {r.totalBatches - r.queue.length - r.pendingIds.length} of {r.totalBatches} batches
-                          saved · {r.pendingIds.length} running · {r.queue.length} waiting
+                          {Math.max(0, r.totalBatches - r.queuedCount - r.pendingIds.length)} of {r.totalBatches} batches
+                          saved · {r.pendingIds.length} running · {r.queuedCount} waiting
                         </div>
                       )}
                       {r.state === "RUNNING" && r.waitingForMemory && (
@@ -450,7 +478,7 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
               </ul>
             )}
 
-            {runs.some((r) => r.queue.length > 0) && (
+            {runs.some((r) => r.queuedCount > 0) && (
               <button
                 type="button"
                 onClick={stopWaiting}
