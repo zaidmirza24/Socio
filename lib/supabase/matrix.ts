@@ -27,6 +27,8 @@ export interface MatrixAccount {
   id: string;
   handle: string;
   volunteerName: string;
+  /** Links to the combined volunteer page; null for legacy unlinked accounts. */
+  volunteerId: string | null;
   platform: string;
   isVisible: boolean;
   lastCheckedAt: string | null;
@@ -118,6 +120,7 @@ export async function getMatrixData(): Promise<MatrixData> {
     id: a.id,
     handle: a.handle,
     volunteerName: a.volunteer_name,
+    volunteerId: a.volunteer_id,
     platform: a.platform,
     isVisible: a.is_visible ?? true,
     lastCheckedAt: a.last_checked_at,

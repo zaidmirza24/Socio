@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { formatMetric } from "@/lib/utils";
+import { accountProfileHref, volunteerProfileHref } from "@/lib/utils/volunteer-links";
 import { ExternalLink, Heart, MessageCircle, Eye, Search } from "lucide-react";
 import { getPostsPage, type PostsPageResult, type DateRangePreset } from "@/lib/supabase/queries";
 import { DateRangeFilter } from "@/components/analytics/DateRangeFilter";
@@ -181,13 +182,19 @@ export default async function PostsPage({ searchParams }: PostsPageProps) {
                   <tr key={post.id} className="hover:bg-blue-50/20 transition-colors">
                     <td className="px-5 py-3.5">
                       <Link
-                        href={`/dashboard/volunteers/${encodeURIComponent(post.handle)}?platform=${post.platform}`}
+                        href={accountProfileHref(post.handle, post.platform)}
                         className="font-semibold text-slate-900 hover:text-blue-600 text-xs block transition"
                       >
                         @{post.handle}
                       </Link>
                       {post.volunteerName && post.volunteerName !== post.handle && (
-                        <div className="text-xs text-slate-500 truncate max-w-[160px]">{post.volunteerName}</div>
+                        <Link
+                          href={volunteerProfileHref({ volunteerId: post.volunteerId, handle: post.handle, platform: post.platform })}
+                          className="block text-xs text-slate-500 truncate max-w-[160px] hover:text-blue-600 hover:underline"
+                          title="All of this volunteer's platforms"
+                        >
+                          {post.volunteerName}
+                        </Link>
                       )}
                     </td>
                     <td className="px-5 py-3.5">

@@ -9,6 +9,7 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Pagination } from "@/components/ui/Pagination";
 import { parsePlatformFilter } from "@/lib/platform";
+import { accountProfileHref } from "@/lib/utils/volunteer-links";
 import type { PlatformType, VolunteerTotals } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -253,13 +254,20 @@ export default async function VolunteersPage({ searchParams }: Props) {
               <tbody className="divide-y divide-slate-100">
                 {rows.map((v) => (
                   <tr key={v.volunteer_id} className="hover:bg-slate-50/60">
-                    <td className="px-4 py-3 font-semibold text-slate-900">{v.name}</td>
+                    <td className="px-4 py-3 font-semibold text-slate-900">
+                      <Link
+                        href={`/dashboard/volunteers/v/${v.volunteer_id}?from=volunteers`}
+                        className="hover:text-blue-600 hover:underline"
+                      >
+                        {v.name}
+                      </Link>
+                    </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1.5">
                         {(links.get(v.volunteer_id) ?? []).map((a) => (
                           <Link
                             key={`${a.platform}:${a.handle}`}
-                            href={`/dashboard/volunteers/${encodeURIComponent(a.handle)}?platform=${a.platform}`}
+                            href={accountProfileHref(a.handle, a.platform, "volunteers")}
                             className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2 py-0.5 text-xs text-slate-700 hover:border-blue-300 hover:text-blue-700"
                           >
                             <PlatformBadge platform={a.platform} compact />@{a.handle}

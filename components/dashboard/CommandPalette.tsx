@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useFeatureSettings } from "@/hooks/useFeatureSettings";
 import { Search, Users, Download, ArrowRight, X } from "lucide-react";
 import { NAV_ROUTES } from "./nav-config";
+import { volunteerProfileHref } from "@/lib/utils/volunteer-links";
 
 interface NavOption {
   id: string;
@@ -48,7 +49,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [volunteerAccounts, setVolunteerAccounts] = useState<
-    { handle: string; volunteer_name: string; platform: string }[]
+    { handle: string; volunteer_name: string; platform: string; volunteer_id: string | null }[]
   >([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -64,11 +65,14 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         .then((data) => {
           if (Array.isArray(data?.accounts)) {
             setVolunteerAccounts(
-              data.accounts.map((a: { handle: string; volunteer_name: string; platform: string }) => ({
-                handle: a.handle,
-                volunteer_name: a.volunteer_name,
-                platform: a.platform ?? "instagram",
-              }))
+              data.accounts.map(
+                (a: { handle: string; volunteer_name: string; platform: string; volunteer_id?: string | null }) => ({
+                  handle: a.handle,
+                  volunteer_name: a.volunteer_name,
+                  platform: a.platform ?? "instagram",
+                  volunteer_id: a.volunteer_id ?? null,
+                })
+              )
             );
           }
         })
@@ -105,19 +109,29 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
 
     let matchedVolunteers: NavOption[] = [];
     if (q) {
-      matchedVolunteers = volunteerAccounts
-        .filter(
-          (v) =>
-            v.handle.toLowerCase().includes(q) ||
-            v.volunteer_name.toLowerCase().includes(q)
+      // One result per VOLUNTEER (their Instagram / Facebook / X accounts together); legacy accounts
+      // without a volunteer id stay one result per account.
+      const groups = new Map<string, typeof volunteerAccounts>();
+      for (const v of volunteerAccounts) {
+        const key = v.volunteer_id ?? `acct:${v.platform}:${v.handle}`;
+        groups.set(key, [...(groups.get(key) ?? []), v]);
+      }
+      matchedVolunteers = Array.from(groups.entries())
+        // A volunteer matches when their name or ANY of their handles matches.
+        .filter(([, list]) =>
+          list.some((v) => v.handle.toLowerCase().includes(q) || v.volunteer_name.toLowerCase().includes(q))
         )
         .slice(0, 5)
-        .map((v) => ({
-          id: `vol-${v.handle}-${v.platform}`,
+        .map(([key, list]) => ({
+          id: `vol-${key}`,
           category: "Volunteers" as const,
-          title: `@${v.handle}`,
-          subtitle: v.volunteer_name,
-          href: `/dashboard/volunteers/${v.handle}?platform=${v.platform}`,
+          title: list[0].volunteer_name,
+          subtitle: list.map((v) => `@${v.handle}`).join(" · "),
+          href: volunteerProfileHref({
+            volunteerId: list[0].volunteer_id,
+            handle: list[0].handle,
+            platform: list[0].platform,
+          }),
           icon: Users,
         }));
     }

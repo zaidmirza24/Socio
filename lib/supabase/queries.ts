@@ -56,6 +56,8 @@ export interface LeaderboardEntry {
   platforms: string[];
   /** Number of accounts (max 3) combined into this row. */
   accounts: number;
+  /** The volunteer's id (links to the combined volunteer page); null for legacy unlinked accounts. */
+  volunteerId: string | null;
   posts: number;
   /** Sum of the latest measured follower counts; null when none was measured (shown "n/a"). */
   followers: number | null;
@@ -78,6 +80,8 @@ export interface RecentPostItem {
   platform: string;
   handle: string;
   volunteerName: string;
+  /** Links to the combined volunteer page; null for legacy unlinked accounts. */
+  volunteerId: string | null;
   url: string;
   caption: string | null;
   mediaType: string | null;
@@ -91,6 +95,9 @@ export interface RecentPostItem {
 
 export interface VolunteerPostDetail {
   id: string;
+  /** Platform + handle of the account that published the post (a volunteer page mixes platforms). */
+  platform: string;
+  handle: string;
   platformPostId: string;
   url: string;
   caption: string | null;
@@ -104,7 +111,29 @@ export interface VolunteerPostDetail {
   engagement: number;
 }
 
+export interface VolunteerAccountSummary {
+  id: string;
+  handle: string;
+  platform: string;
+  status: string;
+  followers: number | null;
+  following: number | null;
+  totalPostsOnPlatform: number | null;
+}
+
 export interface VolunteerProfileData {
+  /**
+   * "volunteer" = every account of the volunteer is combined (posts, metrics, timeline);
+   * "account" = a single platform account.
+   */
+  scope: "volunteer" | "account";
+  volunteerId: string | null;
+  /** All of the volunteer's accounts (max 3), whatever the scope, so the page can link between them. */
+  accounts: VolunteerAccountSummary[];
+  /**
+   * Header details. In "account" scope this is that account. In "volunteer" scope it is the primary
+   * account (Instagram first) with `followers` summed over the accounts that reported one.
+   */
   account: {
     id: string;
     handle: string;
@@ -340,19 +369,28 @@ export async function getAccountComparison(
 ): Promise<AccountPerformance[]> {
   const rows = await loadPostGains(preset, platform);
 
-  const byAccount = new Map<string, { posts: number; likes: number; comments: number; views: number }>();
+  // Keyed by platform + handle: the same handle can exist on two platforms and must not be merged.
+  const byAccount = new Map<string, { handle: string; platform: string; posts: number; likes: number; comments: number; views: number }>();
+  const platformsPerHandle = new Map<string, Set<string>>();
   for (const r of rows) {
-    const key = `@${r.meta.handle}`;
-    const e = byAccount.get(key) ?? { posts: 0, likes: 0, comments: 0, views: 0 };
+    const key = `${r.meta.platform}:${r.meta.handle}`;
+    const e = byAccount.get(key) ?? { handle: r.meta.handle, platform: r.meta.platform, posts: 0, likes: 0, comments: 0, views: 0 };
     e.posts += 1;
     e.likes += sumGain([r.likes]);
     e.comments += sumGain([r.comments]);
     e.views += sumGain([r.views]);
     byAccount.set(key, e);
+    const set = platformsPerHandle.get(r.meta.handle) ?? new Set<string>();
+    set.add(r.meta.platform);
+    platformsPerHandle.set(r.meta.handle, set);
   }
 
-  return Array.from(byAccount.entries())
-    .map(([account, v]) => ({ account, ...v }))
+  return Array.from(byAccount.values())
+    .map(({ handle, platform: plat, ...v }) => ({
+      // Only add the platform to the label when the bare handle would be ambiguous.
+      account: (platformsPerHandle.get(handle)?.size ?? 1) > 1 ? `@${handle} (${plat})` : `@${handle}`,
+      ...v,
+    }))
     .sort((a, b) => b.likes + b.comments - (a.likes + a.comments))
     .slice(0, 8);
 }
@@ -508,6 +546,7 @@ export async function getVolunteerLeaderboard(
         platform: e.primaryPlatform,
         platforms: Array.from(e.platforms).sort(),
         accounts: e.accountIds.size,
+        volunteerId: e.key.startsWith("acct:") ? null : e.key,
         posts: e.posts,
         followers,
         totalLikes: e.likes,
@@ -568,8 +607,8 @@ interface PostListRow {
   posted_at: string | null;
   match_status: string | null;
   account:
-    | { handle: string; volunteer_name: string | null }
-    | Array<{ handle: string; volunteer_name: string | null }>
+    | { handle: string; volunteer_name: string | null; volunteer_id: string | null }
+    | Array<{ handle: string; volunteer_name: string | null; volunteer_id: string | null }>
     | null;
   post_snapshots: Array<{
     snapshot_date: string;
@@ -587,7 +626,7 @@ const POST_LIST_SELECT = `
   media_type,
   posted_at,
   match_status,
-  account:accounts ( handle, volunteer_name ),
+  account:accounts ( handle, volunteer_name, volunteer_id ),
   post_snapshots ( snapshot_date, likes, comments, views )
 `;
 
@@ -604,6 +643,7 @@ function mapPostRow(post: PostListRow): RecentPostItem {
     platform: post.platform || "instagram",
     handle,
     volunteerName,
+    volunteerId: acct?.volunteer_id ?? null,
     url: post.url ?? "",
     caption: post.caption,
     mediaType: post.media_type ?? "Post",
@@ -716,62 +756,81 @@ export async function getPostsPage(opts: PostsPageOptions): Promise<PostsPageRes
 }
 
 
+
+// ─────────────────────────────────────────────────────────────
+// Volunteer / account profile pages
+// ─────────────────────────────────────────────────────────────
+
+const PLATFORM_ORDER = ["instagram", "facebook", "x"];
+
+interface ProfileAccountRow {
+  id: string;
+  handle: string;
+  volunteer_name: string | null;
+  platform: string | null;
+  status: string;
+  added_at: string;
+  volunteer_id: string | null;
+}
+
+const PROFILE_ACCOUNT_COLUMNS = "id, handle, volunteer_name, platform, status, added_at, volunteer_id";
+
+/** Deterministic order: Instagram, Facebook, X. */
+function sortByPlatform(rows: ProfileAccountRow[]): ProfileAccountRow[] {
+  return [...rows].sort(
+    (a, b) => PLATFORM_ORDER.indexOf(a.platform as string) - PLATFORM_ORDER.indexOf(b.platform as string)
+  );
+}
+
 /**
- * Detailed profile & all posts for a single volunteer account.
- * Always fetches all posts (no date filter at the DB level) so the client
- * can switch date ranges without a server round-trip.
- * The preset parameter only controls how aggregated metrics & the timeline
- * are computed on the server for the initial render.
+ * Builds the profile for `included` accounts (one account, or every account of a volunteer).
+ * `allAccounts` is every account of the volunteer, so the page can link between platforms.
  */
-export async function getVolunteerDetails(
-  rawHandle: string,
-  preset?: DateRangePreset,
-  platform?: string
-): Promise<VolunteerProfileData | null> {
+async function buildProfile(
+  allAccounts: ProfileAccountRow[],
+  included: ProfileAccountRow[],
+  scope: VolunteerProfileData["scope"],
+  volunteerId: string | null,
+  preset?: DateRangePreset
+): Promise<VolunteerProfileData> {
   const supabase = createServerComponentClient();
-  const cleanHandle = rawHandle.replace(/^@/, "").trim().toLowerCase();
   // Used only for server-side metrics/timeline aggregation, NOT to filter fetched posts
   const since = preset ? getDateFilterSince(preset) : null;
 
-  // 1. Fetch account (using exact .eq matching to prevent wildcard ILIKE collision on underscore handles)
-  let query = supabase
-    .from("accounts")
-    .select("id, handle, volunteer_name, platform, status, added_at")
-    .eq("handle", cleanHandle);
+  // 1. Latest account snapshot (followers etc.) per account — at most 3 small queries.
+  const accounts: VolunteerAccountSummary[] = await Promise.all(
+    allAccounts.map(async (a) => {
+      const { data: snap } = await supabase
+        .from("account_snapshots")
+        .select("followers, following, post_count, snapshot_date")
+        .eq("account_id", a.id)
+        .order("snapshot_date", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return {
+        id: a.id,
+        handle: a.handle,
+        platform: a.platform ?? "instagram",
+        status: a.status,
+        followers: snap?.followers ?? null,
+        following: snap?.following ?? null,
+        totalPostsOnPlatform: snap?.post_count ?? null,
+      };
+    })
+  );
 
-  if (platform && platform !== "all") {
-    query = query.eq("platform", platform);
-  }
+  const includedIds = included.map((a) => a.id);
+  const includedSummaries = accounts.filter((a) => includedIds.includes(a.id));
+  const accountMeta = new Map(allAccounts.map((a) => [a.id, { handle: a.handle, platform: a.platform ?? "instagram" }]));
 
-  const { data: accounts, error: accErr } = await query;
-
-  if (accErr || !accounts || accounts.length === 0) {
-    return null;
-  }
-
-  // If several platforms share this handle and none was specified, pick deterministically
-  // (Instagram, then Facebook, then X) instead of whatever order the database returned.
-  const PLATFORM_ORDER = ["instagram", "facebook", "x"];
-  const account = [...accounts].sort(
-    (a, b) => PLATFORM_ORDER.indexOf(a.platform as string) - PLATFORM_ORDER.indexOf(b.platform as string)
-  )[0];
-
-  // 2. Fetch latest account snapshot for follower count
-  const { data: latestAccSnap } = await supabase
-    .from("account_snapshots")
-    .select("followers, following, post_count, snapshot_date")
-    .eq("account_id", account.id)
-    .order("snapshot_date", { ascending: false })
-    .limit(1)
-    .single();
-
-  // 3. Fetch ALL posts for this account + their snapshots (no date filter — client handles
+  // 2. ALL posts of the included accounts + their snapshots (no date filter — the client handles
   // filtering). Paged: an active account passes 1000 posts over a 5-6 month campaign.
   const rawPosts = await fetchAllPages<Record<string, unknown>>(async (from, to) => {
     const res = await supabase
       .from("posts")
       .select(`
         id,
+        account_id,
         platform_post_id,
         url,
         caption,
@@ -786,7 +845,7 @@ export async function getVolunteerDetails(
           quotes
         )
       `)
-      .eq("account_id", account.id)
+      .in("account_id", includedIds)
       .order("posted_at", { ascending: false })
       .order("id", { ascending: true })
       .range(from, to);
@@ -841,8 +900,11 @@ export async function getVolunteerDetails(
       });
     }
 
+    const meta = accountMeta.get(p.account_id as string);
     posts.push({
       id: p.id as string,
+      platform: meta?.platform ?? "instagram",
+      handle: meta?.handle ?? "",
       platformPostId: (p.platform_post_id as string) ?? "",
       url: (p.url as string) ?? "",
       caption: p.caption as string | null,
@@ -871,17 +933,31 @@ export async function getVolunteerDetails(
     ? Math.round((totalLikes + totalComments) / totalMonitoredPosts)
     : 0;
 
+  // Header: the primary included account; followers are summed over the accounts that reported one.
+  const primary = included[0];
+  const primarySummary = includedSummaries.find((a) => a.id === primary.id) ?? includedSummaries[0];
+  const measuredFollowers = includedSummaries.filter((a) => a.followers !== null);
+  const followers =
+    scope === "volunteer"
+      ? measuredFollowers.length > 0
+        ? measuredFollowers.reduce((sum, a) => sum + (a.followers ?? 0), 0)
+        : null
+      : primarySummary?.followers ?? null;
+
   return {
+    scope,
+    volunteerId,
+    accounts,
     account: {
-      id: account.id as string,
-      handle: account.handle as string,
-      volunteerName: (account.volunteer_name as string | null) ?? account.handle,
-      platform: account.platform as string,
-      status: account.status as string,
-      followers: latestAccSnap?.followers ?? null,
-      following: latestAccSnap?.following ?? null,
-      totalPostsOnPlatform: latestAccSnap?.post_count ?? null,
-      addedAt: account.added_at as string,
+      id: primary.id,
+      handle: primary.handle,
+      volunteerName: primary.volunteer_name ?? primary.handle,
+      platform: primary.platform ?? "instagram",
+      status: scope === "volunteer" && includedSummaries.some((a) => a.status === "active") ? "active" : primary.status,
+      followers,
+      following: scope === "volunteer" ? null : primarySummary?.following ?? null,
+      totalPostsOnPlatform: scope === "volunteer" ? null : primarySummary?.totalPostsOnPlatform ?? null,
+      addedAt: primary.added_at,
     },
     metrics: {
       totalMonitoredPosts,
@@ -893,4 +969,69 @@ export async function getVolunteerDetails(
     timeline,
     posts,
   };
+}
+
+/**
+ * Detailed profile & all posts for a single volunteer account (one platform).
+ * Always fetches all posts (no date filter at the DB level) so the client
+ * can switch date ranges without a server round-trip.
+ * The preset parameter only controls how aggregated metrics & the timeline
+ * are computed on the server for the initial render.
+ */
+export async function getVolunteerDetails(
+  rawHandle: string,
+  preset?: DateRangePreset,
+  platform?: string
+): Promise<VolunteerProfileData | null> {
+  const supabase = createServerComponentClient();
+  const cleanHandle = rawHandle.replace(/^@/, "").trim().toLowerCase();
+
+  // Exact .eq matching prevents wildcard ILIKE collisions on underscore handles.
+  let query = supabase.from("accounts").select(PROFILE_ACCOUNT_COLUMNS).eq("handle", cleanHandle);
+  if (platform && platform !== "all") {
+    query = query.eq("platform", platform);
+  }
+
+  const { data, error: accErr } = await query;
+  const accounts = (data ?? []) as ProfileAccountRow[];
+  if (accErr || accounts.length === 0) {
+    return null;
+  }
+
+  // If several platforms share this handle and none was specified, pick deterministically
+  // (Instagram, then Facebook, then X) instead of whatever order the database returned.
+  const account = sortByPlatform(accounts)[0];
+
+  // The volunteer's other accounts, so the page can link to them.
+  let siblings: ProfileAccountRow[] = [account];
+  if (account.volunteer_id) {
+    const { data: rows } = await supabase
+      .from("accounts")
+      .select(PROFILE_ACCOUNT_COLUMNS)
+      .eq("volunteer_id", account.volunteer_id);
+    const found = (rows ?? []) as ProfileAccountRow[];
+    if (found.some((r) => r.id === account.id)) siblings = sortByPlatform(found);
+  }
+
+  return buildProfile(siblings, [account], "account", account.volunteer_id, preset);
+}
+
+/**
+ * Combined profile for a VOLUNTEER: every account (Instagram, Facebook, X) and all of their posts.
+ */
+export async function getVolunteerProfile(
+  volunteerId: string,
+  preset?: DateRangePreset
+): Promise<VolunteerProfileData | null> {
+  const supabase = createServerComponentClient();
+  const { data, error } = await supabase
+    .from("accounts")
+    .select(PROFILE_ACCOUNT_COLUMNS)
+    .eq("volunteer_id", volunteerId);
+  const accounts = (data ?? []) as ProfileAccountRow[];
+  if (error || accounts.length === 0) {
+    return null;
+  }
+  const sorted = sortByPlatform(accounts);
+  return buildProfile(sorted, sorted, "volunteer", volunteerId, preset);
 }

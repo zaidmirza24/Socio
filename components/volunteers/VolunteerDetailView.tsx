@@ -31,6 +31,9 @@ import { formatMetric, formatNumber, formatDayLabel, getDateFilterSince } from "
 import { sumMeasured } from "@/lib/metrics/integrity";
 import { EngagementTrendChart } from "@/components/charts/EngagementTrendChart";
 import { DateRangeFilter } from "@/components/analytics/DateRangeFilter";
+import { PlatformBadge } from "@/components/ui/PlatformBadge";
+import { platformLabel as labelOf } from "@/lib/platform";
+import { accountProfileHref } from "@/lib/utils/volunteer-links";
 import type { VolunteerProfileData, DateRangePreset } from "@/lib/supabase/queries";
 
 interface VolunteerDetailViewProps {
@@ -38,11 +41,39 @@ interface VolunteerDetailViewProps {
   initialRange?: DateRangePreset;
 }
 
+// ── Platform-aware helpers ────────────────────────────────────────────────
+function platformIcon(platform: string) {
+  return platform === "facebook" ? Facebook : platform === "x" ? Twitter : Instagram;
+}
+
+function platformIconColor(platform: string): string {
+  return platform === "facebook" ? "text-blue-600" : platform === "x" ? "text-sky-500" : "text-rose-500";
+}
+
+function platformProfileUrl(platform: string, handle: string): string {
+  return platform === "facebook"
+    ? `https://www.facebook.com/${handle}/`
+    : platform === "x"
+    ? `https://x.com/${handle}`
+    : `https://www.instagram.com/${handle}/`;
+}
+
+function profileButtonStyle(platform: string): string {
+  return platform === "facebook"
+    ? "bg-gradient-to-r from-blue-600 to-blue-700"
+    : platform === "x"
+    ? "bg-gradient-to-r from-slate-800 to-sky-600"
+    : "bg-gradient-to-r from-rose-500 to-indigo-600";
+}
+// ───────────────────────────────────────────────────────────────────────────
+
 export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerDetailViewProps) {
-  const { account, metrics: defaultMetrics, timeline: defaultTimeline, posts } = data;
+  const { account, timeline: defaultTimeline, posts, accounts } = data;
+  const isVolunteerScope = data.scope === "volunteer";
   const searchParams = useSearchParams();
   const fromSource = searchParams?.get("from");
   const isFromMatrix = fromSource === "matrix";
+  const isFromVolunteers = fromSource === "volunteers";
 
   const [dateFilter, setDateFilter] = useState<DateRangePreset>(initialRange);
   const [copiedLink, setCopiedLink] = useState<string | null>(null);
@@ -50,45 +81,18 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
   const [searchQuery, setSearchQuery] = useState("");
   const [mediaFilter, setMediaFilter] = useState<string>("all");
+  // Only meaningful on a volunteer page, where posts from several platforms are combined.
+  const [platformFilter, setPlatformFilter] = useState<string>("all");
 
-  // ── Platform-aware helpers ──────────────────────────────────────────────
   const platform = account.platform ?? "instagram";
-
-  const PlatformIcon =
-    platform === "facebook"
-      ? Facebook
-      : platform === "x"
-      ? Twitter
-      : Instagram;
-
-  const platformIconColor =
-    platform === "facebook"
-      ? "text-blue-600"
-      : platform === "x"
-      ? "text-sky-500"
-      : "text-rose-500";
-
-  const platformLabel =
-    platform === "facebook"
-      ? "Facebook"
-      : platform === "x"
-      ? "X"
-      : "Instagram";
-
-  const platformProfileUrl =
-    platform === "facebook"
-      ? `https://www.facebook.com/${account.handle}/`
-      : platform === "x"
-      ? `https://x.com/${account.handle}`
-      : `https://www.instagram.com/${account.handle}/`;
-
-  const profileButtonStyle =
-    platform === "facebook"
-      ? "bg-gradient-to-r from-blue-600 to-blue-700"
-      : platform === "x"
-      ? "bg-gradient-to-r from-slate-800 to-sky-600"
-      : "bg-gradient-to-r from-rose-500 to-indigo-600";
-  // ───────────────────────────────────────────────────────────────────────
+  const PlatformIcon = platformIcon(platform);
+  const platformLabel = labelOf(platform);
+  const backHref = isFromMatrix
+    ? "/dashboard?view=matrix"
+    : isFromVolunteers
+    ? "/dashboard/volunteers"
+    : "/dashboard?view=analytics&tab=volunteers";
+  const backLabel = isFromMatrix ? "Back to Matrix" : isFromVolunteers ? "Back to Volunteers" : "Back to Volunteer Leaderboard";
 
   const handleCopy = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
@@ -109,10 +113,15 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
 
   // Filter posts by date. postedAt is already IST ("2026-11-10 09:30"), so its first 10
   // characters are the IST calendar day.
+  const platformFilteredPosts = useMemo(
+    () => (isVolunteerScope && platformFilter !== "all" ? posts.filter((p) => p.platform === platformFilter) : posts),
+    [posts, isVolunteerScope, platformFilter]
+  );
+
   const dateFilteredPosts = useMemo(() => {
-    if (!cutoffDate) return posts;
-    return posts.filter((p) => !!p.postedAt && p.postedAt.slice(0, 10) >= cutoffDate);
-  }, [posts, cutoffDate]);
+    if (!cutoffDate) return platformFilteredPosts;
+    return platformFilteredPosts.filter((p) => !!p.postedAt && p.postedAt.slice(0, 10) >= cutoffDate);
+  }, [platformFilteredPosts, cutoffDate]);
 
   // Recalculate metrics for the selected date range
   const metrics = useMemo(() => {
@@ -137,7 +146,8 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
 
   // Filter timeline for the selected date range
   const timeline = useMemo(() => {
-    if (dateFilter === "all") return defaultTimeline;
+    // The server timeline covers every platform, so it is only valid when no platform is picked.
+    if (dateFilter === "all" && platformFilter === "all") return defaultTimeline;
     const byDate = new Map<string, { likes: number; comments: number }>();
     for (const p of dateFilteredPosts) {
       const dateKey = p.postedAt ? p.postedAt.slice(0, 10) : "unknown";
@@ -156,7 +166,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
         likes: v.likes,
         comments: v.comments,
       }));
-  }, [defaultTimeline, dateFilter, dateFilteredPosts]);
+  }, [defaultTimeline, dateFilter, platformFilter, dateFilteredPosts]);
 
   // Filter posts by search and media type
   const filteredPosts = useMemo(() => {
@@ -179,19 +189,11 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
         <div className="flex flex-wrap items-center gap-2 text-slate-500">
           {/* Primary Back Button */}
           <Link
-            href={
-              isFromMatrix
-                ? "/dashboard?view=matrix"
-                : "/dashboard?view=analytics&tab=volunteers"
-            }
+            href={backHref}
             className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border border-slate-200 bg-white text-slate-800 font-bold hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 shadow-xs transition"
           >
             <ArrowLeft className="h-3.5 w-3.5 text-blue-600" />
-            <span>
-              {isFromMatrix
-                ? "Back to Matrix"
-                : "Back to Volunteer Leaderboard"}
-            </span>
+            <span>{backLabel}</span>
           </Link>
 
           <span className="text-slate-300">/</span>
@@ -206,7 +208,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
           <span className="text-slate-300">/</span>
 
           <span className="font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded-md">
-            @{account.handle}
+            {isVolunteerScope ? account.volunteerName : `@${account.handle}`}
           </span>
         </div>
 
@@ -249,9 +251,11 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
             {/* Avatar Circle */}
             <div className="relative flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 text-white shadow-md text-2xl font-bold">
               {account.volunteerName.charAt(0).toUpperCase()}
-              <div className="absolute -bottom-1 -right-1 rounded-full bg-white p-1 shadow-sm">
-                <PlatformIcon className={`h-4 w-4 ${platformIconColor}`} />
-              </div>
+              {!isVolunteerScope && (
+                <div className="absolute -bottom-1 -right-1 rounded-full bg-white p-1 shadow-sm">
+                  <PlatformIcon className={`h-4 w-4 ${platformIconColor(platform)}`} />
+                </div>
+              )}
             </div>
 
             <div>
@@ -276,21 +280,27 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
               </div>
 
               <div className="mt-1 flex flex-wrap items-center gap-3 text-sm text-slate-500">
-                <button
-                  onClick={handleCopyHandle}
-                  className="font-mono text-blue-600 hover:text-blue-800 flex items-center gap-1 transition"
-                  title="Click to copy handle"
-                >
-                  @{account.handle}
-                  {copiedHandle ? (
-                    <Check className="h-3.5 w-3.5 text-emerald-600" />
-                  ) : (
-                    <Copy className="h-3 w-3 text-slate-500" />
-                  )}
-                </button>
+                {isVolunteerScope ? (
+                  <span>
+                    {accounts.length} {accounts.length === 1 ? "account" : "accounts"}
+                  </span>
+                ) : (
+                  <button
+                    onClick={handleCopyHandle}
+                    className="font-mono text-blue-600 hover:text-blue-800 flex items-center gap-1 transition"
+                    title="Click to copy handle"
+                  >
+                    @{account.handle}
+                    {copiedHandle ? (
+                      <Check className="h-3.5 w-3.5 text-emerald-600" />
+                    ) : (
+                      <Copy className="h-3 w-3 text-slate-500" />
+                    )}
+                  </button>
+                )}
                 <span>·</span>
                 <span>
-                  Followers:{" "}
+                  {isVolunteerScope ? "Total followers" : "Followers"}:{" "}
                   <strong className="text-slate-800 font-semibold">
                     {formatMetric(account.followers)}
                   </strong>
@@ -314,18 +324,69 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
           {/* Action buttons & Date Range Filter */}
           <div className="flex flex-wrap items-center gap-3">
             <DateRangeFilter value={dateFilter} onChange={setDateFilter} size="sm" />
-            <a
-              href={platformProfileUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl ${profileButtonStyle} text-white font-medium text-sm shadow-sm hover:opacity-95 transition`}
-            >
-              <PlatformIcon className="h-4 w-4" />
-              View {platformLabel} Profile
-              <ExternalLink className="h-3.5 w-3.5 opacity-80" />
-            </a>
+            {(isVolunteerScope ? accounts : [{ platform, handle: account.handle }]).map((a) => {
+              const Icon = platformIcon(a.platform);
+              return (
+                <a
+                  key={`${a.platform}:${a.handle}`}
+                  href={platformProfileUrl(a.platform, a.handle)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl ${profileButtonStyle(a.platform)} text-white font-medium text-sm shadow-sm hover:opacity-95 transition`}
+                >
+                  <Icon className="h-4 w-4" />
+                  View {labelOf(a.platform)} Profile
+                  <ExternalLink className="h-3.5 w-3.5 opacity-80" />
+                </a>
+              );
+            })}
           </div>
         </div>
+
+        {/* All of this volunteer's accounts: totals per platform, each linking to its own page */}
+        {accounts.length > 0 && (data.volunteerId !== null || accounts.length > 1) && (
+          <div className="mt-5 border-t border-slate-100 pt-4">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Accounts ({accounts.length})
+              </span>
+              {!isVolunteerScope && data.volunteerId && (
+                <Link
+                  href={`/dashboard/volunteers/v/${data.volunteerId}${fromSource ? `?from=${encodeURIComponent(fromSource)}` : ""}`}
+                  className="text-xs font-semibold text-blue-600 hover:underline"
+                >
+                  View all platforms combined →
+                </Link>
+              )}
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              {accounts.map((a) => {
+                const isCurrent = !isVolunteerScope && a.id === account.id;
+                return (
+                  <Link
+                    key={a.id}
+                    href={accountProfileHref(a.handle, a.platform, isFromMatrix ? "matrix" : undefined)}
+                    aria-current={isCurrent ? "page" : undefined}
+                    className={`rounded-xl border px-3.5 py-3 transition hover:border-blue-300 ${
+                      isCurrent ? "border-blue-300 bg-blue-50/50" : "border-slate-200 bg-slate-50/50"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <PlatformBadge platform={a.platform} />
+                      <span className="text-xs text-slate-500">
+                        {a.status === "active" ? "Active" : "Paused"}
+                      </span>
+                    </div>
+                    <div className="mt-1.5 truncate font-mono text-xs text-blue-600">@{a.handle}</div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      Followers: <strong className="text-slate-800">{formatMetric(a.followers)}</strong>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── KPI Summary Cards ── */}
@@ -460,6 +521,23 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
               />
             </div>
 
+            {/* Platform filter (volunteer page combines several platforms) */}
+            {isVolunteerScope && accounts.length > 1 && (
+              <select
+                value={platformFilter}
+                onChange={(e) => setPlatformFilter(e.target.value)}
+                aria-label="Filter by platform"
+                className="text-xs rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="all">All platforms</option>
+                {Array.from(new Set(accounts.map((a) => a.platform))).map((p) => (
+                  <option key={p} value={p}>
+                    {labelOf(p)}
+                  </option>
+                ))}
+              </select>
+            )}
+
             {/* Media Filter */}
             <select
               value={mediaFilter}
@@ -516,8 +594,11 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
                   <div>
                     {/* Top row: Media type tag + Posted Date */}
                     <div className="flex items-center justify-between text-xs text-slate-500 mb-3">
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-medium">
-                        {post.mediaType}
+                      <span className="inline-flex items-center gap-1.5">
+                        {isVolunteerScope && <PlatformBadge platform={post.platform} compact />}
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-medium">
+                          {post.mediaType}
+                        </span>
                       </span>
                       <span className="flex items-center gap-1">
                         <Calendar className="h-3 w-3" />
@@ -579,8 +660,11 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
                           rel="noopener noreferrer"
                           className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-semibold transition"
                         >
-                          <PlatformIcon className="h-3.5 w-3.5" />
-                          View on {platformLabel}
+                          {(() => {
+                            const Icon = platformIcon(post.platform);
+                            return <Icon className="h-3.5 w-3.5" />;
+                          })()}
+                          View on {labelOf(post.platform)}
                           <ExternalLink className="h-3 w-3 opacity-70" />
                         </a>
                       ) : (
@@ -618,6 +702,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
                 <thead className="bg-slate-50 text-xs uppercase font-semibold text-slate-500 border-b border-slate-200">
                   <tr>
                     <th className="px-6 py-3">Caption</th>
+                    {isVolunteerScope && <th className="px-6 py-3">Account</th>}
                     <th className="px-6 py-3">Type</th>
                     <th className="px-6 py-3">Posted Date</th>
                     <th className="px-6 py-3 text-right">Likes</th>
@@ -630,7 +715,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
                 <tbody className="divide-y divide-slate-100">
                   {filteredPosts.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-6 py-10 text-center text-sm text-slate-500">
+                      <td colSpan={isVolunteerScope ? 9 : 8} className="px-6 py-10 text-center text-sm text-slate-500">
                         No posts found matching filter.
                       </td>
                     </tr>
@@ -640,6 +725,14 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
                         <td className="px-6 py-3.5 max-w-sm truncate text-slate-900 font-normal" title={post.caption || ""}>
                           {post.caption || <span className="text-slate-500 italic">No caption</span>}
                         </td>
+                        {isVolunteerScope && (
+                          <td className="px-6 py-3.5 whitespace-nowrap">
+                            <div className="flex items-center gap-1.5">
+                              <PlatformBadge platform={post.platform} compact />
+                              <span className="font-mono text-xs text-slate-600">@{post.handle}</span>
+                            </div>
+                          </td>
+                        )}
                         <td className="px-6 py-3.5">
                           <span className="text-xs px-2 py-0.5 rounded bg-slate-100 font-medium text-slate-600">
                             {post.mediaType}

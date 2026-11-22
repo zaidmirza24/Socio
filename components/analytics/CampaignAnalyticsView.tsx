@@ -33,6 +33,7 @@ import { PlatformFilter } from "@/components/analytics/PlatformFilter";
 import { PlatformBadge } from "@/components/ui/PlatformBadge";
 import { platformLabel } from "@/lib/platform";
 import { formatMetric, formatNumber } from "@/lib/utils";
+import { volunteerProfileHref } from "@/lib/utils/volunteer-links";
 import type {
   KPISummary,
   LeaderboardEntry,
@@ -430,7 +431,7 @@ export function CampaignAnalyticsView({
                 <p className="truncate text-sm font-bold text-slate-900">
                   {topVolunteer ? (
                     <Link
-                      href={`/dashboard/volunteers/${topVolunteer.handle}?platform=${topVolunteer.platform}&from=leaderboard`}
+                      href={volunteerProfileHref({ volunteerId: topVolunteer.volunteerId, handle: topVolunteer.handle, platform: topVolunteer.platform, from: "leaderboard" })}
                       className="hover:underline"
                     >
                       @{topVolunteer.handle} ({topVolunteer.volunteerName})
@@ -599,7 +600,7 @@ export function CampaignAnalyticsView({
                 </div>
                 <div className="mt-3">
                   <Link
-                    href={`/dashboard/volunteers/${leaderboard[0].handle}?platform=${leaderboard[0].platform}&from=leaderboard`}
+                    href={volunteerProfileHref({ volunteerId: leaderboard[0].volunteerId, handle: leaderboard[0].handle, platform: leaderboard[0].platform, from: "leaderboard" })}
                     className="text-base font-bold text-slate-900 hover:text-blue-600 hover:underline block truncate"
                   >
                     {leaderboard[0].volunteerName}
@@ -632,7 +633,7 @@ export function CampaignAnalyticsView({
                 </div>
                 <div className="mt-3">
                   <Link
-                    href={`/dashboard/volunteers/${leaderboard[1].handle}?platform=${leaderboard[1].platform}&from=leaderboard`}
+                    href={volunteerProfileHref({ volunteerId: leaderboard[1].volunteerId, handle: leaderboard[1].handle, platform: leaderboard[1].platform, from: "leaderboard" })}
                     className="text-base font-bold text-slate-900 hover:text-blue-600 hover:underline block truncate"
                   >
                     {leaderboard[1].volunteerName}
@@ -665,7 +666,7 @@ export function CampaignAnalyticsView({
                 </div>
                 <div className="mt-3">
                   <Link
-                    href={`/dashboard/volunteers/${leaderboard[2].handle}?platform=${leaderboard[2].platform}&from=leaderboard`}
+                    href={volunteerProfileHref({ volunteerId: leaderboard[2].volunteerId, handle: leaderboard[2].handle, platform: leaderboard[2].platform, from: "leaderboard" })}
                     className="text-base font-bold text-slate-900 hover:text-blue-600 hover:underline block truncate"
                   >
                     {leaderboard[2].volunteerName}
@@ -793,14 +794,14 @@ export function CampaignAnalyticsView({
                           (item.totalEngagement / maxLeaderboardEngagement) * 100
                         );
                         return (
-                          <tr key={item.handle} className="hover:bg-slate-50/80 transition-colors">
+                          <tr key={item.volunteerId ?? `${item.platform}:${item.handle}`} className="hover:bg-slate-50/80 transition-colors">
                             <td className="px-5 py-3.5">
                               <RankBadge rank={item.rank} />
                             </td>
                             <td className="px-5 py-3.5">
                               <div className="font-semibold text-slate-900">
                                 <Link
-                                  href={`/dashboard/volunteers/${item.handle}?platform=${item.platform}&from=leaderboard`}
+                                  href={volunteerProfileHref({ volunteerId: item.volunteerId, handle: item.handle, platform: item.platform, from: "leaderboard" })}
                                   className="hover:text-blue-600 hover:underline"
                                 >
                                   {item.volunteerName}
@@ -846,7 +847,7 @@ export function CampaignAnalyticsView({
                             </td>
                             <td className="px-5 py-3.5 text-right">
                               <Link
-                                href={`/dashboard/volunteers/${item.handle}?platform=${item.platform}&from=leaderboard`}
+                                href={volunteerProfileHref({ volunteerId: item.volunteerId, handle: item.handle, platform: item.platform, from: "leaderboard" })}
                                 className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 hover:text-blue-600 transition"
                               >
                                 View
@@ -968,7 +969,7 @@ export function CampaignAnalyticsView({
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <Link
-                            href={`/dashboard/volunteers/${post.handle}?platform=${post.platform}&from=leaderboard`}
+                            href={volunteerProfileHref({ volunteerId: post.volunteerId, handle: post.handle, platform: post.platform, from: "leaderboard" })}
                             className="font-bold text-slate-900 hover:text-blue-600 hover:underline block truncate text-sm"
                           >
                             @{post.handle}

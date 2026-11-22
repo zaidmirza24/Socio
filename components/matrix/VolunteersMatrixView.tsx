@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import type { MatrixData, MatrixCellStatus } from "@/lib/supabase/matrix";
 import { formatMetric, formatDisplayDate } from "@/lib/utils";
+import { volunteerProfileHref } from "@/lib/utils/volunteer-links";
 
 interface VolunteersMatrixViewProps {
   data: MatrixData;
@@ -364,7 +365,7 @@ export function VolunteersMatrixView({ data }: VolunteersMatrixViewProps) {
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
                             <Link
-                              href={`/dashboard/volunteers/${account.handle}?platform=${account.platform}&from=matrix`}
+                              href={volunteerProfileHref({ volunteerId: account.volunteerId, handle: account.handle, platform: account.platform, from: "matrix" })}
                               className="font-semibold text-slate-900 hover:text-blue-600 text-xs truncate block transition"
                             >
                               {account.volunteerName}

@@ -54,6 +54,8 @@ export function DashboardHeader() {
   let breadcrumb: { group: string; label: string };
   if (route) {
     breadcrumb = { group: route.group, label: route.label };
+  } else if (pathname.startsWith("/dashboard/volunteers/v/")) {
+    breadcrumb = { group: "Volunteers", label: "Volunteer profile" };
   } else if (pathname.startsWith("/dashboard/volunteers/")) {
     breadcrumb = { group: "Volunteers", label: `@${decodeURIComponent(pathname.split("/").pop() ?? "")}` };
   } else {
