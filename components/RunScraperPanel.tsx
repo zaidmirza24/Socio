@@ -4,6 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/Modal";
 import { RunGainSummary } from "@/components/RunGainSummary";
+import {
+  RunVolunteerPicker,
+  VolunteerPickerLoading,
+  useVolunteerOptions,
+} from "@/components/RunVolunteerPicker";
 import { mergeRunGains, type RunGain } from "@/lib/metrics/run-gain";
 import { Play, Loader2, CheckCircle2, AlertCircle, MinusCircle, X } from "lucide-react";
 
@@ -108,10 +113,24 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
   const [mode, setMode] = useState<JobType>("discovery");
   const [scope, setScope] = useState<Scope>("all");
   const [force, setForce] = useState(false);
+  // Volunteers the run covers. Starts as everyone once the list has loaded.
+  const volunteerState = useVolunteerOptions(open);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selectionInitialised, setSelectionInitialised] = useState(false);
   const [runs, setRuns] = useState<PlatformRun[]>([]);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const runsRef = useRef<PlatformRun[]>([]);
   runsRef.current = runs;
+
+  useEffect(() => {
+    if (volunteerState.status === "ready" && !selectionInitialised) {
+      setSelected(new Set(volunteerState.volunteers.map((v) => v.id)));
+      setSelectionInitialised(true);
+    }
+  }, [volunteerState, selectionInitialised]);
+
+  const totalVolunteers = volunteerState.status === "ready" ? volunteerState.volunteers.length : 0;
+  const noneSelected = volunteerState.status === "ready" && selected.size === 0;
 
   const busy = runs.some((r) => r.state === "STARTING" || r.state === "RUNNING");
   const finished = runs.length > 0 && !busy;
@@ -315,6 +334,10 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
           jobType: mode,
           ...(mode === "refresh" && force ? { force: true } : {}),
           ...(scope !== "all" ? { platform: scope } : {}),
+          // Everyone selected = no filter, so volunteers added later are covered too.
+          ...(volunteerState.status === "ready" && selected.size < totalVolunteers
+            ? { volunteerIds: [...selected] }
+            : {}),
         }),
       });
       const data: TriggerResponse = await res.json();
@@ -429,17 +452,31 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
                   ))}
                 </div>
               </div>
+
+              {volunteerState.status === "loading" && <VolunteerPickerLoading />}
+              {volunteerState.status === "error" && (
+                <p className="text-xs text-red-600" role="alert">
+                  {volunteerState.message} The run will cover every volunteer.
+                </p>
+              )}
+              {volunteerState.status === "ready" && (
+                <RunVolunteerPicker volunteers={volunteerState.volunteers} selected={selected} onChange={setSelected} />
+              )}
             </fieldset>
 
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || noneSelected}
               onClick={start}
               className="mt-5 w-full inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
             >
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
               {busy ? "Collection in progress..." : finished ? "Collect again" : "Start collection"}
             </button>
+
+            {noneSelected && !busy && (
+              <p className="mt-2 text-center text-xs text-amber-700">Select at least one volunteer to start.</p>
+            )}
 
             {runs.length > 0 && (
               <ul className="mt-4 space-y-2" aria-live="polite">

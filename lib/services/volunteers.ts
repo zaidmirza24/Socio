@@ -163,3 +163,38 @@ export async function renameVolunteer(volunteerId: string, name: string): Promis
     .eq("volunteer_id", volunteerId);
   if (accErr) throw new Error(`Failed to sync account names: ${accErr.message}`);
 }
+
+export interface DeleteVolunteerResult {
+  /** Accounts that belonged to the volunteer. */
+  accounts: number;
+  /** True when their posts and snapshots were deleted too; false when kept (accounts archived). */
+  dataDeleted: boolean;
+}
+
+/** Thrown when the volunteer does not exist (already deleted, or a bad id). */
+export class VolunteerNotFoundError extends Error {
+  constructor() {
+    super("Volunteer not found.");
+    this.name = "VolunteerNotFoundError";
+  }
+}
+
+/**
+ * Deletes a volunteer in a single database transaction (see `delete_volunteer` in migration
+ * 20261129). `deleteData` is an explicit choice, never a default:
+ * - true: accounts, posts and snapshots are deleted with the volunteer.
+ * - false: only the volunteer is deleted; their accounts are kept (archived, no longer scraped) so
+ *   the collected history stays on the dashboards.
+ */
+export async function deleteVolunteer(volunteerId: string, deleteData: boolean): Promise<DeleteVolunteerResult> {
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("delete_volunteer", {
+    p_volunteer_id: volunteerId,
+    p_delete_data: deleteData,
+  });
+  if (error) {
+    if (error.code === "P0002") throw new VolunteerNotFoundError(); // no_data_found
+    throw new Error(`Failed to delete volunteer: ${error.message}`);
+  }
+  return { accounts: Number(data ?? 0), dataDeleted: deleteData };
+}

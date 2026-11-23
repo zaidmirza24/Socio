@@ -3,6 +3,8 @@ import { Search } from "lucide-react";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchAllPages } from "@/lib/supabase/metrics-data";
 import { formatMetric, formatDisplayDate } from "@/lib/utils";
+import { isCurrentUserAdmin } from "@/lib/supabase/require-admin";
+import { DeleteVolunteerButton } from "@/components/volunteers/DeleteVolunteerButton";
 import { PlatformFilter } from "@/components/analytics/PlatformFilter";
 import { PlatformBadge } from "@/components/ui/PlatformBadge";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -63,6 +65,7 @@ export default async function VolunteersPage({ searchParams }: Props) {
   const pageNum = Math.max(parseInt(sp?.page ?? "1", 10) || 1, 1);
 
   const admin = createAdminClient();
+  const isAdmin = await isCurrentUserAdmin();
   let loadError: string | null = null;
   let all: VolunteerTotals[] = [];
   const links = new Map<string, AccountLink[]>();
@@ -249,6 +252,7 @@ export default async function VolunteersPage({ searchParams }: Props) {
                   <th className="px-4 py-3 text-right">Shares</th>
                   <th className="px-4 py-3 text-right">Views</th>
                   <th className="px-4 py-3">Last post</th>
+                  {isAdmin && <th className="px-4 py-3"><span className="sr-only">Actions</span></th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -283,6 +287,11 @@ export default async function VolunteersPage({ searchParams }: Props) {
                     <td className="px-4 py-3 text-slate-500">
                       {v.last_posted_at ? formatDisplayDate(v.last_posted_at) : "n/a"}
                     </td>
+                    {isAdmin && (
+                      <td className="px-2 py-3 text-right">
+                        <DeleteVolunteerButton volunteerId={v.volunteer_id} name={v.name} />
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAdmin } from "@/lib/supabase/require-admin";
 import {
   MEMORY_FULL_MESSAGE,
+  NoTargetsError,
   RunAlreadyActiveError,
   getRefreshGroupProgress,
   isMemoryLimitError,
@@ -19,6 +20,8 @@ const payloadSchema = z.object({
   force: z.boolean().optional(),
   /** Limit the run to one platform. Omit to run every enabled platform. */
   platform: z.enum(["instagram", "facebook", "x"]).optional(),
+  /** Limit the run to these volunteers. Omit to run every volunteer. Bounded: ~600 volunteers. */
+  volunteerIds: z.array(z.string().uuid()).min(1).max(5000).optional(),
 });
 
 interface PlatformRunResult {
@@ -52,7 +55,7 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   }
-  const { jobType, postLimit, force, platform: onlyPlatform } = parsed.data;
+  const { jobType, postLimit, force, platform: onlyPlatform, volunteerIds } = parsed.data;
 
   let platformSettings: Awaited<ReturnType<typeof getPlatformSettings>>;
   try {
@@ -85,7 +88,7 @@ export async function POST(request: NextRequest) {
   for (const platform of platforms) {
     try {
       if (jobType === "refresh") {
-        const res = await triggerWeeklyRefresh({ platform, force });
+        const res = await triggerWeeklyRefresh({ platform, force, volunteerIds });
         results.push({
           platform,
           ok: res.success, // success with no runIds and no queue = nothing was due
@@ -95,7 +98,7 @@ export async function POST(request: NextRequest) {
           message: res.message,
         });
       } else {
-        const res = await triggerDailyDiscovery({ platform, postLimit });
+        const res = await triggerDailyDiscovery({ platform, postLimit, volunteerIds });
         results.push({
           platform,
           ok: true,
@@ -107,6 +110,11 @@ export async function POST(request: NextRequest) {
         });
       }
     } catch (err: unknown) {
+      if (err instanceof NoTargetsError) {
+        // Nothing to collect on this platform (e.g. the selected volunteers have no account here).
+        results.push({ platform, ok: true, runIds: [], batchGroup: null, queuedCount: 0, message: err.message });
+        continue;
+      }
       if (err instanceof RunAlreadyActiveError) {
         // Resume polling the run that is already going instead of paying for a duplicate.
         // A queued refresh may still have batches waiting; report them so the panel keeps following.

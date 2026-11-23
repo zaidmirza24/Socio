@@ -58,6 +58,31 @@ export class RunAlreadyActiveError extends Error {
   }
 }
 
+/**
+ * Thrown when a run has nothing to collect (no active accounts, or none belonging to the selected
+ * volunteers). A normal outcome rather than a failure: the caller can report it as "skipped".
+ */
+export class NoTargetsError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NoTargetsError";
+  }
+}
+
+/**
+ * Narrows rows to the selected volunteers. `undefined` / empty selection = no narrowing (all rows).
+ * Filtering happens in memory on purpose: a 600-volunteer selection does not fit in a PostgREST
+ * `.in()` URL, and the account list is already paged in full by every caller.
+ */
+export function filterByVolunteers<T extends { volunteer_id: string | null }>(
+  rows: T[],
+  volunteerIds: string[] | undefined
+): T[] {
+  if (!volunteerIds || volunteerIds.length === 0) return rows;
+  const wanted = new Set(volunteerIds);
+  return rows.filter((r) => r.volunteer_id !== null && wanted.has(r.volunteer_id));
+}
+
 /** The refresh job of this platform that still has batches waiting to start, if any (recent only). */
 async function findPendingRefreshGroup(platform: PlatformType): Promise<string | null> {
   const supabase = createAdminClient();
@@ -204,15 +229,16 @@ export async function triggerDailyDiscovery(
   } else {
     let accounts: { handle: string }[];
     try {
-      accounts = await fetchAllRows<{ handle: string }>((from, to) =>
+      const active = await fetchAllRows<{ handle: string; volunteer_id: string | null }>((from, to) =>
         supabase
           .from("accounts")
-          .select("handle")
+          .select("handle, volunteer_id")
           .eq("platform", platform)
           .eq("status", "active")
           .order("id")
           .range(from, to)
       );
+      accounts = filterByVolunteers(active, options.volunteerIds);
     } catch (accError: unknown) {
       throw new Error(
         `Database error querying active accounts: ${accError instanceof Error ? accError.message : String(accError)}`
@@ -220,7 +246,11 @@ export async function triggerDailyDiscovery(
     }
 
     if (accounts.length === 0) {
-      throw new Error(`No active ${platform} accounts found. Add accounts in the Accounts tab first.`);
+      throw new NoTargetsError(
+        options.volunteerIds?.length
+          ? `None of the selected volunteers has an active ${platform} account.`
+          : `No active ${platform} accounts found. Add accounts in the Accounts tab first.`
+      );
     }
 
     targetHandles = accounts.map((a) => a.handle.replace(/^@/, "").trim().toLowerCase());
@@ -234,8 +264,9 @@ export async function triggerDailyDiscovery(
   const newerThan = options.onlyPostsNewerThan || getScrapeBoundaryDate();
 
   // 4. Dispatch discovery job via provider
+  const { volunteerIds: _selection, ...providerOptions } = options; // selection is ours, not the provider's
   const triggerResult = await provider.startDiscoveryJob(targetHandles, {
-    ...options,
+    ...providerOptions,
     platform,
     postLimit,
     onlyPostsNewerThan: newerThan ?? undefined,
@@ -269,18 +300,34 @@ interface RefreshCandidate {
  */
 async function getRefreshCandidates(
   platform: PlatformType,
-  ageCutoff: string | null
+  ageCutoff: string | null,
+  volunteerIds?: string[]
 ): Promise<RefreshCandidate[]> {
   const supabase = createAdminClient();
 
+  // With a volunteer selection, only posts of those volunteers' accounts are refreshed.
+  let accountIds: Set<string> | null = null;
+  if (volunteerIds && volunteerIds.length > 0) {
+    const accounts = await fetchAllRows<{ id: string; volunteer_id: string | null }>((from, to) =>
+      supabase
+        .from("accounts")
+        .select("id, volunteer_id")
+        .eq("platform", platform)
+        .order("id")
+        .range(from, to)
+    );
+    accountIds = new Set(filterByVolunteers(accounts, volunteerIds).map((a) => a.id));
+    if (accountIds.size === 0) return [];
+  }
+
   // Both tables grow past Supabase's 1000-row response cap within days, so page through them.
-  let matchedRows: { post_url: string; last_metrics_refresh_at: string | null }[];
+  let matchedRows: { post_url: string; account_id: string; last_metrics_refresh_at: string | null }[];
   try {
-    matchedRows = await fetchAllRows<{ post_url: string; last_metrics_refresh_at: string | null }>(
+    matchedRows = await fetchAllRows<{ post_url: string; account_id: string; last_metrics_refresh_at: string | null }>(
       (from, to) => {
         let q = supabase
           .from("matched_posts")
-          .select("post_url, last_metrics_refresh_at")
+          .select("post_url, account_id, last_metrics_refresh_at")
           .eq("platform", platform)
           .eq("tracking_status", "tracking");
         if (ageCutoff) q = q.gte("posted_at", ageCutoff);
@@ -297,12 +344,12 @@ async function getRefreshCandidates(
 
   // Also refresh every stored post, including unfiltered ones saved while Campaign Captions
   // was OFF. Posts whose match an admin rejected keep their history but are no longer refreshed.
-  let allRows: { url: string; last_metrics_refresh_at: string | null }[];
+  let allRows: { url: string; account_id: string; last_metrics_refresh_at: string | null }[];
   try {
-    allRows = await fetchAllRows<{ url: string; last_metrics_refresh_at: string | null }>((from, to) => {
+    allRows = await fetchAllRows<{ url: string; account_id: string; last_metrics_refresh_at: string | null }>((from, to) => {
       let q = supabase
         .from("posts")
-        .select("url, last_metrics_refresh_at")
+        .select("url, account_id, last_metrics_refresh_at")
         .eq("platform", platform)
         .neq("match_status", "rejected");
       if (ageCutoff) q = q.gte("posted_at", ageCutoff);
@@ -314,10 +361,12 @@ async function getRefreshCandidates(
     );
   }
   for (const p of allRows) {
+    if (accountIds && !accountIds.has(p.account_id)) continue;
     byUrl.set(p.url, { url: p.url, last_metrics_refresh_at: p.last_metrics_refresh_at });
   }
   // matched_posts wins on conflict (its refresh timestamp is the authoritative one)
   for (const p of matchedRows) {
+    if (accountIds && !accountIds.has(p.account_id)) continue;
     byUrl.set(p.post_url, {
       url: p.post_url,
       last_metrics_refresh_at: p.last_metrics_refresh_at,
@@ -406,6 +455,8 @@ export async function triggerWeeklyRefresh(
     customUrls?: string[];
     /** Admin override: refresh every tracked post inside the age cutoff, even if not yet due. */
     force?: boolean;
+    /** Limit the refresh to these volunteers' posts. Omit to refresh everyone's. */
+    volunteerIds?: string[];
   } = {}
 ): Promise<{
   success: boolean;
@@ -443,7 +494,7 @@ export async function triggerWeeklyRefresh(
   if (options.customUrls && options.customUrls.length > 0) {
     targetUrls = options.customUrls;
   } else {
-    const posts = await getRefreshCandidates(platform, ageCutoff);
+    const posts = await getRefreshCandidates(platform, ageCutoff, options.volunteerIds);
 
     // Filter to posts whose last refresh was >= refresh_interval_days ago (or newly discovered / null).
     // `force` skips the interval check but still honours the age cutoff applied in getRefreshCandidates.

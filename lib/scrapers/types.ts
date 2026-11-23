@@ -7,6 +7,8 @@ export interface ScraperDiscoveryOptions {
   postLimit?: number;
   onlyPostsNewerThan?: string;
   customHandles?: string[];
+  /** Limit the run to these volunteers' accounts. Omit to run every active account. */
+  volunteerIds?: string[];
   taskId?: string;
   actorId?: string;
 }

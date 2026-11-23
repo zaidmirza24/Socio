@@ -46,3 +46,13 @@ export async function requireAdmin(): Promise<AdminGuardResult> {
 
   return { ok: true, userId: user.id };
 }
+
+/** Server-component check: is the signed-in user an admin? Used only to show admin controls; the API re-checks. */
+export async function isCurrentUserAdmin(): Promise<boolean> {
+  const {
+    data: { user },
+  } = await createServerComponentClient().auth.getUser();
+  if (!user) return false;
+  const { data: profile } = await createAdminClient().from("profiles").select("role").eq("id", user.id).single();
+  return profile?.role === "admin";
+}
