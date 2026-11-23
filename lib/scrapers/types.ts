@@ -21,6 +21,8 @@ export interface ScraperJobTriggerResult {
   jobId: string;
   provider: ScraperProviderType;
   jobType: ScraperJobType;
+  /** Provider account that owns the run (Apify user id), when the provider reports it. */
+  accountId?: string;
   datasetOrSnapshotId?: string;
   status: string;
   accountsCount: number;

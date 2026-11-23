@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { ApifyRunAccessError } from "@/lib/apify/client";
 import { requireAdmin } from "@/lib/supabase/require-admin";
 import { advanceRefreshQueueQuietly, ingestCompletedJob } from "@/lib/services/scraper-orchestrator";
 
@@ -79,6 +80,9 @@ export async function GET(request: NextRequest) {
       message: result.message,
     });
   } catch (err: unknown) {
+    if (err instanceof ApifyRunAccessError) {
+      return NextResponse.json({ error: err.message }, { status: 403 });
+    }
     const msg = err instanceof Error ? err.message : "Error checking scraper status";
     return NextResponse.json({ error: msg }, { status: 500 });
   }

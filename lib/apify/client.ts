@@ -49,6 +49,32 @@ export async function deleteApifyDataset(datasetId: string): Promise<boolean> {
   }
 }
 
+/** The Apify account id the saved token belongs to, or null if it cannot be determined. */
+export async function getCurrentApifyAccountId(): Promise<string | null> {
+  try {
+    const client = await getApifyClientAsync();
+    const me = await client.user("me").get();
+    return me?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** True when Apify refused a token access to a run/dataset (it belongs to another account). */
+export function isApifyPermissionError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const statusCode = (err as { statusCode?: unknown }).statusCode;
+  return statusCode === 403 || /insufficient permissions/i.test(err.message);
+}
+
+/** A run exists but the saved token cannot read it. The message is safe to show to the admin. */
+export class ApifyRunAccessError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ApifyRunAccessError";
+  }
+}
+
 /**
  * Custom error class for Apify configuration issues.
  * Allows the API layer to distinguish config errors from runtime errors.

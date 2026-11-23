@@ -4,6 +4,8 @@ import {
   getApifyActorIdAsync,
   deleteApifyDataset,
   ApifyConfigError,
+  ApifyRunAccessError,
+  isApifyPermissionError,
 } from "../../apify/client.ts";
 import { getApifyConfig } from "../../services/integrations.ts";
 import { APIFY_RUN_MEMORY_MB } from "../../config/batching.ts";
@@ -118,6 +120,7 @@ export class ApifyScraperProvider implements IScraperProvider {
       success: true,
       jobId: run.id,
       provider: "apify",
+      accountId: run.userId,
       jobType: "discovery",
       datasetOrSnapshotId: run.defaultDatasetId,
       status: run.status,
@@ -165,6 +168,7 @@ export class ApifyScraperProvider implements IScraperProvider {
       success: true,
       jobId: run.id,
       provider: "apify",
+      accountId: run.userId,
       jobType: "refresh",
       datasetOrSnapshotId: run.defaultDatasetId,
       status: run.status,
@@ -227,7 +231,15 @@ export class ApifyScraperProvider implements IScraperProvider {
    */
   async checkJobStatus(jobId: string): Promise<ScraperJobStatusResult> {
     const client = await getApifyClientAsync();
-    const run = await client.run(jobId).get();
+    let run;
+    try {
+      run = await client.run(jobId).get();
+    } catch (err: unknown) {
+      if (isApifyPermissionError(err)) {
+        throw new ApifyRunAccessError(`The saved Apify token cannot read run ${jobId}.`);
+      }
+      throw err;
+    }
 
     if (!run) {
       return {

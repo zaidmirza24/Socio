@@ -3,6 +3,7 @@ import { createAdminClient } from "../supabase/admin.ts";
 import { getScraperProvider } from "../scrapers/factory.ts";
 import { getScraperRefreshStrategy, getPlatformSettings } from "./settings.ts";
 import { recordRunUsage } from "./apify-usage.ts";
+import { ApifyRunAccessError, getCurrentApifyAccountId } from "../apify/client.ts";
 import { processIngestion, type IngestionSummary } from "./ingestion.ts";
 import { getScrapeBoundaryDate } from "../utils/day-window.ts";
 import { fetchAllRows } from "../supabase/paginate.ts";
@@ -110,6 +111,8 @@ async function logRunStart(row: {
   accounts_targeted: number;
   posts_found: number;
   error: Record<string, unknown>;
+  /** Provider account that owns the run; null when the provider did not report it. */
+  provider_account_id?: string | null;
 }): Promise<void> {
   const supabase = createAdminClient();
   const { error } = await supabase.from("collection_runs").insert({
@@ -244,6 +247,7 @@ export async function triggerDailyDiscovery(
     platform,
     provider: provider.name,
     job_type: "discovery",
+    provider_account_id: triggerResult.accountId ?? null,
     accounts_targeted: targetHandles.length,
     posts_found: 0,
     error: { targeted_handles: targetHandles },
@@ -535,6 +539,7 @@ async function startRefreshBatch(
       platform,
       provider: provider.name,
       job_type: "refresh",
+      provider_account_id: res.accountId ?? null,
       accounts_targeted: 0,
       posts_found: urls.length,
       error: { target_urls: urls },
@@ -770,7 +775,7 @@ export async function ingestCompletedJob(
 
   const { data: run, error: runError } = await supabase
     .from("collection_runs")
-    .select("id, status, job_type, platform, started_at, error")
+    .select("id, status, job_type, platform, started_at, error, provider_account_id")
     .eq("actor_run_id", jobId)
     .maybeSingle();
 
@@ -798,7 +803,33 @@ export async function ingestCompletedJob(
   };
 
   // 1. Ask the provider where the run is
-  const statusRes = await provider.checkJobStatus(jobId);
+  let statusRes;
+  try {
+    statusRes = await provider.checkJobStatus(jobId);
+  } catch (err: unknown) {
+    if (err instanceof ApifyRunAccessError) {
+      // Left as 'started' on purpose: switching back to the right token lets it be saved later.
+      const currentAccount = await getCurrentApifyAccountId();
+      const runAccount = run.provider_account_id as string | null;
+      if (runAccount && currentAccount && runAccount !== currentAccount) {
+        throw new ApifyRunAccessError(
+          `Run ${jobId} was created under a different Apify account than the one whose token is saved now. ` +
+            `Save that account's token in Settings → Integrations to pull its results, then switch back.`
+        );
+      }
+      if (!runAccount) {
+        throw new ApifyRunAccessError(
+          `The saved Apify token cannot read run ${jobId}. It was started before accounts were recorded, so it ` +
+            `is most likely from a different Apify account. Try saving the previous account's token in Settings → Integrations.`
+        );
+      }
+      throw new ApifyRunAccessError(
+        `The saved Apify token cannot read run ${jobId} even though it is the same account. ` +
+          `Check the token has full permissions in Apify Console (Settings → API & Integrations).`
+      );
+    }
+    throw err;
+  }
   if (!statusRes.isFinished) {
     return { state: "running", message: `Run is still ${statusRes.status}.` };
   }
