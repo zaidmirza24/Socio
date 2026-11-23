@@ -6,12 +6,19 @@ import { createServerComponentClient } from "@/lib/supabase/server";
 import { resolveVolunteerIds, renameVolunteer } from "@/lib/services/volunteers";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 
-const createAccountSchema = z.object({
-  handle: z.string().min(1, "Handle is required").transform((v) => v.replace(/^@/, "").trim().toLowerCase()),
-  volunteer_name: z.string().min(1, "Volunteer name is required").trim(),
-  platform: z.enum(["instagram", "facebook", "x"]).default("instagram"),
-  status: z.enum(["active", "paused", "archived"]).default("active"),
-});
+const createAccountSchema = z
+  .object({
+    handle: z.string().min(1, "Handle is required").transform((v) => v.replace(/^@/, "").trim().toLowerCase()),
+    volunteer_name: z.string().trim().optional(),
+    /** Attach the account to an existing volunteer (e.g. one that was missed at import time). */
+    volunteer_id: z.string().uuid("Invalid volunteer ID").optional(),
+    platform: z.enum(["instagram", "facebook", "x"]).default("instagram"),
+    status: z.enum(["active", "paused", "archived"]).default("active"),
+  })
+  .refine((v) => !!v.volunteer_id || !!v.volunteer_name, {
+    message: "Volunteer name is required",
+    path: ["volunteer_name"],
+  });
 
 const updateAccountSchema = z.object({
   id: z.string().uuid("Invalid account ID"),
@@ -109,18 +116,43 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { handle, volunteer_name, platform, status } = parseResult.data;
+    const { handle, platform, status, volunteer_id } = parseResult.data;
+    let volunteer_name = parseResult.data.volunteer_name ?? "";
     const admin = createAdminClient();
 
-    // Same-name accounts on different platforms join one volunteer (max one account/platform)
-    const volunteerIds = await resolveVolunteerIds([{ platform, handle, volunteer_name }]);
+    let resolvedVolunteerId: string | null;
+    if (volunteer_id) {
+      // Explicit volunteer: they must exist and have no account on this platform yet.
+      const { data: vol } = await admin.from("volunteers").select("id, name").eq("id", volunteer_id).maybeSingle();
+      if (!vol) {
+        return NextResponse.json({ error: "Volunteer not found." }, { status: 404 });
+      }
+      const { data: existing } = await admin
+        .from("accounts")
+        .select("id")
+        .eq("volunteer_id", volunteer_id)
+        .eq("platform", platform)
+        .limit(1);
+      if (existing && existing.length > 0) {
+        return NextResponse.json(
+          { error: `This volunteer already has a ${platform} account.` },
+          { status: 409 }
+        );
+      }
+      volunteer_name = vol.name as string;
+      resolvedVolunteerId = volunteer_id;
+    } else {
+      // Same-name accounts on different platforms join one volunteer (max one account/platform)
+      const volunteerIds = await resolveVolunteerIds([{ platform, handle, volunteer_name }]);
+      resolvedVolunteerId = volunteerIds.get(`${platform}:${handle}`) ?? null;
+    }
 
     const { data, error } = await admin
       .from("accounts")
       .insert({
         handle,
         volunteer_name,
-        volunteer_id: volunteerIds.get(`${platform}:${handle}`) ?? null,
+        volunteer_id: resolvedVolunteerId,
         platform,
         status,
         updated_at: new Date().toISOString(),

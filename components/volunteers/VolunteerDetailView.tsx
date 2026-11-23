@@ -32,6 +32,7 @@ import { sumMeasured } from "@/lib/metrics/integrity";
 import { EngagementTrendChart } from "@/components/charts/EngagementTrendChart";
 import { DateRangeFilter } from "@/components/analytics/DateRangeFilter";
 import { PlatformBadge } from "@/components/ui/PlatformBadge";
+import { AddAccountButton } from "@/components/volunteers/AddAccountButton";
 import { platformLabel as labelOf } from "@/lib/platform";
 import { accountProfileHref } from "@/lib/utils/volunteer-links";
 import type { VolunteerProfileData, DateRangePreset } from "@/lib/supabase/queries";
@@ -350,6 +351,9 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
               <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                 Accounts ({accounts.length})
               </span>
+              {data.volunteerId && (
+                <AddAccountButton volunteerId={data.volunteerId} existingPlatforms={accounts.map((a) => a.platform)} />
+              )}
               {!isVolunteerScope && data.volunteerId && (
                 <Link
                   href={`/dashboard/volunteers/v/${data.volunteerId}${fromSource ? `?from=${encodeURIComponent(fromSource)}` : ""}`}
