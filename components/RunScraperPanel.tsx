@@ -15,7 +15,7 @@ import { Play, Loader2, CheckCircle2, AlertCircle, MinusCircle, X } from "lucide
 type Platform = "instagram" | "facebook" | "x";
 type Scope = "all" | Platform;
 type JobType = "discovery" | "refresh";
-type RunState = "STARTING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "SKIPPED";
+type RunState = "WAITING" | "STARTING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "SKIPPED";
 
 interface PlatformRun {
   platform: Platform;
@@ -132,7 +132,7 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
   const totalVolunteers = volunteerState.status === "ready" ? volunteerState.volunteers.length : 0;
   const noneSelected = volunteerState.status === "ready" && selected.size === 0;
 
-  const busy = runs.some((r) => r.state === "STARTING" || r.state === "RUNNING");
+  const busy = runs.some((r) => r.state === "WAITING" || r.state === "STARTING" || r.state === "RUNNING");
   const finished = runs.length > 0 && !busy;
 
   const patchRun = useCallback((platform: Platform, fn: (r: PlatformRun) => PlatformRun) => {
@@ -304,78 +304,92 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
     []
   );
 
-  async function start() {
-    const targets = scope === "all" ? PLATFORMS.map((p) => p.id) : [scope];
-    const blank = (platform: Platform): PlatformRun => ({
-      platform,
-      pendingIds: [],
-      state: "STARTING",
-      message: "Starting...",
-      postsUpserted: 0,
-      snapshotsCreated: 0,
-      gains: [],
-      gainUnavailable: 0,
-      failedCount: 0,
-      lastError: null,
-      batchGroup: null,
-      queuedCount: 0,
-      queueFailed: 0,
-      seenIds: [],
-      totalBatches: 0,
-      waitingForMemory: false,
-    });
-    setRuns(targets.map(blank));
+  const blankRun = (platform: Platform, state: RunState, message: string): PlatformRun => ({
+    platform,
+    pendingIds: [],
+    state,
+    message,
+    postsUpserted: 0,
+    snapshotsCreated: 0,
+    gains: [],
+    gainUnavailable: 0,
+    failedCount: 0,
+    lastError: null,
+    batchGroup: null,
+    queuedCount: 0,
+    queueFailed: 0,
+    seenIds: [],
+    totalBatches: 0,
+    waitingForMemory: false,
+  });
 
-    try {
-      const res = await fetch("/api/scraper/trigger-all", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jobType: mode,
-          ...(mode === "refresh" && force ? { force: true } : {}),
-          ...(scope !== "all" ? { platform: scope } : {}),
-          // Everyone selected = no filter, so volunteers added later are covered too.
-          ...(volunteerState.status === "ready" && selected.size < totalVolunteers
-            ? { volunteerIds: [...selected] }
-            : {}),
-        }),
-      });
-      const data: TriggerResponse = await res.json();
-      const results = data.results ?? [];
-
-      setRuns(
-        targets.map((platform): PlatformRun => {
-          const r = results.find((x) => x.platform === platform);
+  // Starts ONE platform. "All platforms" runs them one after another (Instagram, Facebook, X) so
+  // Apify memory is never used by more than one platform at a time.
+  const startPlatform = useCallback(
+    async (platform: Platform) => {
+      patchRun(platform, () => blankRun(platform, "STARTING", "Starting..."));
+      try {
+        const res = await fetch("/api/scraper/trigger-all", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jobType: mode,
+            platform,
+            ...(mode === "refresh" && force ? { force: true } : {}),
+            // Everyone selected = no filter, so volunteers added later are covered too.
+            ...(volunteerState.status === "ready" && selected.size < totalVolunteers
+              ? { volunteerIds: [...selected] }
+              : {}),
+          }),
+        });
+        const data: TriggerResponse = await res.json();
+        const r = (data.results ?? []).find((x) => x.platform === platform);
+        patchRun(platform, () => {
           if (!r) {
             // Not returned: the platform is switched off in Settings (or the request was rejected).
             return data.error
-              ? { ...blank(platform), state: "FAILED", message: data.error }
-              : { ...blank(platform), state: "SKIPPED", message: "Turned off in Settings." };
+              ? blankRun(platform, "FAILED", data.error)
+              : blankRun(platform, "SKIPPED", "Turned off in Settings.");
           }
           const queuedCount = r.queuedCount ?? 0;
           if (r.ok && (r.runIds.length > 0 || queuedCount > 0)) {
             return {
-              ...blank(platform),
-              state: "RUNNING",
+              ...blankRun(platform, "RUNNING", r.message),
               pendingIds: r.runIds,
               seenIds: r.runIds,
               batchGroup: r.batchGroup ?? null,
               queuedCount,
               totalBatches: r.runIds.length + queuedCount,
-              message: r.message,
             };
           }
           // Started nothing but did not fail (e.g. no posts due for refresh): a normal outcome.
-          if (r.ok) {
-            return { ...blank(platform), state: "SKIPPED", message: r.message };
-          }
-          return { ...blank(platform), state: "FAILED", message: r.message };
-        })
-      );
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Could not start the run.";
-      setRuns(targets.map((p) => ({ ...blank(p), state: "FAILED", message })));
-    }
+          return r.ok ? blankRun(platform, "SKIPPED", r.message) : blankRun(platform, "FAILED", r.message);
+        });
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "Could not start the run.";
+        patchRun(platform, () => blankRun(platform, "FAILED", message));
+      }
+    },
+    [mode, force, selected, totalVolunteers, volunteerState.status, patchRun]
+  );
+
+  // Starts the next waiting platform once nothing else is starting or running.
+  const startingNext = useRef(false);
+  useEffect(() => {
+    if (startingNext.current) return;
+    if (runs.some((r) => r.state === "STARTING" || r.state === "RUNNING")) return;
+    const next = runs.find((r) => r.state === "WAITING");
+    if (!next) return;
+    startingNext.current = true;
+    void startPlatform(next.platform).finally(() => {
+      startingNext.current = false;
+    });
+  }, [runs, startPlatform]);
+
+  function start() {
+    const targets = scope === "all" ? PLATFORMS.map((p) => p.id) : [scope];
+    // The first platform starts through the effect above; the rest wait their turn.
+    setRuns(targets.map((p) => blankRun(p, "WAITING", "Waiting for the previous platform to finish...")));
   }
 
   const modeInfo = MODES.find((m) => m.id === mode) ?? MODES[0];
@@ -486,7 +500,7 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
                       <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
                     ) : r.state === "FAILED" ? (
                       <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
-                    ) : r.state === "SKIPPED" ? (
+                    ) : r.state === "SKIPPED" || r.state === "WAITING" ? (
                       <MinusCircle className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
                     ) : (
                       <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-blue-600" />
