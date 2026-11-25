@@ -152,17 +152,17 @@ function runMatchingTests(): void {
   }
   console.log(`✓ Tier 2 (Fuzzy Match): Matched typo with confidence ${res2.matched ? res2.confidence : 0} -> routed to review queue`);
 
-  // Test Tier 2: Real-world social media case (Prepended greeting + Appended hashtags)
+  // Test Tier 1D: Real-world social media case (Prepended greeting + Appended hashtags around identical text)
   const realWorldCaption = "Namaste volunteers! Join us this Sunday for our Tree Planting Drive! Bring gloves. #CleanIndia #YouthWing #GreenEarth";
   const resGreetingTags = matchCaption(realWorldCaption, activeCaptions);
   assert(resGreetingTags.matched === true, "Post with greeting and hashtags must match via containment/token similarity");
   if (resGreetingTags.matched) {
-    assert(resGreetingTags.tier === "tier2_fuzzy", `Expected tier2_fuzzy, got ${resGreetingTags.tier}`);
+    assert(resGreetingTags.tier === "tier1_core", `Expected tier1_core, got ${resGreetingTags.tier}`);
     assert(resGreetingTags.confidence >= 0.93, `Expected high confidence for contained caption, got ${resGreetingTags.confidence}`);
     assert(resGreetingTags.captionId === "caption-100", "Should map to caption-100");
-    assert(resGreetingTags.needsReview === true, "Contained match with extra text routes to review queue");
+    assert(resGreetingTags.needsReview === false, "Identical core text inside a greeting/hashtag wrapper is auto-accepted");
   }
-  console.log(`✓ Tier 2 (Containment Match): Matched greeting + hashtags with confidence ${resGreetingTags.matched ? resGreetingTags.confidence : 0}`);
+  console.log(`✓ Tier 1D (Core Match): Matched greeting + hashtags with confidence ${resGreetingTags.matched ? resGreetingTags.confidence : 0}`);
 
   // Test Temporal Embargo Filter
   const datedCaptions: MatchableCaption[] = [

@@ -207,8 +207,8 @@ export function ApifyUsageCard() {
                   {acct.maxMonthlyUsageUsd ? <> of <span className="font-mono">{usd(acct.maxMonthlyUsageUsd, 2)}</span> plan limit</> : null}
                 </div>
                 <div className="text-slate-700">
-                  Socio&apos;s share: <span className="font-mono font-semibold">{acct.socioSharePct ?? 0}%</span>
-                  {" · "}Not logged by Socio: <span className="font-mono">{usd(acct.untrackedUsd, 2)}</span>
+                  Saikil Shakti&apos;s share: <span className="font-mono font-semibold">{acct.socioSharePct ?? 0}%</span>
+                  {" · "}Not logged by Saikil Shakti: <span className="font-mono">{usd(acct.untrackedUsd, 2)}</span>
                   <span className="text-slate-500"> (manual runs, other projects, storage)</span>
                 </div>
               </>

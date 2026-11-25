@@ -1,7 +1,7 @@
 import { createAdminClient } from "../supabase/admin.ts";
 import { fetchAllRows } from "../supabase/paginate.ts";
 import { growthOrNull } from "../metrics/integrity.ts";
-import { matchCaption, type MatchableCaption, type MatchableVariant } from "../matching/matcher.ts";
+import { matchCaption, describeMatch, type MatchableCaption, type MatchableVariant } from "../matching/matcher.ts";
 import type { PlatformType, PostMatchStatus } from "../../types/database.ts";
 
 const PAGE_SIZE = 500;
@@ -26,6 +26,8 @@ interface StoredPostRow {
   posted_at: string;
   thumbnail_url: string | null;
   match_status: PostMatchStatus;
+  match_score: number | null;
+  match_reason: string | null;
 }
 
 interface SnapshotRow {
@@ -109,7 +111,7 @@ async function runMatchStoredPosts(): Promise<MatchStoredPostsSummary> {
   for (;;) {
     let query = supabase
       .from("posts")
-      .select("id, account_id, platform, platform_post_id, url, caption, posted_at, thumbnail_url, match_status")
+      .select("id, account_id, platform, platform_post_id, url, caption, posted_at, thumbnail_url, match_status, match_score, match_reason")
       // Matched posts are done; rejected ones are an admin decision and are never re-labelled.
       .in("match_status", ["unmatched", "needs_review"])
       .order("id", { ascending: true })
@@ -220,10 +222,22 @@ async function runMatchStoredPosts(): Promise<MatchStoredPostsSummary> {
           }
         }
 
-        if (status !== post.match_status) {
+        // The score/reason let an admin audit a post that was not matched. Written only when they
+        // changed, so re-running over thousands of unmatched posts does not rewrite every row.
+        const diag = describeMatch(result);
+        const diagChanged =
+          post.match_reason !== diag.reason ||
+          (post.match_score === null ? null : Number(post.match_score)) !== diag.score;
+        if (status !== post.match_status || diagChanged) {
           const { error: updErr } = await supabase
             .from("posts")
-            .update({ match_status: status, matched_caption_id: captionId })
+            .update({
+              match_status: status,
+              matched_caption_id: captionId,
+              match_score: diag.score,
+              match_best_caption_id: diag.bestCaptionId,
+              match_reason: diag.reason,
+            })
             .eq("id", post.id);
           if (updErr) throw new Error(updErr.message);
         }

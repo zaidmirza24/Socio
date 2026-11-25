@@ -40,12 +40,12 @@ export function EngagementTrendChart({ data, metricFilter = "all" }: EngagementT
         <AreaChart data={data} margin={{ top: 10, right: 16, left: 0, bottom: 0 }}>
           <defs>
             <linearGradient id="likesGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
-              <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+              <stop offset="5%" stopColor="#E2231A" stopOpacity={0.3} />
+              <stop offset="95%" stopColor="#E2231A" stopOpacity={0} />
             </linearGradient>
             <linearGradient id="commentsGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
-              <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+              <stop offset="5%" stopColor="#009933" stopOpacity={0.3} />
+              <stop offset="95%" stopColor="#009933" stopOpacity={0} />
             </linearGradient>
           </defs>
           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
@@ -75,26 +75,26 @@ export function EngagementTrendChart({ data, metricFilter = "all" }: EngagementT
             <Area
               type="monotone"
               dataKey="likes"
-              stroke="#3b82f6"
+              stroke="#E2231A"
               strokeWidth={2.5}
               fillOpacity={1}
               fill="url(#likesGradient)"
               name="Likes"
               dot={false}
-              activeDot={{ r: 5, fill: "#3b82f6", stroke: "#fff", strokeWidth: 2 }}
+              activeDot={{ r: 5, fill: "#E2231A", stroke: "#fff", strokeWidth: 2 }}
             />
           )}
           {showComments && (
             <Area
               type="monotone"
               dataKey="comments"
-              stroke="#10b981"
+              stroke="#009933"
               strokeWidth={2.5}
               fillOpacity={1}
               fill="url(#commentsGradient)"
               name="Comments"
               dot={false}
-              activeDot={{ r: 5, fill: "#10b981", stroke: "#fff", strokeWidth: 2 }}
+              activeDot={{ r: 5, fill: "#009933", stroke: "#fff", strokeWidth: 2 }}
             />
           )}
         </AreaChart>

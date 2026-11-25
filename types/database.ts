@@ -22,7 +22,7 @@ export interface CampaignCaption {
   updated_at: string;
 }
 
-export type MatchTier = "tier1_exact" | "tier2_fuzzy" | "manual_approved";
+export type MatchTier = "tier1_exact" | "tier1_core" | "tier2_fuzzy" | "manual_approved";
 export type TrackingStatus = "tracking" | "frozen" | "archived";
 
 export interface MatchedPost {
@@ -163,6 +163,14 @@ export interface Post {
   thumbnail_url: string | null;
   match_status: PostMatchStatus;
   matched_caption_id: string | null;
+  /** Similarity (0-1) to the closest caption the matcher tried; null until matched once. */
+  match_score: number | null;
+  /** The closest caption tried: the match itself, or the near-miss for an unmatched post. */
+  match_best_caption_id: string | null;
+  /** Why the post got its label (exact, fuzzy, adjacent_day, below_threshold, ...). */
+  match_reason: string | null;
+  /** Set when an admin said this unmatched near-miss is not a campaign post. */
+  match_dismissed_at: string | null;
 }
 
 export interface PostSnapshot {

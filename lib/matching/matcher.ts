@@ -35,8 +35,17 @@ export interface MatchCaptionOptions {
    * (in `timeZone`). Each day has its own caption, so older / newer captions never match.
    */
   sameDayOnly?: boolean;
+  /**
+   * Soft day window (only with sameDayOnly). Captions released up to this many days before or
+   * after the post's day are tried when no same-day caption matches. Such a match is NEVER
+   * auto-accepted: it always goes to review, because it may be a late/early post of that caption
+   * or a different caption entirely. Default 1; 0 restores the strict same-day rule.
+   */
+  adjacentDays?: number;
   timeZone?: string; // default Asia/Kolkata
 }
+
+export const DEFAULT_ADJACENT_DAYS = 1;
 
 export const DEFAULT_MATCH_TIME_ZONE = "Asia/Kolkata";
 
@@ -70,6 +79,22 @@ export type MatchResult =
     }
   | {
       matched: true;
+      /**
+       * Tier 1D: the campaign text is identical once the volunteer's greeting, hashtags and
+       * sign-off are stripped. Auto-accepted, but recorded separately from word-for-word matches.
+       */
+      tier: "tier1_core";
+      confidence: 0.99;
+      captionId: string;
+      normalizedCaption: string;
+      captionHash: string;
+      needsReview: false;
+      isAmbiguous?: boolean;
+      alternativeCaptionId?: string;
+      matchedSegment: "core_body";
+    }
+  | {
+      matched: true;
       tier: "manual_approved";
       confidence: 1.0;
       captionId: string;
@@ -91,6 +116,11 @@ export type MatchResult =
       alternativeCaptionId?: string;
       matchedSegment?: "full" | "core_body" | "paragraph";
       appliedThreshold?: number;
+      /**
+       * Set when the caption was released on a neighbouring day (-1 = the day before the post,
+       * +1 = the day after). Always needs review, whatever the text similarity.
+       */
+      adjacentDayOffset?: number;
     }
   | {
       matched: false;
@@ -102,7 +132,56 @@ export type MatchResult =
       normalizedCaption?: string;
       highestScore?: number;
       thresholdRequired?: number;
+      /** Closest caption that was tried, even though it scored too low (near-miss diagnostics). */
+      bestCaptionId?: string;
     };
+
+export type MatchReason =
+  | "exact"
+  | "core"
+  | "variant"
+  | "fuzzy"
+  | "adjacent_day"
+  | "below_threshold"
+  | "outside_window"
+  | "empty_caption"
+  | "no_active_captions";
+
+/** Why a post got its label, stored on the post so a missed match can be audited later. */
+export interface MatchDiagnostics {
+  reason: MatchReason;
+  /** Similarity to the closest caption tried (0-1), when one was compared. */
+  score: number | null;
+  /** The closest caption tried: the match for matched posts, the near-miss for unmatched ones. */
+  bestCaptionId: string | null;
+}
+
+export function describeMatch(result: MatchResult): MatchDiagnostics {
+  if (result.matched) {
+    const reason: MatchReason =
+      result.tier === "tier1_exact"
+        ? "exact"
+        : result.tier === "tier1_core"
+          ? "core"
+          : result.tier === "manual_approved"
+            ? "variant"
+            : result.adjacentDayOffset !== undefined
+              ? "adjacent_day"
+              : "fuzzy";
+    return { reason, score: result.confidence, bestCaptionId: result.captionId };
+  }
+  const reason: MatchReason =
+    result.reason === "below_similarity_threshold"
+      ? "below_threshold"
+      : result.reason === "outside_embargo_window"
+        ? "outside_window"
+        : result.reason;
+  return {
+    reason,
+    score: result.highestScore ?? null,
+    bestCaptionId: result.bestCaptionId ?? null,
+  };
+}
 
 export const FUZZY_SIMILARITY_THRESHOLD = 0.9;
 export const DEFAULT_EMBARGO_TOLERANCE_HOURS = 48;
@@ -327,8 +406,10 @@ export function matchCaption(
     return { matched: false, reason: "no_active_captions" };
   }
 
-  // Filter captions by release date embargo if post timestamp is provided
+  // Filter captions by release date if the post timestamp is provided
   let eligibleCaptions = activeCaptions;
+  // Captions of the neighbouring days (soft window), tried only when no same-day caption matches.
+  const adjacent: Array<{ caption: MatchableCaption; offset: number }> = [];
   if (options?.postedAt) {
     const postTime = new Date(options.postedAt).getTime();
     if (!isNaN(postTime)) {
@@ -341,24 +422,94 @@ export function matchCaption(
       const postDay = options.sameDayOnly
         ? calendarDay(options.postedAt, options.timeZone)
         : null;
+      const maxOffset = Math.max(0, options.adjacentDays ?? DEFAULT_ADJACENT_DAYS);
 
       eligibleCaptions = activeCaptions.filter((caption) => {
         if (!caption.released_at) return true;
         const releaseTime = new Date(caption.released_at).getTime();
         if (isNaN(releaseTime)) return true;
         if (options.sameDayOnly && postDay) {
-          return calendarDay(caption.released_at, options.timeZone) === postDay;
+          const releaseDay = calendarDay(caption.released_at, options.timeZone);
+          if (releaseDay === postDay) return true;
+          const offset = releaseDay ? dayDifference(postDay, releaseDay) : null;
+          if (offset !== null && offset !== 0 && Math.abs(offset) <= maxOffset) {
+            adjacent.push({ caption, offset });
+          }
+          return false;
         }
         // Post must not have been published earlier than (released_at - tolerance)
         return postTime >= releaseTime - toleranceMs;
       });
 
-      if (eligibleCaptions.length === 0) {
+      if (eligibleCaptions.length === 0 && adjacent.length === 0) {
         return { matched: false, reason: "outside_embargo_window" };
       }
     }
   }
 
+  const first =
+    eligibleCaptions.length > 0
+      ? matchAgainst(rawCaption, eligibleCaptions, approvedVariants, options)
+      : null;
+  if (first?.matched) return first;
+  if (adjacent.length === 0) {
+    return first ?? { matched: false, reason: "outside_embargo_window" };
+  }
+
+  // No same-day caption matched: look at the neighbouring days. A hit is never trusted blindly.
+  const second = matchAgainst(
+    rawCaption,
+    adjacent.map((a) => a.caption),
+    approvedVariants,
+    options
+  );
+  if (second.matched) {
+    const offset = adjacent.find((a) => a.caption.id === second.captionId)?.offset ?? 0;
+    return {
+      matched: true,
+      tier: "tier2_fuzzy",
+      confidence: second.confidence,
+      captionId: second.captionId,
+      normalizedCaption: second.normalizedCaption,
+      captionHash: second.captionHash,
+      needsReview: true,
+      isAmbiguous: second.isAmbiguous,
+      alternativeCaptionId: second.alternativeCaptionId,
+      matchedSegment: second.tier === "manual_approved" ? "full" : second.matchedSegment,
+      appliedThreshold: second.tier === "tier2_fuzzy" ? second.appliedThreshold : undefined,
+      adjacentDayOffset: offset,
+    };
+  }
+
+  // Both lookups missed: report the closer near-miss.
+  if (!first) return second;
+  const firstScore = first.matched ? 0 : first.highestScore ?? 0;
+  const secondScore = second.matched ? 0 : second.highestScore ?? 0;
+  return secondScore > firstScore ? second : first;
+}
+
+/** A core text worth trusting for an auto-match: not a few words or a caption that is mostly hashtags. */
+const MIN_CORE_CHARS = 15;
+const MIN_CORE_WORDS = 4;
+function isSubstantialCore(core: string): boolean {
+  return core.length >= MIN_CORE_CHARS && countWords(core) >= MIN_CORE_WORDS;
+}
+
+/** Whole days from `fromDay` to `toDay` (both YYYY-MM-DD): positive when toDay is later. Here: caption day minus post day. */
+function dayDifference(fromDay: string, toDay: string): number | null {
+  const a = Date.parse(`${fromDay}T00:00:00Z`);
+  const b = Date.parse(`${toDay}T00:00:00Z`);
+  if (isNaN(a) || isNaN(b)) return null;
+  return Math.round((b - a) / 86_400_000);
+}
+
+/** The matching pipeline (tiers 1A-2) against an already-filtered set of captions. */
+function matchAgainst(
+  rawCaption: string,
+  eligibleCaptions: MatchableCaption[],
+  approvedVariants: MatchableVariant[],
+  options?: MatchCaptionOptions
+): MatchResult {
   const normalized = normalizeCaption(rawCaption);
   const hash = computeCaptionHash(normalized);
 
@@ -419,8 +570,32 @@ export function matchCaption(
     }
   }
 
-  // --- Tier 2: Section-Segmented Hybrid Matching with Dynamic/Adaptive Thresholding ---
+  // --- Tier 1D: identical core text inside a greeting / hashtags / sign-off wrapper ---
+  // Volunteers very often add "Namaste friends!" or local hashtags around the supplied text. When
+  // the campaign text itself is unchanged this is as certain as an exact match, so it must not
+  // flood the review queue. Guards: the core must be substantial, exactly ONE eligible caption
+  // may share it (otherwise which caption was meant is a human call), and links must be identical.
   const candidateSections = segmentCaption(normalized);
+  const candidateCore = normalizeContentText(candidateSections.cleanBody);
+  if (isSubstantialCore(candidateCore)) {
+    const coreMatches = eligibleCaptions.filter(
+      (c) => normalizeContentText(segmentCaption(c.normalized_caption).cleanBody) === candidateCore
+    );
+    if (coreMatches.length === 1 && urlsMatch(rawCaption, coreMatches[0].canonical_caption)) {
+      return {
+        matched: true,
+        tier: "tier1_core",
+        confidence: 0.99,
+        captionId: coreMatches[0].id,
+        normalizedCaption: normalized,
+        captionHash: hash,
+        needsReview: false,
+        matchedSegment: "core_body",
+      };
+    }
+  }
+
+  // --- Tier 2: Section-Segmented Hybrid Matching with Dynamic/Adaptive Thresholding ---
 
   let bestScore = 0;
   let bestCaption: MatchableCaption | null = null;
@@ -532,5 +707,6 @@ export function matchCaption(
     normalizedCaption: normalized,
     highestScore: Math.round(bestScore * 10000) / 10000,
     thresholdRequired: bestThreshold,
+    bestCaptionId: bestCaption?.id,
   };
 }

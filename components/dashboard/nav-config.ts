@@ -7,6 +7,7 @@ import {
   Settings,
   FileText,
   CheckSquare,
+  CalendarClock,
 } from "lucide-react";
 
 export type NavIcon = React.ComponentType<{ className?: string }>;
@@ -34,7 +35,7 @@ export const NAV_ROUTES: NavRoute[] = [
     href: "/dashboard",
     group: "Campaign",
     icon: BarChart3,
-    description: "Campaign totals, trends and the volunteer × caption matrix",
+    description: "Who posted which of the day's captions, plus campaign totals and trends",
     exact: true,
   },
   {
@@ -76,6 +77,14 @@ export const NAV_ROUTES: NavRoute[] = [
     group: "People & Content",
     icon: Newspaper,
     description: "Every collected post with its latest engagement",
+  },
+  {
+    id: "schedules",
+    label: "Scheduler",
+    href: "/dashboard/schedules",
+    group: "System",
+    icon: CalendarClock,
+    description: "Schedule Apify collection runs for a date and time (IST)",
   },
   {
     id: "runs",

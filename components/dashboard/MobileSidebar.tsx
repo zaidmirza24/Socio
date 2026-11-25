@@ -44,7 +44,7 @@ export function MobileSidebar({ isOpen, onClose }: MobileSidebarProps) {
               </div>
               <div>
                 <span className="font-bold text-slate-900 text-sm tracking-tight block">
-                  Socio Monitor
+                  SP Warrior
                 </span>
                 <span className="text-xs text-slate-500 block">Campaign engagement tracker</span>
               </div>

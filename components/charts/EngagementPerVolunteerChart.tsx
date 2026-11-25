@@ -61,8 +61,8 @@ export function EngagementPerVolunteerChart({ data }: { data: VolunteerEngagemen
             iconSize={8}
             wrapperStyle={{ fontSize: "12px", paddingTop: "12px" }}
           />
-          <Bar dataKey="likes" fill="#3b82f6" name="Likes" radius={[4, 4, 0, 0]} maxBarSize={28} />
-          <Bar dataKey="comments" fill="#10b981" name="Comments" radius={[4, 4, 0, 0]} maxBarSize={28} />
+          <Bar dataKey="likes" fill="#E2231A" name="Likes" radius={[4, 4, 0, 0]} maxBarSize={28} />
+          <Bar dataKey="comments" fill="#009933" name="Comments" radius={[4, 4, 0, 0]} maxBarSize={28} />
           <Bar dataKey="views" fill="#f59e0b" name="Views" radius={[4, 4, 0, 0]} maxBarSize={28} />
         </BarChart>
       </ResponsiveContainer>

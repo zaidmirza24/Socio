@@ -21,6 +21,7 @@ function runStartOptions(platform: PlatformType) {
   });
   return { memory: APIFY_RUN_MEMORY_MB[platform], ...(webhooks.length > 0 ? { webhooks } : {}) };
 }
+import { buildDiscoveryRunInput } from "../discovery-input.ts";
 import { normalizeApifyInstagramDataset, type AdapterResult } from "./adapter.ts";
 import { getPlatformAdapter, normalizePlatformDataset } from "../platform-adapter.ts";
 import type {
@@ -73,32 +74,18 @@ export class ApifyScraperProvider implements IScraperProvider {
     const platform = options.platform || "instagram";
     const cleanHandles = handles.map((h) => h.replace(/^@/, "").trim().toLowerCase());
 
-    let dynamicInput: Record<string, unknown>;
     let targetActorId: string;
     let taskId: string | null | undefined;
 
+    const dynamicInput = buildDiscoveryRunInput(platform, cleanHandles, {
+      postLimit: options.postLimit,
+      onlyPostsNewerThan: options.onlyPostsNewerThan,
+    });
     if (platform === "instagram") {
-      const directUrls = cleanHandles.map((handle) => `https://www.instagram.com/${handle}/`);
-      const postLimit = options.postLimit || 10;
-      dynamicInput = {
-        username: cleanHandles,
-        usernames: cleanHandles,
-        directUrls,
-        resultsLimit: postLimit,
-        resultsType: "posts",
-        searchType: "user",
-        ...(options.onlyPostsNewerThan ? { onlyPostsNewerThan: options.onlyPostsNewerThan } : {}),
-      };
       taskId = await getApifyTaskIdAsync(options.taskId);
       targetActorId = await getApifyActorIdAsync(options.actorId);
     } else {
       const apifyConfig = await getApifyConfig();
-      const adapter = getPlatformAdapter(platform);
-      const baseInput = adapter.buildDiscoveryInput(cleanHandles, options.onlyPostsNewerThan);
-      dynamicInput = {
-        ...baseInput,
-        ...(options.postLimit ? { resultsLimit: options.postLimit, count: options.postLimit } : {}),
-      };
       targetActorId = options.actorId || apifyConfig.actors[platform].discovery;
     }
 

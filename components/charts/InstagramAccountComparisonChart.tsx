@@ -62,8 +62,8 @@ export function InstagramAccountComparisonChart({ data }: { data: AccountPerform
             iconSize={8}
             wrapperStyle={{ fontSize: "12px", paddingTop: "12px" }}
           />
-          <Bar dataKey="likes" name="Likes" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={22} />
-          <Bar dataKey="comments" name="Comments" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={22} />
+          <Bar dataKey="likes" name="Likes" fill="#E2231A" radius={[4, 4, 0, 0]} maxBarSize={22} />
+          <Bar dataKey="comments" name="Comments" fill="#009933" radius={[4, 4, 0, 0]} maxBarSize={22} />
           <Bar dataKey="views" name="Views" fill="#f59e0b" radius={[4, 4, 0, 0]} maxBarSize={22} />
           <Bar dataKey="posts" name="Posts" fill="#8b5cf6" radius={[4, 4, 0, 0]} maxBarSize={22} />
         </BarChart>

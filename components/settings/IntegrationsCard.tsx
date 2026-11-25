@@ -151,7 +151,7 @@ export function IntegrationsCard() {
             Apify connection
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Paste your token (or a whole .env snippet / Apify link). Socio detects what it needs, tests it against Apify, and stores it encrypted - no code or redeploy needed.
+            Paste your token (or a whole .env snippet / Apify link). Saikil Shakti detects what it needs, tests it against Apify, and stores it encrypted - no code or redeploy needed.
           </p>
         </div>
         <span

@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
 import { computeDailyGains, computePostGains, sumGain, type SnapshotPoint } from "../lib/metrics/gain.ts";
-import { matchCaption, calendarDay, type MatchableCaption } from "../lib/matching/matcher.ts";
+import { matchCaption, calendarDay, describeMatch, type MatchableCaption } from "../lib/matching/matcher.ts";
 import { normalizeCaption, computeCaptionHash } from "../lib/matching/normalizer.ts";
 
 const snap = (
@@ -72,14 +72,78 @@ describe("Same-day caption matching", () => {
     assert.ok(r.matched);
   });
 
-  it("rejects a post from the next day", () => {
+  it("sends a next-day post of the same text to review, never auto-matched", () => {
     const r = matchCaption(text, [caption("c1", "2026-11-20T04:00:00Z")], [], opts("2026-11-21T04:00:00Z"));
+    assert.ok(r.matched && r.needsReview && r.tier === "tier2_fuzzy");
+    assert.strictEqual(r.captionId, "c1");
+    // The caption was released the day BEFORE the post
+    assert.strictEqual(r.adjacentDayOffset, -1);
+    assert.strictEqual(describeMatch(r).reason, "adjacent_day");
+  });
+
+  it("sends a post made the day before the release to review too", () => {
+    const r = matchCaption(text, [caption("c1", "2026-11-20T04:00:00Z")], [], opts("2026-11-19T04:00:00Z"));
+    assert.ok(r.matched && r.needsReview);
+    assert.strictEqual(r.adjacentDayOffset, 1);
+  });
+
+  it("still rejects a post two days away from the release", () => {
+    const r = matchCaption(text, [caption("c1", "2026-11-20T04:00:00Z")], [], opts("2026-11-22T04:00:00Z"));
+    assert.ok(!r.matched && r.reason === "outside_embargo_window");
+    assert.strictEqual(describeMatch(r).reason, "outside_window");
+  });
+
+  it("adjacentDays: 0 restores the strict same-day rule", () => {
+    const r = matchCaption(text, [caption("c1", "2026-11-20T04:00:00Z")], [], {
+      ...opts("2026-11-21T04:00:00Z"),
+      adjacentDays: 0,
+    });
     assert.ok(!r.matched && r.reason === "outside_embargo_window");
   });
 
-  it("rejects a post from the day before", () => {
-    const r = matchCaption(text, [caption("c1", "2026-11-20T04:00:00Z")], [], opts("2026-11-19T04:00:00Z"));
-    assert.ok(!r.matched && r.reason === "outside_embargo_window");
+  it("a same-day match wins over an adjacent-day one and is auto-accepted", () => {
+    const r = matchCaption(
+      text,
+      [caption("yesterday", "2026-11-19T04:00:00Z"), caption("today", "2026-11-20T04:00:00Z")],
+      [],
+      opts("2026-11-20T08:00:00Z")
+    );
+    assert.ok(r.matched && !r.needsReview && r.captionId === "today");
+  });
+
+  it("a late post after midnight IST still reaches the previous day's caption via review", () => {
+    // 19:30 UTC on the 20th = 01:00 IST on the 21st
+    const r = matchCaption(text, [caption("c1", "2026-11-20T04:00:00Z")], [], opts("2026-11-20T19:30:00Z"));
+    assert.ok(r.matched && r.needsReview && r.adjacentDayOffset === -1);
+  });
+
+  it("does not match unrelated text just because the day is adjacent", () => {
+    const r = matchCaption(
+      "Having great pizza with family this weekend, so good!",
+      [caption("c1", "2026-11-20T04:00:00Z")],
+      [],
+      opts("2026-11-21T04:00:00Z")
+    );
+    assert.ok(!r.matched);
+  });
+
+  it("unmatched results keep the closest caption and score for auditing", () => {
+    const r = matchCaption(
+      "Join our cleanup drive today and clean a beach for the future!",
+      [caption("c1", "2026-11-20T04:00:00Z")],
+      [],
+      opts("2026-11-20T08:00:00Z")
+    );
+    assert.ok(!r.matched && r.reason === "below_similarity_threshold");
+    const d = describeMatch(r);
+    assert.strictEqual(d.reason, "below_threshold");
+    assert.strictEqual(d.bestCaptionId, "c1");
+    assert.ok(d.score !== null && d.score > 0 && d.score < 0.94);
+  });
+
+  it("describeMatch labels exact and fuzzy matches", () => {
+    const exact = matchCaption(text, [caption("c1", "2026-11-20T04:00:00Z")], [], opts("2026-11-20T08:00:00Z"));
+    assert.deepStrictEqual(describeMatch(exact), { reason: "exact", score: 1, bestCaptionId: "c1" });
   });
 
   it("picks the caption of the post's own day when several days are active", () => {

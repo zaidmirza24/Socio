@@ -10,7 +10,7 @@ import {
   useVolunteerOptions,
 } from "@/components/RunVolunteerPicker";
 import { mergeRunGains, type RunGain } from "@/lib/metrics/run-gain";
-import { Play, Loader2, CheckCircle2, AlertCircle, MinusCircle, X } from "lucide-react";
+import { Play, Loader2, CheckCircle2, AlertCircle, MinusCircle, RotateCcw, X } from "lucide-react";
 
 type Platform = "instagram" | "facebook" | "x";
 type Scope = "all" | Platform;
@@ -44,6 +44,31 @@ interface PlatformRun {
   totalBatches: number;
   /** Apify's memory is full; the queue is waiting and retries automatically. */
   waitingForMemory: boolean;
+  /** Run ids that errored out; "Retry" checks them again before starting over. */
+  failedIds: string[];
+  /** How many times "Retry" was used; after one re-check it starts the platform again. */
+  retryCount: number;
+}
+
+const STORAGE_KEY = "socio.collect.active";
+/** Status checks in a row that may fail with a server/network error before the run is marked failed. */
+const MAX_TRANSIENT_ERRORS = 3;
+
+/** True when the server says the login is gone (401, or a redirect to the login page). */
+function isSessionExpired(res: Response): boolean {
+  if (res.status === 401) return true;
+  if (!res.redirected) return false;
+  try {
+    return new URL(res.url).pathname.startsWith("/login");
+  } catch {
+    return false;
+  }
+}
+
+interface SavedCollection {
+  mode: JobType;
+  force: boolean;
+  runs: PlatformRun[];
 }
 
 const PLATFORMS: { id: Platform; label: string }[] = [
@@ -121,6 +146,34 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const runsRef = useRef<PlatformRun[]>([]);
   runsRef.current = runs;
+  // The login lapsed mid-run: polling pauses (nothing is marked failed) until the admin signs in again.
+  const [sessionExpired, setSessionExpired] = useState(false);
+  // Consecutive transient status-check errors per Apify run id.
+  const streaks = useRef<Map<string, number>>(new Map());
+
+  // Pick up a collection that was in progress before a reload or a re-login.
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as SavedCollection;
+      if (!saved || !Array.isArray(saved.runs)) return;
+      const restored = saved.runs.map<PlatformRun>((r) => {
+        // A platform that was still starting may or may not have launched on Apify: do not start it
+        // again by itself (that could double the cost); offer Retry instead.
+        if (r.state === "STARTING" || r.state === "WAITING") {
+          return { ...r, state: "FAILED", message: "Interrupted before it finished starting. Use Retry to start it again." };
+        }
+        return r;
+      });
+      if (restored.length === 0) return;
+      setMode(saved.mode);
+      setForce(saved.force);
+      setRuns(restored);
+    } catch {
+      // Storage unavailable or corrupt: start clean.
+    }
+  }, []);
 
   useEffect(() => {
     if (volunteerState.status === "ready" && !selectionInitialised) {
@@ -144,23 +197,49 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
     await Promise.all(
       active.flatMap((r) =>
         r.pendingIds.map(async (runId) => {
+          // Drop only this run id; other batches of the same platform keep being polled and
+          // saved. The platform is marked FAILED once nothing is left to wait for. The id is kept
+          // in failedIds so "Retry" can check it again (saving a run is idempotent).
+          const failRun = (message: string) => {
+            streaks.current.delete(runId);
+            patchRun(r.platform, (cur) => {
+              const pendingIds = cur.pendingIds.filter((id) => id !== runId);
+              return {
+                ...cur,
+                pendingIds,
+                failedIds: [...cur.failedIds, runId],
+                failedCount: cur.failedCount + 1,
+                lastError: message,
+                state: pendingIds.length === 0 && cur.queuedCount === 0 ? "FAILED" : cur.state,
+                message,
+              };
+            });
+          };
           try {
             const res = await fetch(`/api/scraper/status?runId=${encodeURIComponent(runId)}`);
-            const data: StatusResponse = await res.json();
+            if (isSessionExpired(res)) {
+              // Not a failed run: the login lapsed. Keep everything and wait for a new sign-in.
+              setSessionExpired(true);
+              return;
+            }
+            let data: StatusResponse = {};
+            try {
+              data = await res.json();
+            } catch {
+              // Non-JSON body (proxy error page): handled as a transient error below.
+            }
+            const transient = !res.ok && (res.status >= 500 || res.status === 429 || res.status === 408);
+            if (transient || (res.ok && !data.status)) {
+              const streak = (streaks.current.get(runId) ?? 0) + 1;
+              streaks.current.set(runId, streak);
+              if (streak >= MAX_TRANSIENT_ERRORS) {
+                failRun(data.error || `The server kept returning an error (${res.status}).`);
+              }
+              return; // otherwise retry on the next tick
+            }
+            streaks.current.delete(runId);
             if (!res.ok || data.status === "FAILED") {
-              // Drop only this run id; other batches of the same platform keep being polled and
-              // saved. The platform is marked FAILED once nothing is left to wait for.
-              patchRun(r.platform, (cur) => {
-                const pendingIds = cur.pendingIds.filter((id) => id !== runId);
-                return {
-                  ...cur,
-                  pendingIds,
-                  failedCount: cur.failedCount + 1,
-                  lastError: data.error || "The run failed.",
-                  state: pendingIds.length === 0 && cur.queuedCount === 0 ? "FAILED" : cur.state,
-                  message: data.error || "The run failed.",
-                };
-              });
+              failRun(data.error || "The run failed.");
             } else if (data.status === "SUCCEEDED") {
               patchRun(r.platform, (cur) => {
                 const pendingIds = cur.pendingIds.filter((id) => id !== runId);
@@ -185,7 +264,10 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
               });
             }
           } catch {
-            // Transient network error: keep polling.
+            // Network error: retry on the next tick, give up after a few in a row.
+            const streak = (streaks.current.get(runId) ?? 0) + 1;
+            streaks.current.set(runId, streak);
+            if (streak >= MAX_TRANSIENT_ERRORS) failRun("Could not reach the server.");
           }
         })
       )
@@ -206,6 +288,10 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ groups: watched.map((r) => r.batchGroup) }),
       });
+      if (isSessionExpired(res)) {
+        setSessionExpired(true);
+        return;
+      }
       const data: QueueResponse = await res.json();
       if (!res.ok || !data.groups) return; // transient: try again next tick
       for (const g of data.groups) {
@@ -273,7 +359,8 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
   // interval, and overlapping polls would pile up requests for the same run.
   const pollingRef = useRef(false);
   useEffect(() => {
-    if (busy && !pollingRef.current) {
+    const shouldPoll = busy && !sessionExpired;
+    if (shouldPoll && !pollingRef.current) {
       pollingRef.current = true;
       const tick = async (): Promise<void> => {
         await poll();
@@ -283,18 +370,41 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
       };
       timer.current = setTimeout(() => void tick(), POLL_MS);
     }
-    if (!busy && pollingRef.current) {
+    if (!shouldPoll && pollingRef.current) {
       pollingRef.current = false;
       if (timer.current) clearTimeout(timer.current);
       timer.current = null;
-      if (runsRef.current.some((r) => r.state === "SUCCEEDED")) {
+      if (!busy && runsRef.current.some((r) => r.state === "SUCCEEDED")) {
         router.refresh();
         onCompleted?.();
         // Show what changed straight away, even if the dialog was closed while waiting.
         setOpen(true);
       }
     }
-  }, [busy, poll, syncQueue, router, onCompleted]);
+  }, [busy, sessionExpired, poll, syncQueue, router, onCompleted]);
+
+  // Remember an unfinished collection so a reload or re-login does not lose track of it.
+  useEffect(() => {
+    try {
+      if (busy) {
+        const payload: SavedCollection = { mode, force, runs };
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      } else {
+        window.localStorage.removeItem(STORAGE_KEY);
+      }
+    } catch {
+      // Storage unavailable: the run still works, it just cannot survive a reload.
+    }
+  }, [busy, mode, force, runs]);
+
+  // Coming back to this tab after signing in elsewhere: carry on automatically.
+  useEffect(() => {
+    if (!sessionExpired) return;
+    const resume = () => setSessionExpired(false);
+    window.addEventListener("focus", resume);
+    return () => window.removeEventListener("focus", resume);
+  }, [sessionExpired]);
+
 
   useEffect(
     () => () => {
@@ -321,6 +431,8 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
     seenIds: [],
     totalBatches: 0,
     waitingForMemory: false,
+    failedIds: [],
+    retryCount: 0,
   });
 
   // Starts ONE platform. "All platforms" runs them one after another (Instagram, Facebook, X) so
@@ -342,6 +454,13 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
               : {}),
           }),
         });
+        if (isSessionExpired(res)) {
+          patchRun(platform, () =>
+            blankRun(platform, "FAILED", "Your session expired before this could start. Sign in again, then use Retry.")
+          );
+          setSessionExpired(true);
+          return;
+        }
         const data: TriggerResponse = await res.json();
         const r = (data.results ?? []).find((x) => x.platform === platform);
         patchRun(platform, () => {
@@ -371,6 +490,31 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
       }
     },
     [mode, force, selected, totalVolunteers, volunteerState.status, patchRun]
+  );
+
+  // Retry a failed platform. First re-check the runs that errored (they may have finished on Apify
+  // while the login or network was down; saving is idempotent). A second retry, or a platform that
+  // never started, starts it again from scratch.
+  const retryPlatform = useCallback(
+    (platform: Platform) => {
+      const run = runsRef.current.find((r) => r.platform === platform);
+      if (!run) return;
+      setSessionExpired(false);
+      if (run.failedIds.length > 0 && run.retryCount === 0) {
+        patchRun(platform, (cur) => ({
+          ...cur,
+          pendingIds: [...cur.pendingIds, ...cur.failedIds],
+          failedIds: [],
+          failedCount: Math.max(0, cur.failedCount - cur.failedIds.length),
+          retryCount: cur.retryCount + 1,
+          state: "RUNNING",
+          message: "Checking the run again...",
+        }));
+        return;
+      }
+      void startPlatform(platform);
+    },
+    [patchRun, startPlatform]
   );
 
   // Starts the next waiting platform once nothing else is starting or running.
@@ -492,6 +636,32 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
               <p className="mt-2 text-center text-xs text-amber-700">Select at least one volunteer to start.</p>
             )}
 
+            {sessionExpired && (
+              <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900" role="alert">
+                <div className="font-semibold">You were signed out. Collection is paused, not failed.</div>
+                <p className="mt-0.5">
+                  Sign in again in a new tab, then come back here. It carries on by itself, or press Resume.
+                </p>
+                <div className="mt-2 flex gap-2">
+                  <a
+                    href="/login"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="rounded-lg bg-amber-600 px-2.5 py-1 font-semibold text-white hover:bg-amber-700"
+                  >
+                    Sign in
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => setSessionExpired(false)}
+                    className="rounded-lg border border-amber-400 px-2.5 py-1 font-semibold hover:bg-amber-100"
+                  >
+                    Resume
+                  </button>
+                </div>
+              </div>
+            )}
+
             {runs.length > 0 && (
               <ul className="mt-4 space-y-2" aria-live="polite">
                 {runs.map((r) => (
@@ -522,6 +692,17 @@ export function RunScraperPanel({ onCompleted }: { onCompleted?: () => void }) {
                         <div className="mt-0.5 text-xs font-medium text-amber-700">
                           Waiting for Apify memory to free up. Retrying automatically.
                         </div>
+                      )}
+                      {r.state === "FAILED" && (
+                        <button
+                          type="button"
+                          onClick={() => retryPlatform(r.platform)}
+                          disabled={busy && !sessionExpired}
+                          className="mt-1.5 inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                          Retry
+                        </button>
                       )}
                     </div>
                   </li>

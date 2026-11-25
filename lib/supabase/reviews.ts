@@ -76,6 +76,8 @@ export interface ReviewQueueDisplayItem {
   status: ReviewStatus;
   createdAt: string;
   reviewedAt: string | null;
+  /** The post was made on a different day than the caption's release day (always reviewed). */
+  adjacentDay: boolean;
 }
 
 /**
@@ -136,6 +138,23 @@ export async function getReviewQueueItems(
     return [];
   }
 
+  // Posts the matcher only reached through the neighbouring-day window, flagged for the reviewer.
+  const adjacentKeys = new Set<string>();
+  try {
+    const adjacent = await fetchAllRows<{ platform: string; platform_post_id: string }>((from, to) =>
+      supabase
+        .from("posts")
+        .select("platform, platform_post_id")
+        .eq("match_reason", "adjacent_day")
+        .eq("match_status", "needs_review")
+        .order("id", { ascending: true })
+        .range(from, to)
+    );
+    for (const a of adjacent) adjacentKeys.add(`${a.platform}:${a.platform_post_id}`);
+  } catch (error: unknown) {
+    console.error("Failed to load adjacent-day flags (badges hidden):", error);
+  }
+
   return data.map((item) => {
     const caption = one(item.campaign_captions);
     const account = one(item.accounts);
@@ -156,8 +175,166 @@ export async function getReviewQueueItems(
       status: item.status as ReviewStatus,
       createdAt: item.created_at,
       reviewedAt: item.reviewed_at,
+      adjacentDay: adjacentKeys.has(`${item.platform}:${item.platform_post_id}`),
     };
   });
+}
+
+/** Lowest match score shown in the "Possible matches" lane. Below this it is just a normal post. */
+const NEAR_MISS_MIN_SCORE = 0.6;
+
+export interface NearMissItem {
+  postId: string;
+  platform: string;
+  postUrl: string;
+  accountHandle: string;
+  volunteerName: string;
+  postedAt: string;
+  candidateCaption: string;
+  bestCaptionId: string;
+  bestCaptionTitle: string;
+  bestCaptionText: string;
+  /** 0-1 similarity to the closest campaign caption. */
+  score: number;
+}
+
+interface NearMissRow {
+  id: string;
+  platform: string;
+  url: string;
+  caption: string | null;
+  posted_at: string;
+  match_score: number | null;
+  match_best_caption_id: string | null;
+  accounts: AccountEmbed | AccountEmbed[] | null;
+  best_caption: CaptionEmbed | CaptionEmbed[] | null;
+}
+
+/**
+ * Recent posts that did NOT match any caption but came close to one: the "did we miss a genuine
+ * post?" list. Best score first. Dismissed posts are left out.
+ */
+export async function getNearMissPosts(days = 14): Promise<NearMissItem[]> {
+  const authClient = createServerComponentClient();
+  const {
+    data: { user },
+  } = await authClient.auth.getUser();
+  if (!user) return [];
+
+  const supabase = createAdminClient();
+  const since = new Date(Date.now() - Math.max(1, days) * 86_400_000).toISOString();
+
+  let rows: NearMissRow[];
+  try {
+    rows = (await fetchAllRows<unknown>((from, to) =>
+      supabase
+        .from("posts")
+        .select(
+          `id, platform, url, caption, posted_at, match_score, match_best_caption_id,
+           accounts ( handle, volunteer_name ),
+           best_caption:campaign_captions!match_best_caption_id ( title, canonical_caption )`
+        )
+        .eq("match_status", "unmatched")
+        .eq("match_reason", "below_threshold")
+        .is("match_dismissed_at", null)
+        .gte("match_score", NEAR_MISS_MIN_SCORE)
+        .gte("posted_at", since)
+        .not("match_best_caption_id", "is", null)
+        .order("match_score", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to)
+    )) as NearMissRow[];
+  } catch (error: unknown) {
+    console.error("Failed to fetch possible matches:", error);
+    return [];
+  }
+
+  return rows.flatMap((row) => {
+    if (!row.match_best_caption_id || typeof row.match_score !== "number") return [];
+    const account = one(row.accounts);
+    const caption = one(row.best_caption);
+    return [
+      {
+        postId: row.id,
+        platform: row.platform,
+        postUrl: row.url,
+        accountHandle: account?.handle ?? "",
+        volunteerName: account?.volunteer_name ?? "Unknown Volunteer",
+        postedAt: row.posted_at,
+        candidateCaption: row.caption ?? "",
+        bestCaptionId: row.match_best_caption_id,
+        bestCaptionTitle: caption?.title ?? "Untitled Campaign",
+        bestCaptionText: caption?.canonical_caption ?? "",
+        score: row.match_score,
+      },
+    ];
+  });
+}
+
+/**
+ * Admin confirms an unmatched post IS the campaign post. It goes through the normal approval
+ * path (review item -> approved variant, live metrics, matched_posts), so it is tracked like any
+ * other match and identical future captions auto-match.
+ */
+export async function confirmNearMiss(
+  postId: string,
+  captionId?: string
+): Promise<{ success: boolean; error?: string }> {
+  const auth = await verifyAdminCaller();
+  if (!auth.authorized) return { success: false, error: auth.error };
+
+  const supabase = createAdminClient();
+  const { data: post } = await supabase
+    .from("posts")
+    .select("id, account_id, platform, platform_post_id, url, caption, match_score, match_best_caption_id")
+    .eq("id", postId)
+    .single();
+  if (!post) return { success: false, error: "Post not found." };
+
+  const targetCaptionId = captionId ?? post.match_best_caption_id;
+  if (!targetCaptionId) return { success: false, error: "No campaign caption to match this post to." };
+
+  // An explicit admin confirmation overrides an earlier rejection, so status is set to pending.
+  const { data: review, error: queueError } = await supabase
+    .from("review_queue")
+    .upsert(
+      {
+        caption_id: targetCaptionId,
+        account_id: post.account_id,
+        platform: post.platform,
+        platform_post_id: post.platform_post_id,
+        post_url: post.url,
+        candidate_caption: post.caption ?? "",
+        similarity_score: typeof post.match_score === "number" ? post.match_score : 0,
+        status: "pending",
+      },
+      { onConflict: "platform,platform_post_id" }
+    )
+    .select("id")
+    .single();
+  if (queueError || !review) {
+    return { success: false, error: `Could not queue the post: ${queueError?.message ?? "no row returned"}` };
+  }
+
+  return approveReviewItem(review.id, targetCaptionId);
+}
+
+/**
+ * Admin says an unmatched post is not a campaign post. It only leaves the "Possible matches"
+ * list; the post stays stored, refreshed and unmatched.
+ */
+export async function dismissNearMiss(postId: string): Promise<{ success: boolean; error?: string }> {
+  const auth = await verifyAdminCaller();
+  if (!auth.authorized) return { success: false, error: auth.error };
+
+  const { error } = await createAdminClient()
+    .from("posts")
+    .update({ match_dismissed_at: new Date().toISOString() })
+    .eq("id", postId);
+  if (error) return { success: false, error: error.message };
+
+  revalidatePath("/dashboard/review");
+  return { success: true };
 }
 
 /**

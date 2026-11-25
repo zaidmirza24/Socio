@@ -71,7 +71,7 @@ interface PublicPersonalPostTestCase {
   role: string;
   caption: string;
   expectedMatch: boolean;
-  expectedTier?: "tier1_exact" | "manual_approved" | "tier2_fuzzy";
+  expectedTier?: "tier1_exact" | "tier1_core" | "manual_approved" | "tier2_fuzzy";
   expectedCampaignId?: string;
   expectedNeedsReview?: boolean;
   description: string;
@@ -140,10 +140,10 @@ const PUBLIC_PERSONAL_POSTS: PublicPersonalPostTestCase[] = [
     role: "Community Media Account",
     caption: "Namaste friends! " + CAMPAIGN_2_YOUTH_CONCLAVE,
     expectedMatch: true,
-    expectedTier: "tier2_fuzzy",
+    expectedTier: "tier1_core",
     expectedCampaignId: "camp-youth-conclave",
-    expectedNeedsReview: true,
-    description: "Volunteer adds personal greeting 'Namaste friends!' -> routed to review queue",
+    expectedNeedsReview: false,
+    description: "Volunteer adds personal greeting 'Namaste friends!' around identical text -> auto-matched (Tier 1D)",
   },
   {
     id: "post-samajwadi-lucknow-01",
@@ -152,10 +152,10 @@ const PUBLIC_PERSONAL_POSTS: PublicPersonalPostTestCase[] = [
     role: "City Chapter Volunteer",
     caption: "जय हिन्द साथियों! " + CAMPAIGN_1_SWACHHATA,
     expectedMatch: true,
-    expectedTier: "tier2_fuzzy",
+    expectedTier: "tier1_core",
     expectedCampaignId: "camp-swachhata",
-    expectedNeedsReview: true,
-    description: "Volunteer adds Hindi greeting 'जय हिन्द साथियों!' -> routed to review queue",
+    expectedNeedsReview: false,
+    description: "Volunteer adds Hindi greeting 'जय हिन्द साथियों!' around identical text -> auto-matched (Tier 1D)",
   },
 
   // ── SCENARIO D: Local College / City Chapter Hashtags ──
@@ -166,10 +166,10 @@ const PUBLIC_PERSONAL_POSTS: PublicPersonalPostTestCase[] = [
     role: "Pune Youth Lead",
     caption: CAMPAIGN_1_SWACHHATA + " #PuneVolunteers #CleanPune #FergussonCollege #YouthAction",
     expectedMatch: true,
-    expectedTier: "tier2_fuzzy",
+    expectedTier: "tier1_core",
     expectedCampaignId: "camp-swachhata",
-    expectedNeedsReview: true,
-    description: "Appends local campus & city hashtags -> high similarity, routed to review queue",
+    expectedNeedsReview: false,
+    description: "Appends local campus & city hashtags to identical text -> auto-matched (Tier 1D)",
   },
   {
     id: "post-delhi-coordinator",
@@ -368,8 +368,9 @@ export function runPublicPersonalAccountsTest(): void {
   console.log(`      - Review Queue (Tier 2 Pending)   : ${reviewQueueCount} (Routed for admin approval)`);
   console.log(`      - Unmatched (kept, labelled)      : ${discardedCount} (non-campaign posts kept as unmatched)`);
 
-  assert(matchedPostsCount === 4, `Expected 4 Tier 1 matches, got ${matchedPostsCount}`);
-  assert(reviewQueueCount === 5, `Expected 5 Review Queue items, got ${reviewQueueCount}`);
+  // 4 word-for-word (Tier 1) + 3 greeting/hashtag wrappers around identical text (Tier 1D)
+  assert(matchedPostsCount === 7, `Expected 7 Tier 1 / 1D matches, got ${matchedPostsCount}`);
+  assert(reviewQueueCount === 2, `Expected 2 Review Queue items, got ${reviewQueueCount}`);
   assert(discardedCount === 6, `Expected 6 unmatched posts, got ${discardedCount}`);
 
   console.log("  ✓ Ingestion pipeline metrics verified: 0 false positives, 0 false negatives\n");

@@ -8,7 +8,8 @@
 - **Upsert, Never Insert**: All ingestion pipelines must be strictly idempotent. Rerunning a collection task or receiving duplicate webhook deliveries for the same day or same posts must update existing records or ignore duplicates without failing or inflating counts.
 - **Forbidden Automation & Hosting**:
   - DO NOT use Netlify Cron Jobs, Vercel Cron Jobs, Next.js scheduled functions, or external cron services.
-  - Collection is **admin-triggered**: the admin clicks "Run all platforms" (or one platform) in the app each day. There is no Apify Schedule and no webhook; the app polls the run status and ingests the dataset itself (`/api/scraper/status` -> `ingestCompletedJob`).
+  - Collection is **admin-triggered**: the admin clicks "Run all platforms" (or one platform) in the app each day; the app polls the run status and ingests the dataset itself (`/api/scraper/status` -> `ingestCompletedJob`).
+  - **Exception, admin-created Apify Schedules**: the Scheduler page (`/dashboard/schedules`, `lib/scheduler/**`) creates Apify Schedules for a chosen date/range, time (IST) and platforms. Apify starts those runs itself with a frozen input (the account list is re-saved when accounts change). The app records them in `collection_runs` and ingests them via `/api/scraper/schedules/sync`, which an open admin dashboard calls every minute (no webhook, no cron). Schedules whose end date passed are deleted from Apify, because Apify cron has no year.
   - The scraper is run from the admin's own (locally run) copy of the app against the shared Supabase project. DO NOT configure VPNs or Tailscale tunnels. Team members view the dashboard through login-protected Supabase Auth.
 
 ---

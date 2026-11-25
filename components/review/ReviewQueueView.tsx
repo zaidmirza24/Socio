@@ -20,16 +20,23 @@ import {
   approveReviewItem,
   rejectReviewItem,
   type ReviewQueueDisplayItem,
+  type NearMissItem,
 } from "@/lib/supabase/reviews";
 import { formatDisplayDate } from "@/lib/utils";
 import { CaptionDiffModal } from "./CaptionDiffModal";
+import { PossibleMatchesList } from "./PossibleMatchesList";
 
 interface ReviewQueueViewProps {
   initialItems: ReviewQueueDisplayItem[];
+  nearMisses: NearMissItem[];
+  nearMissDays: number;
 }
 
-export function ReviewQueueView({ initialItems }: ReviewQueueViewProps) {
+export function ReviewQueueView({ initialItems, nearMisses, nearMissDays }: ReviewQueueViewProps) {
   const searchParams = useSearchParams();
+  const [lane, setLane] = useState<"review" | "possible">(
+    searchParams?.get("lane") === "possible" ? "possible" : "review"
+  );
   const [items, setItems] = useState<ReviewQueueDisplayItem[]>(initialItems);
   const [selectedItem, setSelectedItem] = useState<ReviewQueueDisplayItem | null>(null);
   const [statusFilter, setStatusFilter] = useState<"pending" | "approved" | "rejected" | "ALL">("pending");
@@ -129,6 +136,30 @@ export function ReviewQueueView({ initialItems }: ReviewQueueViewProps) {
         </Notice>
       )}
 
+      {/* Lane switch: close matches awaiting a decision vs. unmatched near-misses */}
+      <div className="inline-flex items-center rounded-lg border border-slate-200/80 bg-slate-100/80 p-1" role="tablist" aria-label="Review lane">
+        {([
+          { id: "review", label: `Needs review (${pendingCount})` },
+          { id: "possible", label: `Possible matches (${nearMisses.length})` },
+        ] as const).map(({ id, label }) => (
+          <button
+            key={id}
+            role="tab"
+            aria-selected={lane === id}
+            onClick={() => setLane(id)}
+            className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+              lane === id ? "bg-white text-blue-700 shadow-xs" : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {lane === "possible" ? (
+        <PossibleMatchesList items={nearMisses} days={nearMissDays} />
+      ) : (
+      <>
       {/* Filter and Search Bar */}
       <div className="bg-white rounded-xl border border-slate-200/90 p-4 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         {/* Search */}
@@ -267,9 +298,19 @@ export function ReviewQueueView({ initialItems }: ReviewQueueViewProps) {
                   </div>
 
                   {/* Campaign Target */}
-                  <div className="text-xs text-slate-600 mb-2">
-                    <span className="font-semibold text-slate-500">Matched Campaign:</span>{" "}
-                    <span className="font-semibold text-slate-900">{item.captionTitle}</span>
+                  <div className="text-xs text-slate-600 mb-2 flex flex-wrap items-center gap-2">
+                    <span>
+                      <span className="font-semibold text-slate-500">Matched Campaign:</span>{" "}
+                      <span className="font-semibold text-slate-900">{item.captionTitle}</span>
+                    </span>
+                    {item.adjacentDay && (
+                      <span
+                        className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800"
+                        title="Posted on a different day than this caption was released. Check it is the same campaign post."
+                      >
+                        Different day than the caption
+                      </span>
+                    )}
                   </div>
 
                   {/* Candidate Caption Snippet */}
@@ -326,6 +367,9 @@ export function ReviewQueueView({ initialItems }: ReviewQueueViewProps) {
           </div>
         )}
       </div>
+
+      </>
+      )}
 
       {/* Side-by-Side Diff Modal */}
       <CaptionDiffModal

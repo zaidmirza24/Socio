@@ -17,6 +17,24 @@ const config: Config = {
     },
     extend: {
       colors: {
+        // Samajwadi Party palette. Existing blue/indigo/sky/violet utilities
+        // are remapped so the whole app picks up SP red and SP green.
+        blue: {
+          50: "#fef2f1", 100: "#fde3e1", 200: "#fbcbc8", 300: "#f7a19c", 400: "#f06b63",
+          500: "#e8453b", 600: "#E2231A", 700: "#bd1a13", 800: "#9b1a15", 900: "#801b17", 950: "#450a08",
+        },
+        sky: {
+          50: "#fef2f1", 100: "#fde3e1", 200: "#fbcbc8", 300: "#f7a19c", 400: "#f06b63",
+          500: "#e8453b", 600: "#E2231A", 700: "#bd1a13", 800: "#9b1a15", 900: "#801b17", 950: "#450a08",
+        },
+        indigo: {
+          50: "#effef4", 100: "#d9ffe5", 200: "#b5fccb", 300: "#7bf5a3", 400: "#3de374",
+          500: "#14c855", 600: "#009933", 700: "#00802b", 800: "#046524", 900: "#05521f", 950: "#002e10",
+        },
+        violet: {
+          50: "#effef4", 100: "#d9ffe5", 200: "#b5fccb", 300: "#7bf5a3", 400: "#3de374",
+          500: "#14c855", 600: "#009933", 700: "#00802b", 800: "#046524", 900: "#05521f", 950: "#002e10",
+        },
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",

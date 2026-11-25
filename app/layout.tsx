@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Socio - Social Media Engagement Monitoring",
+  title: "Saikil Shakti - Samajwadi Party Social Engagement Monitor",
   description: "Automated engagement tracking and volunteer rankings for social media campaigns.",
 };
 

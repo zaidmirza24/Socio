@@ -5,9 +5,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Grid, BarChart3 } from "lucide-react";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { VolunteersMatrixView } from "@/components/matrix/VolunteersMatrixView";
+import { DayCoverageView } from "@/components/matrix/DayCoverageView";
 import { CampaignAnalyticsView } from "@/components/analytics/CampaignAnalyticsView";
-import type { MatrixData } from "@/lib/supabase/matrix";
+import type { DayCoverageData } from "@/lib/supabase/matrix";
 import type {
   TrendDataPoint,
   TopPostData,
@@ -24,7 +24,8 @@ import type {
 interface DashboardTabsProps {
   /** Set when the server could not load the data; the numbers below are then NOT real zeros. */
   loadError?: string | null;
-  matrixData: MatrixData;
+  /** Loaded only while the coverage tab is showing. */
+  dayCoverage: DayCoverageData | null;
   analyticsData: {
     currentRange: DateRangePreset;
     platform: PlatformFilter;
@@ -39,7 +40,7 @@ interface DashboardTabsProps {
   };
 }
 
-export function DashboardTabs({ matrixData, analyticsData, loadError }: DashboardTabsProps) {
+export function DashboardTabs({ dayCoverage, analyticsData, loadError }: DashboardTabsProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -68,7 +69,7 @@ export function DashboardTabs({ matrixData, analyticsData, loadError }: Dashboar
         actions={
           <div className="flex items-center rounded-xl border border-slate-200 bg-slate-200/60 p-1" role="tablist" aria-label="Dashboard view">
             {([
-              { id: "matrix", label: "Caption matrix", Icon: Grid },
+              { id: "matrix", label: "Caption coverage", Icon: Grid },
               { id: "analytics", label: "Trends & rankings", Icon: BarChart3 },
             ] as const).map(({ id, label, Icon }) => (
               <button
@@ -97,7 +98,8 @@ export function DashboardTabs({ matrixData, analyticsData, loadError }: Dashboar
           onRetry={() => router.refresh()}
         />
       ) : activeTab === "matrix" ? (
-        <VolunteersMatrixView data={matrixData} />
+        // Still loading after a tab switch: the server has not sent this tab's data yet.
+        dayCoverage ? <DayCoverageView data={dayCoverage} /> : <div className="p-10 text-center text-sm text-slate-500">Loading...</div>
       ) : (
         <CampaignAnalyticsView
           currentRange={analyticsData.currentRange}

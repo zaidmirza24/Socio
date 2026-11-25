@@ -595,39 +595,39 @@ test("F-02", "Single word swapped routes to Tier 2 review", () => {
     : failed("TIER2_FUZZY(review=true)", actual, "Synonym swap should land in Tier 2", false, true, "medium");
 });
 
-test("F-03", "Prepended greeting routes to Tier 2 (not Tier 1)", () => {
+test("F-03", "Prepended greeting around identical text auto-matches as Tier 1D", () => {
   const withGreeting = "Namaste volunteers! " + CANONICAL_MEDIUM;
   const r = matchCaption(withGreeting, ACTIVE_MEDIUM);
   const actual = describeResult(r);
-  // Must NOT be Tier1_exact (hash is different), must be Tier2 or matched
+  // The hash differs, so it is not Tier1_exact; the core text is identical, so it is Tier 1D.
   if (r.matched && r.tier === "tier1_exact") {
-    return failed("TIER2_FUZZY or unmatched", actual, "Prepended greeting changes hash — must NOT be Tier1_exact (would skip review)", true, false, "critical");
+    return failed("TIER1_CORE", actual, "Prepended greeting changes hash — must be recorded as tier1_core, not tier1_exact", true, false, "critical");
   }
-  return r.matched && r.tier === "tier2_fuzzy"
-    ? passed("TIER2_FUZZY", actual)
-    : failed("TIER2_FUZZY", actual, undefined, false, true, "high");
+  return r.matched && r.tier === "tier1_core" && r.needsReview === false
+    ? passed("TIER1_CORE(review=false)", actual)
+    : failed("TIER1_CORE(review=false)", actual, undefined, false, true, "high");
 });
 
-test("F-04", "Appended hashtags route to Tier 2 (not Tier 1)", () => {
+test("F-04", "Appended hashtags around identical text auto-match as Tier 1D", () => {
   const withHashtags = CANONICAL_MEDIUM + " #CleanIndia #YouthWing";
   const r = matchCaption(withHashtags, ACTIVE_MEDIUM);
   const actual = describeResult(r);
   if (r.matched && r.tier === "tier1_exact") {
-    return failed("TIER2_FUZZY", actual, "Appended hashtags change hash — must NOT be Tier1_exact", true, false, "critical");
+    return failed("TIER1_CORE", actual, "Appended hashtags change hash — must be recorded as tier1_core, not tier1_exact", true, false, "critical");
   }
-  return r.matched && r.tier === "tier2_fuzzy"
-    ? passed("TIER2_FUZZY", actual)
-    : failed("TIER2_FUZZY", actual, "Appended hashtags should still yield fuzzy match", false, true, "high");
+  return r.matched && r.tier === "tier1_core" && r.needsReview === false
+    ? passed("TIER1_CORE(review=false)", actual)
+    : failed("TIER1_CORE(review=false)", actual, "Appended hashtags around identical text should auto-match", false, true, "high");
 });
 
-test("F-05", "Greeting + caption body + hashtags — high confidence fuzzy match", () => {
+test("F-05", "Greeting + caption body + hashtags — auto-matched as Tier 1D", () => {
   const realWorld = "Namaste friends! " + CANONICAL_MEDIUM + " #GreenEarth #CleanIndia";
   const r = matchCaption(realWorld, ACTIVE_MEDIUM);
   const conf = r.matched ? r.confidence : 0;
   const actual = describeResult(r);
-  return r.matched && r.tier === "tier2_fuzzy" && conf >= 0.93
-    ? passed("TIER2_FUZZY(conf>=0.93)", actual)
-    : failed("TIER2_FUZZY(conf>=0.93)", actual, `Got confidence ${conf}`, false, true, "high");
+  return r.matched && r.tier === "tier1_core" && r.needsReview === false && conf >= 0.93
+    ? passed("TIER1_CORE(conf>=0.93)", actual)
+    : failed("TIER1_CORE(conf>=0.93)", actual, `Got confidence ${conf}`, false, true, "high");
 });
 
 test("F-06", "Partial quote of long canonical (second paragraph) matched as Tier 2", () => {
@@ -669,7 +669,8 @@ test("F-09", "Fuzzy match always sets needsReview = true", () => {
 });
 
 test("F-10", "Fuzzy match provides matchedSegment field", () => {
-  const withGreeting = "Namaste! " + CANONICAL_MEDIUM;
+  // A typo inside the core text keeps it out of Tier 1D, so it is a real fuzzy match.
+  const withGreeting = "Namaste! " + CANONICAL_MEDIUM.replace("gloves", "glove");
   const r = matchCaption(withGreeting, ACTIVE_MEDIUM);
   if (!r.matched || r.tier !== "tier2_fuzzy") return failed("segment present", "NOT_TIER2", undefined, false, true, "medium");
   const actual = r.matchedSegment ?? "MISSING";

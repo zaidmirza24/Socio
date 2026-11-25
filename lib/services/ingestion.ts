@@ -12,7 +12,23 @@ import {
   matchCaption,
   type MatchableCaption,
   type MatchableVariant,
+  type MatchDiagnostics,
 } from "../matching/matcher.ts";
+
+/** Caption-match label written to `posts` (status, caption, and why the matcher decided so). */
+interface PostLabel {
+  matchStatus: PostMatchStatus;
+  captionId: string | null;
+  diagnostics?: MatchDiagnostics;
+}
+
+/** posts.match_* audit columns for a matcher decision (empty when matching did not run). */
+export function matchDiagnosticsColumns(
+  d: MatchDiagnostics | undefined
+): { match_score: number | null; match_best_caption_id: string | null; match_reason: string } | Record<string, never> {
+  if (!d) return {};
+  return { match_score: d.score, match_best_caption_id: d.bestCaptionId, match_reason: d.reason };
+}
 
 export interface IngestionOptions {
   actorRunId?: string | null;
@@ -315,7 +331,7 @@ export async function processIngestion(
     const mirrorToPosts = async (
       post: AdapterResult["posts"][number],
       accountId: string,
-      label?: { matchStatus: PostMatchStatus; captionId: string | null }
+      label?: PostLabel
     ): Promise<boolean> => {
       try {
         const nowIso = new Date().toISOString();
@@ -334,7 +350,11 @@ export async function processIngestion(
               last_metrics_refresh_at: nowIso,
               thumbnail_url: post.thumbnail_url ?? null,
               ...(label
-                ? { match_status: label.matchStatus, matched_caption_id: label.captionId }
+                ? {
+                    match_status: label.matchStatus,
+                    matched_caption_id: label.captionId,
+                    ...matchDiagnosticsColumns(label.diagnostics),
+                  }
                 : {}),
             },
             {
@@ -436,7 +456,7 @@ export async function processIngestion(
           }),
       });
 
-      const keep = async (label?: { matchStatus: PostMatchStatus; captionId: string | null }): Promise<void> => {
+      const keep = async (label?: PostLabel): Promise<void> => {
         if (await mirrorToPosts(post, accountId, label)) {
           postsMatched++;
           snapshotsCreated++;
@@ -451,7 +471,7 @@ export async function processIngestion(
 
       if (route.action === "label") {
         // rejected (admin decision, never re-queued) / unmatched / matched via earlier approval
-        await keep({ matchStatus: route.matchStatus, captionId: route.captionId });
+        await keep({ matchStatus: route.matchStatus, captionId: route.captionId, diagnostics: route.diagnostics });
         return;
       }
 
@@ -483,7 +503,7 @@ export async function processIngestion(
           if (!existingStatus) existingReviewStatusMap.set(postKey, "pending");
         }
         // Keep the post and its engagement while it waits for review
-        await keep({ matchStatus: "needs_review", captionId: route.captionId });
+        await keep({ matchStatus: "needs_review", captionId: route.captionId, diagnostics: route.diagnostics });
         return;
       }
 
@@ -582,7 +602,11 @@ export async function processIngestion(
 
       // Also mirror to legacy posts/post_snapshots for backwards compatibility
       // with current dashboard views
-      await mirrorToPosts(post, accountId, { matchStatus: "matched", captionId: matchResult.captionId });
+      await mirrorToPosts(post, accountId, {
+        matchStatus: "matched",
+        captionId: matchResult.captionId,
+        diagnostics: route.diagnostics,
+      });
     };
 
     // Process posts a few at a time: thousands of posts x several DB round-trips each would be

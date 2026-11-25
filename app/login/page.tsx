@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import {
+  Bike,
   Lock,
   Mail,
   ArrowRight,
@@ -57,14 +58,13 @@ export default function LoginPage() {
         {/* Brand Container */}
         <div className="bg-white rounded-2xl p-8 shadow-2xl border border-slate-200/80">
           <div className="mb-6 text-center">
-            <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white font-bold text-xl mb-3 shadow-md shadow-blue-500/25">
-              S
+            <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white font-bold text-xl mb-3 shadow-md shadow-blue-500/25"><Bike className="h-6 w-6" />
             </div>
             <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-              Socio Monitor
+              Saikil Shakti
             </h1>
             <p className="mt-1 text-xs text-slate-500 font-medium">
-              Sign in to view campaign engagement
+              PDA ki Awaaz · Sign in to view campaign engagement
             </p>
           </div>
 

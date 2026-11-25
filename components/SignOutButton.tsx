@@ -35,7 +35,7 @@ export function SignOutButton({ variant = "header", className = "" }: SignOutBut
       <button
         onClick={handleSignOut}
         disabled={loading}
-        title="Sign out of Socio"
+        title="Sign out of Saikil Shakti"
         className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold rounded-lg text-slate-600 hover:text-red-700 hover:bg-red-50 border border-slate-200 hover:border-red-200 transition disabled:opacity-50 ${className}`}
       >
         {loading ? (
@@ -52,7 +52,7 @@ export function SignOutButton({ variant = "header", className = "" }: SignOutBut
     <button
       onClick={handleSignOut}
       disabled={loading}
-      title="Sign out of Socio"
+      title="Sign out of Saikil Shakti"
       className={`inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-red-50 hover:text-red-700 hover:border-red-200 transition disabled:opacity-50 ${className}`}
     >
       {loading ? (

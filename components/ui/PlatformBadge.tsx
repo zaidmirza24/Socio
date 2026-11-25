@@ -3,7 +3,7 @@ import { platformLabel } from "@/lib/platform";
 
 const STYLES: Record<string, string> = {
   instagram: "bg-pink-50 text-pink-700 border-pink-200",
-  facebook: "bg-blue-50 text-blue-700 border-blue-200",
+  facebook: "bg-[#e7f0fe] text-[#1877f2] border-[#c5dafc]",
   x: "bg-slate-900 text-white border-slate-700",
 };
 

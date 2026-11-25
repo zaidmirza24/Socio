@@ -21,8 +21,8 @@ export interface TopPostData {
 }
 
 const COLORS = [
-  "#3b82f6", "#6366f1", "#8b5cf6", "#a855f7", "#ec4899",
-  "#ef4444", "#f97316", "#f59e0b", "#10b981", "#14b8a6",
+  "#E2231A", "#009933", "#8b5cf6", "#a855f7", "#ec4899",
+  "#ef4444", "#f97316", "#f59e0b", "#009933", "#14b8a6",
 ];
 
 export function TopPostsChart({ data }: { data: TopPostData[] }) {

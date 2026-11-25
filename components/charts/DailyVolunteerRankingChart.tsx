@@ -43,7 +43,7 @@ export function DailyVolunteerRankingChart({ data }: { data: VolunteerRankingPoi
           <XAxis dataKey="date" tick={{ fill: "#64748b", fontSize: 12 }} axisLine={false} tickLine={false} />
           <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
           <Tooltip content={<RankingTooltip />} cursor={{ fill: "#f1f5f9" }} />
-          <Bar dataKey="engagement" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Engagement" />
+          <Bar dataKey="engagement" fill="#E2231A" radius={[4, 4, 0, 0]} name="Engagement" />
         </BarChart>
       </ResponsiveContainer>
     </div>

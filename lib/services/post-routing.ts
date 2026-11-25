@@ -1,4 +1,4 @@
-import type { MatchResult } from "../matching/matcher.ts";
+import { describeMatch, type MatchDiagnostics, type MatchResult } from "../matching/matcher.ts";
 
 /** A caption match that is final (exact or a previously approved variant), i.e. tracked. */
 export type FinalMatch = Extract<MatchResult, { matched: true; needsReview: false }>;
@@ -8,7 +8,12 @@ export type FinalMatch = Extract<MatchResult, { matched: true; needsReview: fals
  * engagement snapshot (AGENTS.md: nothing is discarded); routes only differ in labelling and in
  * whether the post also goes to the review queue or to matched_posts.
  */
-export type PostRoute =
+export type PostRoute = PostRouteAction & {
+  /** Why the matcher decided this (absent when matching did not run). Stored on the post. */
+  diagnostics?: MatchDiagnostics;
+};
+
+type PostRouteAction =
   /** Caption filter OFF: store as-is, no matching, existing label untouched. */
   | { action: "store_unlabelled" }
   /** Store and set this label (rejected / unmatched / matched via an earlier approval). */
@@ -43,14 +48,15 @@ export function routePost({ captionMatchingEnabled, existingReviewStatus, match 
   }
 
   const result = match();
+  const diagnostics = describeMatch(result);
   if (!result.matched) {
-    return { action: "label", matchStatus: "unmatched", captionId: null };
+    return { action: "label", matchStatus: "unmatched", captionId: null, diagnostics };
   }
   if (result.needsReview) {
     if (existingReviewStatus === "approved") {
-      return { action: "label", matchStatus: "matched", captionId: result.captionId };
+      return { action: "label", matchStatus: "matched", captionId: result.captionId, diagnostics };
     }
-    return { action: "queue_review", captionId: result.captionId, confidence: result.confidence };
+    return { action: "queue_review", captionId: result.captionId, confidence: result.confidence, diagnostics };
   }
-  return { action: "track_match", match: result };
+  return { action: "track_match", match: result, diagnostics };
 }
