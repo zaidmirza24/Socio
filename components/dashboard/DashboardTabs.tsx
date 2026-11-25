@@ -67,7 +67,7 @@ export function DashboardTabs({ dayCoverage, analyticsData, loadError }: Dashboa
         title="Dashboard"
         description="Every post from monitored volunteer accounts on Instagram, Facebook and X, with engagement over time."
         actions={
-          <div className="flex items-center rounded-xl border border-slate-200 bg-slate-200/60 p-1" role="tablist" aria-label="Dashboard view">
+          <div className="flex w-full items-center rounded-xl border border-slate-200 bg-slate-200/60 p-1 sm:w-auto" role="tablist" aria-label="Dashboard view">
             {([
               { id: "matrix", label: "Caption coverage", Icon: Grid },
               { id: "analytics", label: "Trends & rankings", Icon: BarChart3 },
@@ -77,7 +77,7 @@ export function DashboardTabs({ dayCoverage, analyticsData, loadError }: Dashboa
                 role="tab"
                 aria-selected={activeTab === id}
                 onClick={() => handleTabChange(id)}
-                className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
+                className={`flex flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-xs font-semibold transition-colors sm:flex-none sm:px-4 sm:text-sm ${
                   activeTab === id ? "bg-white text-blue-700 shadow-sm" : "text-slate-600 hover:text-slate-900"
                 }`}
               >

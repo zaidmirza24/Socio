@@ -2,7 +2,7 @@
 
 import { Notice } from "@/components/ui/Notice";
 import { PageHeader } from "@/components/ui/PageHeader";
-import React, { useState, useEffect, useTransition } from "react";
+import React, { useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   CheckSquare,
@@ -23,6 +23,7 @@ import {
   type NearMissItem,
 } from "@/lib/supabase/reviews";
 import { formatDisplayDate } from "@/lib/utils";
+import { adjustReviewCount } from "@/hooks/useReviewCount";
 import { CaptionDiffModal } from "./CaptionDiffModal";
 import { PossibleMatchesList } from "./PossibleMatchesList";
 
@@ -41,10 +42,8 @@ export function ReviewQueueView({ initialItems, nearMisses, nearMissDays }: Revi
   const [selectedItem, setSelectedItem] = useState<ReviewQueueDisplayItem | null>(null);
   const [statusFilter, setStatusFilter] = useState<"pending" | "approved" | "rejected" | "ALL">("pending");
   const [searchTerm, setSearchTerm] = useState("");
-  const [isProcessing, startProcessing] = useTransition();
 
   const [actionError, setActionError] = useState<string | null>(null);
-  const [processingId, setProcessingId] = useState<string | null>(null);
 
   useEffect(() => {
     const targetId = searchParams?.get("id");
@@ -56,45 +55,26 @@ export function ReviewQueueView({ initialItems, nearMisses, nearMissDays }: Revi
     }
   }, [searchParams, items]);
 
-  const handleApprove = async (id: string) => {
-    setProcessingId(id);
+  // Optimistic: the card moves to Approved/Rejected and the dialog closes immediately; the server
+  // call runs in the background and the change is rolled back (with an error) if it fails.
+  const decide = async (id: string, status: "approved" | "rejected") => {
+    const verb = status === "approved" ? "approve" : "reject";
     setActionError(null);
-    startProcessing(async () => {
-      try {
-        const res = await approveReviewItem(id);
-        if (res.success) {
-          setItems((prev) =>
-            prev.map((item) => (item.id === id ? { ...item, status: "approved" } : item))
-          );
-          setSelectedItem(null);
-        } else {
-          setActionError(`Could not approve this post: ${res.error}`);
-        }
-      } finally {
-        setProcessingId(null);
-      }
-    });
+    setSelectedItem(null);
+    setItems((prev) => prev.map((item) => (item.id === id ? { ...item, status } : item)));
+    adjustReviewCount(-1);
+    try {
+      const res = status === "approved" ? await approveReviewItem(id) : await rejectReviewItem(id);
+      if (!res.success) throw new Error(res.error);
+    } catch (err: unknown) {
+      setItems((prev) => prev.map((item) => (item.id === id ? { ...item, status: "pending" } : item)));
+      adjustReviewCount(1);
+      setActionError(`Could not ${verb} this post: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
   };
 
-  const handleReject = async (id: string) => {
-    setProcessingId(id);
-    setActionError(null);
-    startProcessing(async () => {
-      try {
-        const res = await rejectReviewItem(id);
-        if (res.success) {
-          setItems((prev) =>
-            prev.map((item) => (item.id === id ? { ...item, status: "rejected" } : item))
-          );
-          setSelectedItem(null);
-        } else {
-          setActionError(`Could not reject this post: ${res.error}`);
-        }
-      } finally {
-        setProcessingId(null);
-      }
-    });
-  };
+  const handleApprove = (id: string) => decide(id, "approved");
+  const handleReject = (id: string) => decide(id, "rejected");
 
   const filteredItems = items.filter((item) => {
     if (statusFilter !== "ALL" && item.status !== statusFilter) {
@@ -175,7 +155,7 @@ export function ReviewQueueView({ initialItems, nearMisses, nearMissDays }: Revi
         </div>
 
         {/* Status Filters */}
-        <div className="flex items-center bg-slate-100/80 p-1 rounded-lg border border-slate-200/80 self-start md:self-auto">
+        <div className="flex items-center overflow-x-auto bg-slate-100/80 p-1 rounded-lg border border-slate-200/80 self-start max-w-full md:self-auto [&>button]:whitespace-nowrap">
           <button
             onClick={() => setStatusFilter("pending")}
             className={`px-3 py-1.5 rounded-md text-xs font-semibold transition ${
@@ -239,7 +219,6 @@ export function ReviewQueueView({ initialItems, nearMisses, nearMissDays }: Revi
             {filteredItems.map((item) => {
               const similarityPercent = Math.round(item.similarityScore * 100);
               const isPending = item.status === "pending";
-              const isItemBusy = isProcessing && processingId === item.id;
 
               const scoreColorClass =
                 similarityPercent >= 95
@@ -319,7 +298,7 @@ export function ReviewQueueView({ initialItems, nearMisses, nearMissDays }: Revi
                   </div>
 
                   {/* Action Controls */}
-                  <div className="flex items-center justify-between pt-3 border-t border-slate-100 text-xs">
+                  <div className="flex flex-col gap-3 pt-3 border-t border-slate-100 text-xs sm:flex-row sm:items-center sm:justify-between">
                     <a
                       href={item.postUrl}
                       target="_blank"
@@ -330,7 +309,7 @@ export function ReviewQueueView({ initialItems, nearMisses, nearMissDays }: Revi
                       <ExternalLink className="h-3.5 w-3.5" />
                     </a>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <button
                         onClick={() => setSelectedItem(item)}
                         className="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-semibold transition flex items-center gap-1.5"
@@ -343,7 +322,6 @@ export function ReviewQueueView({ initialItems, nearMisses, nearMissDays }: Revi
                         <>
                           <button
                             onClick={() => handleReject(item.id)}
-                            disabled={isProcessing}
                             className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-red-50 text-slate-700 hover:text-red-700 text-xs font-semibold border border-slate-200 transition disabled:opacity-50"
                           >
                             Reject
@@ -351,7 +329,6 @@ export function ReviewQueueView({ initialItems, nearMisses, nearMissDays }: Revi
 
                           <button
                             onClick={() => handleApprove(item.id)}
-                            disabled={isProcessing}
                             className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-xs transition disabled:opacity-50 flex items-center gap-1"
                           >
                             <CheckCircle2 className="h-3.5 w-3.5" />
@@ -378,7 +355,7 @@ export function ReviewQueueView({ initialItems, nearMisses, nearMissDays }: Revi
         onClose={() => setSelectedItem(null)}
         onApprove={handleApprove}
         onReject={handleReject}
-        isProcessing={isProcessing}
+        isProcessing={false}
       />
     </div>
   );

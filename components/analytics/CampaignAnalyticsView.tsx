@@ -269,15 +269,15 @@ export function CampaignAnalyticsView({
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
           <PlatformFilter value={platform} />
           <DateRangeFilter value={currentRange} />
         </div>
       </div>
 
       {/* ── Tab Switcher Strip (Progressive Disclosure) ── */}
-      <div className="flex border-b border-slate-200">
-        <nav className="-mb-px flex space-x-6" aria-label="Dashboard sections">
+      <div className="flex overflow-x-auto border-b border-slate-200">
+        <nav className="-mb-px flex space-x-5 whitespace-nowrap sm:space-x-6" aria-label="Dashboard sections">
           <button
             onClick={() => handleSubtabSelect("overview")}
             className={`flex items-center gap-2 pb-3 pt-1 text-sm font-medium border-b-2 transition-colors cursor-pointer ${
@@ -341,7 +341,7 @@ export function CampaignAnalyticsView({
         <div className="space-y-6">
           {/* KPI Strip */}
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs">
+            <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 shadow-xs">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
                   Accounts
@@ -351,13 +351,13 @@ export function CampaignAnalyticsView({
                 </div>
               </div>
               <div className="mt-3 flex items-baseline gap-2">
-                <span className="text-3xl font-bold text-slate-900">{kpi.totalAccounts}</span>
+                <span className="text-2xl sm:text-3xl font-bold text-slate-900">{kpi.totalAccounts}</span>
                 <span className="text-xs font-medium text-emerald-600">{activePct}% active</span>
               </div>
               <span className="mt-1 block text-xs text-slate-500">Monitored volunteer accounts</span>
             </div>
 
-            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs">
+            <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 shadow-xs">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
                   Posts
@@ -367,7 +367,7 @@ export function CampaignAnalyticsView({
                 </div>
               </div>
               <div className="mt-3 flex items-baseline gap-2">
-                <span className="text-3xl font-bold text-slate-900">{kpi.totalPosts}</span>
+                <span className="text-2xl sm:text-3xl font-bold text-slate-900">{kpi.totalPosts}</span>
                 
               </div>
               <span className="mt-1 block text-xs text-slate-500">
@@ -383,7 +383,7 @@ export function CampaignAnalyticsView({
               </span>
             </div>
 
-            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs">
+            <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 shadow-xs">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
                   Total Likes
@@ -393,14 +393,14 @@ export function CampaignAnalyticsView({
                 </div>
               </div>
               <div className="mt-3 flex items-baseline gap-2">
-                <span className="text-3xl font-bold text-slate-900">
+                <span className="text-2xl sm:text-3xl font-bold text-slate-900">
                   {formatNumber(kpi.totalLikes)}
                 </span>
               </div>
               <span className="mt-1 block text-xs text-slate-500">Across monitored posts</span>
             </div>
 
-            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs">
+            <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 shadow-xs">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
                   Total Comments
@@ -410,7 +410,7 @@ export function CampaignAnalyticsView({
                 </div>
               </div>
               <div className="mt-3 flex items-baseline gap-2">
-                <span className="text-3xl font-bold text-slate-900">
+                <span className="text-2xl sm:text-3xl font-bold text-slate-900">
                   {formatNumber(kpi.totalComments)}
                 </span>
               </div>
@@ -962,7 +962,7 @@ export function CampaignAnalyticsView({
                 return (
                   <div
                     key={post.id}
-                    className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-5 shadow-xs hover:border-blue-300 transition-all hover:shadow-sm"
+                    className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-4 sm:p-5 shadow-xs hover:border-blue-300 transition-all hover:shadow-sm"
                   >
                     <div>
                       {/* Card Header: Author + Format badge */}

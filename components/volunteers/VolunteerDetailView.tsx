@@ -246,9 +246,9 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
       </div>
 
       {/* ── Volunteer Profile Header ── */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
-          <div className="flex items-start sm:items-center gap-4">
+          <div className="flex min-w-0 items-start sm:items-center gap-4">
             {/* Avatar Circle */}
             <div className="relative flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 text-white shadow-md text-2xl font-bold">
               {account.volunteerName.charAt(0).toUpperCase()}
@@ -323,7 +323,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
           </div>
 
           {/* Action buttons & Date Range Filter */}
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
             <DateRangeFilter value={dateFilter} onChange={setDateFilter} size="sm" />
             {(isVolunteerScope ? accounts : [{ platform, handle: account.handle }]).map((a) => {
               const Icon = platformIcon(a.platform);
@@ -333,7 +333,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
                   href={platformProfileUrl(a.platform, a.handle)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl ${profileButtonStyle(a.platform)} text-white font-medium text-sm shadow-sm hover:opacity-95 transition`}
+                  className={`inline-flex w-full items-center justify-center gap-2 px-4 py-2 rounded-xl sm:w-auto ${profileButtonStyle(a.platform)} text-white font-medium text-sm shadow-sm hover:opacity-95 transition`}
                 >
                   <Icon className="h-4 w-4" />
                   View {labelOf(a.platform)} Profile
@@ -396,7 +396,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
       {/* ── KPI Summary Cards ── */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {/* Monitored Posts */}
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">
               Monitored Posts
@@ -406,7 +406,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
             </div>
           </div>
           <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-3xl font-bold text-slate-900">
+            <span className="text-2xl sm:text-3xl font-bold text-slate-900">
               {metrics.totalMonitoredPosts}
             </span>
           </div>
@@ -424,7 +424,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
         </div>
 
         {/* Total Likes */}
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">
               Total Likes
@@ -434,7 +434,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
             </div>
           </div>
           <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-3xl font-bold text-slate-900">
+            <span className="text-2xl sm:text-3xl font-bold text-slate-900">
               {formatMetric(metrics.totalLikes)}
             </span>
           </div>
@@ -442,7 +442,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
         </div>
 
         {/* Total Comments */}
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">
               Total Comments
@@ -452,7 +452,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
             </div>
           </div>
           <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-3xl font-bold text-slate-900">
+            <span className="text-2xl sm:text-3xl font-bold text-slate-900">
               {formatMetric(metrics.totalComments)}
             </span>
           </div>
@@ -460,7 +460,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
         </div>
 
         {/* Avg Engagement / Post */}
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">
               Avg Engagement / Post
@@ -470,7 +470,7 @@ export function VolunteerDetailView({ data, initialRange = "today" }: VolunteerD
             </div>
           </div>
           <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-3xl font-bold text-slate-900">
+            <span className="text-2xl sm:text-3xl font-bold text-slate-900">
               {formatMetric(metrics.avgEngagementPerPost)}
             </span>
           </div>

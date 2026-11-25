@@ -73,7 +73,6 @@ export default function AccountsPage() {
   const [loading, setLoading] = useState(true);
   const [pageError, setPageError] = useState<string | null>(null);
   const [accountToDelete, setAccountToDelete] = useState<AccountItem | null>(null);
-  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Search & Filter state
@@ -231,6 +230,12 @@ export default function AccountsPage() {
 
   const handleToggleStatus = async (acc: AccountItem) => {
     const newStatus = acc.status === "active" ? "paused" : "active";
+    const previousStatus = acc.status;
+    const setStatus = (status: AccountItem["status"]) =>
+      setAccounts((prev) => prev.map((a) => (a.id === acc.id ? { ...a, status } : a)));
+    // Optimistic: flip immediately, roll back if the server refuses.
+    setStatus(newStatus);
+    setPageError(null);
     try {
       const res = await fetch("/api/accounts", {
         method: "PATCH",
@@ -240,13 +245,12 @@ export default function AccountsPage() {
           status: newStatus,
         }),
       });
-      if (res.ok) {
-        setPageError(null);
-        fetchAccounts();
-      } else {
+      if (!res.ok) {
+        setStatus(previousStatus);
         setPageError(`Could not ${newStatus === "paused" ? "pause" : "resume"} @${acc.handle}. Please try again.`);
       }
     } catch {
+      setStatus(previousStatus);
       setPageError(`Could not reach the server to update @${acc.handle}.`);
     }
   };
@@ -256,20 +260,20 @@ export default function AccountsPage() {
   const confirmDeleteAccount = async () => {
     const acc = accountToDelete;
     if (!acc) return;
-    setDeleting(true);
+    // Optimistic: remove the row and close the dialog right away; restore on failure.
+    const snapshot = accounts;
+    setAccounts((prev) => prev.filter((a) => a.id !== acc.id));
+    setAccountToDelete(null);
+    setPageError(null);
     try {
       const res = await fetch(`/api/accounts?id=${acc.id}`, { method: "DELETE" });
-      if (res.ok) {
-        setPageError(null);
-        fetchAccounts();
-      } else {
+      if (!res.ok) {
+        setAccounts(snapshot);
         setPageError(`Could not delete @${acc.handle}. Please try again.`);
       }
     } catch {
+      setAccounts(snapshot);
       setPageError(`Could not reach the server to delete @${acc.handle}.`);
-    } finally {
-      setDeleting(false);
-      setAccountToDelete(null);
     }
   };
 
@@ -586,7 +590,6 @@ export default function AccountsPage() {
         title="Delete this account?"
         confirmLabel="Delete account"
         danger
-        busy={deleting}
         onConfirm={confirmDeleteAccount}
         onCancel={() => setAccountToDelete(null)}
       >
@@ -1019,7 +1022,7 @@ export default function AccountsPage() {
 
               {/* Mode 2: Interactive Grid */}
               {bulkMode === "grid" && (
-                <div className="border border-slate-200 rounded-xl overflow-hidden max-h-56 overflow-y-auto">
+                <div className="border border-slate-200 rounded-xl overflow-auto max-h-56">
                   <table className="w-full text-left text-xs">
                     <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200 uppercase tracking-wider text-xs">
                       <tr>
@@ -1131,7 +1134,7 @@ export default function AccountsPage() {
                     No accounts parsed yet. Paste lines above or fill in the grid to preview.
                   </div>
                 ) : (
-                  <div className="rounded-xl border border-slate-200 overflow-hidden max-h-48 overflow-y-auto">
+                  <div className="rounded-xl border border-slate-200 overflow-auto max-h-48">
                     <table className="w-full text-left text-xs">
                       <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200 uppercase tracking-wider text-xs">
                         <tr>

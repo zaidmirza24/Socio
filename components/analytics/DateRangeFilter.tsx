@@ -64,7 +64,7 @@ export function DateRangeFilter({
 
   return (
     <div
-      className={`inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50/90 p-1 shadow-2xs backdrop-blur-xs ${className}`}
+      className={`inline-flex max-w-full items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50/90 p-1 shadow-2xs backdrop-blur-xs ${className}`}
       role="group"
       aria-label="Date Range Filter"
     >
@@ -77,7 +77,7 @@ export function DateRangeFilter({
         <span className="hidden sm:inline text-xs font-medium text-slate-500">Filter:</span>
       </div>
 
-      <div className="flex flex-wrap items-center gap-1">
+      <div className="flex min-w-0 items-center gap-1 overflow-x-auto [&>button]:shrink-0 [&>button]:whitespace-nowrap">
         {options.map((opt) => {
           const isActive = activePreset === opt.id;
           return (

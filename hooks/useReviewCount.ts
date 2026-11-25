@@ -79,6 +79,11 @@ function teardownPolling() {
   }
 }
 
+/** Optimistically nudge the shared pending count (e.g. -1 after approving) without waiting for the next poll. */
+export function adjustReviewCount(delta: number): void {
+  notifyAll(Math.max(0, cachedCount + delta));
+}
+
 /**
  * Returns the live pending review count.
  * Multiple instances share a single background poll — opening the
