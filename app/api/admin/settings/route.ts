@@ -18,6 +18,7 @@ const updateStrategySchema = z.object({
   refresh_interval_days: z.number().int().min(1).max(90).optional(),
   cutoff_days: z.number().int().min(1).max(365).optional(),
   discovery_post_limit: z.number().int().min(1).max(50).optional(),
+  max_run_cost_usd: z.number().min(0.5).max(1000).nullable().optional(),
   platforms: z
     .object({
       instagram: z.object({ enabled: z.boolean() }).optional(),

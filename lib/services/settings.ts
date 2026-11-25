@@ -6,6 +6,7 @@ export const DEFAULT_REFRESH_STRATEGY: ScraperRefreshStrategy = {
   refresh_interval_days: 7,
   cutoff_days: 30,
   discovery_post_limit: 10,
+  max_run_cost_usd: null,
 };
 
 export interface SystemPlatformSettings {
@@ -158,6 +159,8 @@ export async function getScraperRefreshStrategy(): Promise<ScraperRefreshStrateg
         typeof val.discovery_post_limit === "number" && val.discovery_post_limit > 0
           ? val.discovery_post_limit
           : 10,
+      max_run_cost_usd:
+        typeof val.max_run_cost_usd === "number" && val.max_run_cost_usd > 0 ? val.max_run_cost_usd : null,
     };
   }
 }
@@ -176,6 +179,8 @@ export async function updateScraperRefreshStrategy(
     refresh_interval_days: updates.refresh_interval_days ?? current.refresh_interval_days,
     cutoff_days: updates.cutoff_days ?? current.cutoff_days,
     discovery_post_limit: updates.discovery_post_limit ?? current.discovery_post_limit,
+    // null is a real value here ("no cap"), so only undefined means "leave unchanged".
+    max_run_cost_usd: updates.max_run_cost_usd === undefined ? current.max_run_cost_usd : updates.max_run_cost_usd,
   };
 
   const supabase = createAdminClient();

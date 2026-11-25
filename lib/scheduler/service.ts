@@ -13,7 +13,7 @@ import { getApifyClientAsync } from "../apify/client.ts";
 import { getApifyConfig } from "../services/integrations.ts";
 import { getScraperRefreshStrategy } from "../services/settings.ts";
 import { ingestCompletedJob, assertPlatformEnabled } from "../services/scraper-orchestrator.ts";
-import { APIFY_RUN_MEMORY_MB } from "../config/batching.ts";
+import { APIFY_RUN_MEMORY_MB, APIFY_RUN_TIMEOUT_SECS } from "../config/batching.ts";
 import { buildDiscoveryRunInput } from "../scrapers/discovery-input.ts";
 import {
   SCHEDULE_TIMEZONE,
@@ -93,16 +93,28 @@ async function loadActiveHandles(platform: PlatformType): Promise<string[]> {
   return [...new Set(rows.map((r) => r.handle.replace(/^@/, "").trim().toLowerCase()).filter(Boolean))];
 }
 
-function runActorAction(actorId: string, platform: PlatformType, input: Record<string, unknown>): ScheduleAction {
+/** The Apify schedule API accepts `maxTotalChargeUsd` in runOptions; the client's type omits it. */
+type ScheduledRunOptions = NonNullable<Extract<ScheduleAction, { actorId: string }>["runOptions"]> & {
+  maxTotalChargeUsd?: number;
+};
+
+function runActorAction(
+  actorId: string,
+  platform: PlatformType,
+  input: Record<string, unknown>,
+  maxRunCostUsd: number | null
+): ScheduleAction {
+  const runOptions: ScheduledRunOptions = {
+    build: "latest",
+    timeoutSecs: APIFY_RUN_TIMEOUT_SECS,
+    memoryMbytes: APIFY_RUN_MEMORY_MB[platform],
+    ...(maxRunCostUsd ? { maxTotalChargeUsd: maxRunCostUsd } : {}),
+  };
   return {
     type: ScheduleActions.RunActor,
     actorId,
     runInput: { body: JSON.stringify(input), contentType: "application/json; charset=utf-8" },
-    runOptions: {
-      build: "latest",
-      timeoutSecs: 2 * 60 * 60,
-      memoryMbytes: APIFY_RUN_MEMORY_MB[platform],
-    },
+    runOptions,
   };
 }
 
@@ -242,7 +254,8 @@ export async function createSchedule(
           runActorAction(
             config.actors[entry.platform].discovery,
             entry.platform,
-            frozenInput(entry.platform, handles, postLimit)
+            frozenInput(entry.platform, handles, postLimit),
+            strategy.max_run_cost_usd
           ),
         ],
       });
@@ -331,7 +344,8 @@ async function refreezeRow(row: ScheduleRow): Promise<void> {
           runActorAction(
             config.actors[entry.platform].discovery,
             entry.platform,
-            frozenInput(entry.platform, frozen[entry.platform] ?? [], postLimit)
+            frozenInput(entry.platform, frozen[entry.platform] ?? [], postLimit),
+            strategy.max_run_cost_usd
           ),
         ],
       });

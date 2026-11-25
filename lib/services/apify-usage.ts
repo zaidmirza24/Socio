@@ -1,6 +1,7 @@
 import { createAdminClient } from "../supabase/admin.ts";
 import { getApifyClientAsync } from "../apify/client.ts";
 import { getPlatformSettings, getScraperRefreshStrategy } from "./settings.ts";
+import { APIFY_USAGE_SETTLE_MS } from "../config/batching.ts";
 
 /**
  * Apify credit (USD) accounting for this platform.
@@ -268,8 +269,13 @@ export async function recordRunUsage(actorRunId: string): Promise<RecordUsageRes
     const client = await getApifyClientAsync();
     const run = await client.run(actorRunId).get();
     if (!run) return { recorded: false, reason: "Run not found on Apify (deleted or wrong account)" };
-    if (run.status === "READY" || run.status === "RUNNING") {
+    if (["READY", "RUNNING", "TIMING-OUT", "ABORTING"].includes(run.status)) {
       return { recorded: false, reason: `Run still ${run.status}` };
+    }
+    // Apify's first numbers after a run ends can be preliminary. Leave the row unsynced so a later
+    // sync (usage page / syncPendingUsage) stores the final cost instead of this early figure.
+    if (run.finishedAt && Date.now() - new Date(run.finishedAt).getTime() < APIFY_USAGE_SETTLE_MS) {
+      return { recorded: false, reason: "Apify is still finalising this run's cost" };
     }
     if (typeof run.usageTotalUsd !== "number") {
       return { recorded: false, reason: "Apify has not published the cost for this run yet" };

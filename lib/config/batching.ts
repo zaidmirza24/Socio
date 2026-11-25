@@ -17,6 +17,18 @@ export const MAX_CONCURRENT_REFRESH_RUNS = 3;
  * Must be a power of two, 128 or more. If a run fails with an out-of-memory / "memory must be at
  * least" error, raise that platform's value.
  */
+/** Hard time limit for a started run (seconds). Apify aborts the run when it is reached. */
+export const APIFY_RUN_TIMEOUT_SECS = 2 * 60 * 60;
+
+/** Single-post lookups are awaited inside a request, so they get a much shorter limit. */
+export const APIFY_DIRECT_POST_TIMEOUT_SECS = 5 * 60;
+
+/** Dataset items fetched per request when reading a finished run. */
+export const APIFY_DATASET_PAGE_SIZE = 1000;
+
+/** Apify publishes final cost/stats a little after a run ends; earlier numbers can be preliminary. */
+export const APIFY_USAGE_SETTLE_MS = 30_000;
+
 export const APIFY_RUN_MEMORY_MB = {
   instagram: 1024,
   facebook: 512,

@@ -8,18 +8,33 @@ import {
   isApifyPermissionError,
 } from "../../apify/client.ts";
 import { getApifyConfig } from "../../services/integrations.ts";
-import { APIFY_RUN_MEMORY_MB } from "../../config/batching.ts";
+import {
+  APIFY_RUN_MEMORY_MB,
+  APIFY_RUN_TIMEOUT_SECS,
+  APIFY_DIRECT_POST_TIMEOUT_SECS,
+  APIFY_DATASET_PAGE_SIZE,
+} from "../../config/batching.ts";
 import { getServerEnv } from "../../env.ts";
+import { getScraperRefreshStrategy } from "../../services/settings.ts";
 import { buildRunWebhooks } from "./webhook.ts";
 
-/** Start options for a run: explicit memory, plus the end-of-run webhook when one is configured. */
-function runStartOptions(platform: PlatformType) {
+/**
+ * Start options for a run: memory, a time limit, the admin's per-run cost cap (Settings), plus the
+ * end-of-run webhook when one is configured.
+ */
+async function runStartOptions(platform: PlatformType) {
   const env = getServerEnv();
+  const { max_run_cost_usd } = await getScraperRefreshStrategy();
   const webhooks = buildRunWebhooks({
     baseUrl: env.APIFY_WEBHOOK_BASE_URL,
     secret: env.APIFY_WEBHOOK_SECRET,
   });
-  return { memory: APIFY_RUN_MEMORY_MB[platform], ...(webhooks.length > 0 ? { webhooks } : {}) };
+  return {
+    memory: APIFY_RUN_MEMORY_MB[platform],
+    timeout: APIFY_RUN_TIMEOUT_SECS,
+    ...(max_run_cost_usd ? { maxTotalChargeUsd: max_run_cost_usd } : {}),
+    ...(webhooks.length > 0 ? { webhooks } : {}),
+  };
 }
 import { buildDiscoveryRunInput } from "../discovery-input.ts";
 import { normalizeApifyInstagramDataset, type AdapterResult } from "./adapter.ts";
@@ -96,11 +111,11 @@ export class ApifyScraperProvider implements IScraperProvider {
     if (taskId && platform === "instagram") {
       executionMode = "task";
       executionTarget = taskId;
-      run = await client.task(taskId).start(dynamicInput, runStartOptions(platform));
+      run = await client.task(taskId).start(dynamicInput, await runStartOptions(platform));
     } else {
       executionMode = "actor";
       executionTarget = targetActorId;
-      run = await client.actor(targetActorId).start(dynamicInput, runStartOptions(platform));
+      run = await client.actor(targetActorId).start(dynamicInput, await runStartOptions(platform));
     }
 
     return {
@@ -149,7 +164,7 @@ export class ApifyScraperProvider implements IScraperProvider {
       targetActorId = apifyConfig.actors[platform].refresh;
     }
 
-    const run = await client.actor(targetActorId).start(dynamicInput, runStartOptions(platform));
+    const run = await client.actor(targetActorId).start(dynamicInput, await runStartOptions(platform));
 
     return {
       success: true,
@@ -180,13 +195,21 @@ export class ApifyScraperProvider implements IScraperProvider {
         platform === "instagram"
           ? { username: [postUrl], resultsLimit: 1 } // actor requires `username`; accepts post URLs
           : getPlatformAdapter(platform).buildRefreshInput([postUrl]);
-      const run = await client.actor(apifyConfig.actors[platform].refresh).call(input, { memory: APIFY_RUN_MEMORY_MB[platform] });
+      // This runs inside a request, so bound it: a stuck actor must not hang the caller.
+      const { max_run_cost_usd } = await getScraperRefreshStrategy();
+      const run = await client.actor(apifyConfig.actors[platform].refresh).call(input, {
+        memory: APIFY_RUN_MEMORY_MB[platform],
+        timeout: APIFY_DIRECT_POST_TIMEOUT_SECS,
+        waitSecs: APIFY_DIRECT_POST_TIMEOUT_SECS,
+        ...(max_run_cost_usd ? { maxTotalChargeUsd: max_run_cost_usd } : {}),
+      });
 
-      if (!run.defaultDatasetId) {
+      if (run.status !== "SUCCEEDED" || !run.defaultDatasetId) {
         return null;
       }
 
-      const dataset = await client.dataset(run.defaultDatasetId).listItems({ clean: true });
+      const items = await this.fetchDatasetItems(run.defaultDatasetId);
+      const dataset = { items };
       await deleteApifyDataset(run.defaultDatasetId);
 
       const normalized =
@@ -271,8 +294,18 @@ export class ApifyScraperProvider implements IScraperProvider {
    */
   async fetchDatasetItems(datasetId: string): Promise<unknown[]> {
     const client = await getApifyClientAsync();
-    const dataset = await client.dataset(datasetId).listItems({ clean: true });
-    return dataset.items || [];
+    // Read in pages: one request for a whole day's items (thousands of raw posts) is slow and can
+    // time out. `total` comes back with every page, so stop once we have it all.
+    const items: unknown[] = [];
+    for (let offset = 0; ; offset += APIFY_DATASET_PAGE_SIZE) {
+      const page = await client
+        .dataset(datasetId)
+        .listItems({ clean: true, offset, limit: APIFY_DATASET_PAGE_SIZE });
+      items.push(...(page.items ?? []));
+      // `clean` can drop empty items, so a page may be shorter than the limit; rely on offset vs total.
+      if (page.total <= offset + APIFY_DATASET_PAGE_SIZE || page.count === 0) break;
+    }
+    return items;
   }
 
   /**

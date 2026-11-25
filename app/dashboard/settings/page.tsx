@@ -75,11 +75,13 @@ export default function SettingsPage() {
     refresh_interval_days: number;
     cutoff_days: number;
     discovery_post_limit: number;
+    max_run_cost_usd: number | null;
   }>({
     mode: "30_day_cutoff",
     refresh_interval_days: 7,
     cutoff_days: 30,
     discovery_post_limit: 10,
+    max_run_cost_usd: null,
   });
   const [strategyStats, setStrategyStats] = useState<{
     totalTrackedPosts: number;
@@ -110,6 +112,8 @@ export default function SettingsPage() {
   const handleToggleCaptions = async (enabled: boolean) => {
     setSavingFeature(true);
     setFeatureNotice(null);
+    const previous = captionsEnabled;
+    setCaptionsEnabled(enabled); // optimistic: the switch moves instantly
     try {
       const res = await fetch("/api/admin/settings", {
         method: "POST",
@@ -126,6 +130,7 @@ export default function SettingsPage() {
         message: next ? "Caption filter is on. Stored posts are being labelled against your captions." : "Caption filter is off. All posts are kept and no matching is done.",
       });
     } catch (err: unknown) {
+      setCaptionsEnabled(previous);
       setFeatureNotice({
         type: "error",
         message: err instanceof Error ? err.message : "Error updating feature setting",
@@ -160,10 +165,12 @@ export default function SettingsPage() {
     if (platformKey === "instagram") return; // Instagram is always collected; its switch is locked.
     setSavingPlatform(true);
     setPlatformNotice(null);
+    const previousSettings = platformSettings;
     const updated = {
       ...platformSettings,
       [platformKey]: { enabled: newEnabled },
     };
+    setPlatformSettings(updated); // optimistic: the switch moves instantly
     try {
       const res = await fetch("/api/admin/settings", {
         method: "POST",
@@ -179,6 +186,7 @@ export default function SettingsPage() {
         message: `${name} is now ${newEnabled ? "on" : "off"}. ${newEnabled ? "It will be included the next time you run “Collect data”." : "It will be skipped on future runs; stored posts are kept."}`,
       });
     } catch (err: unknown) {
+      setPlatformSettings(previousSettings);
       setPlatformNotice({
         type: "error",
         message: err instanceof Error ? err.message : "Error updating platform setting",
@@ -591,6 +599,29 @@ export default function SettingsPage() {
                 className={numberInput}
               />
               <span className="text-xs text-slate-500">Upper limit for “Today’s new posts”. 6–8 is typical.</span>
+            </div>
+            <div>
+              <label htmlFor="max-run-cost" className="mb-1 block text-sm font-medium text-slate-800">
+                Max cost per run (USD)
+              </label>
+              <input
+                id="max-run-cost"
+                type="number"
+                min={0.5}
+                max={1000}
+                step="0.5"
+                placeholder="No limit"
+                disabled={!isAdmin}
+                value={strategy.max_run_cost_usd ?? ""}
+                onChange={(e) => {
+                  const n = parseFloat(e.target.value);
+                  setStrategy((prev) => ({ ...prev, max_run_cost_usd: Number.isFinite(n) && n > 0 ? n : null }));
+                }}
+                className={numberInput}
+              />
+              <span className="text-xs text-slate-500">
+                Safety stop: Apify ends a run that reaches this cost, so it may save only part of the data. Leave empty for no limit. Applies to new runs; existing schedules pick it up on “Re-sync”.
+              </span>
             </div>
           </div>
 

@@ -96,7 +96,47 @@ export function parseApifyError(err: unknown): { message: string; statusCode: nu
 
   if (err instanceof Error) {
     const msg = err.message.toLowerCase();
+    // apify-client throws ApifyApiError carrying Apify's own error `type` and HTTP status; prefer
+    // those over guessing from the message text.
+    const { statusCode, type } = err as { statusCode?: unknown; type?: unknown };
+    const code = typeof statusCode === "number" ? statusCode : null;
+    const errorType = typeof type === "string" ? type : null;
 
+    if (code === 401 || errorType === "invalid-token" || errorType === "token-not-provided") {
+      return {
+        message:
+          "Apify API authentication failed. Your APIFY_API_TOKEN may be invalid or expired. " +
+          "Please verify it at https://console.apify.com/account/integrations",
+        statusCode: 401,
+      };
+    }
+    if (code === 404 || errorType === "record-not-found") {
+      return {
+        message:
+          "The Apify Task or Actor was not found. Please verify your APIFY_TASK_ID or APIFY_ACTOR_ID " +
+          "in .env.local matches an existing resource in your Apify console.",
+        statusCode: 404,
+      };
+    }
+    if (code === 429 || errorType === "rate-limit-exceeded") {
+      return {
+        message: "Apify rate limit exceeded. Please wait a few minutes before triggering another scraper run.",
+        statusCode: 429,
+      };
+    }
+    if (code === 402) {
+      return {
+        message:
+          "Apify account has insufficient credits or a billing issue. " +
+          "Please check your plan at https://console.apify.com/billing",
+        statusCode: 402,
+      };
+    }
+    if (code !== null) {
+      return { message: `Apify error: ${err.message}`, statusCode: code >= 400 && code < 600 ? code : 500 };
+    }
+
+    // No Apify status (network failures, plain errors): fall back to the message text.
     // Authentication errors
     if (msg.includes("401") || msg.includes("unauthorized") || msg.includes("invalid token")) {
       return {

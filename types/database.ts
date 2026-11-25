@@ -276,6 +276,8 @@ export interface ScraperRefreshStrategy {
   refresh_interval_days: number;
   cutoff_days: number;
   discovery_post_limit: number;
+  /** Most one Apify run may cost in USD. null = no cap. Sent to Apify as `maxTotalChargeUsd`. */
+  max_run_cost_usd: number | null;
 }
 
 export interface SystemSetting<T = unknown> {
