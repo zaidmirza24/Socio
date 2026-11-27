@@ -540,6 +540,10 @@ export async function processIngestion(
         errors.push(
           `Failed to upsert matched_post ${post.platform_post_id}: ${matchedPostError?.message}`
         );
+        // Still store the post and today's snapshot (nothing is discarded). The label is left as
+        // is: there is no matched_posts row to back a 'matched' label. The run ends 'partial', and
+        // re-ingesting it labels the post properly once the matched_posts write succeeds.
+        await keep();
         return;
       }
 

@@ -18,18 +18,9 @@ const nextConfig = {
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },
-  images: {
-    remotePatterns: [
-      {
-        protocol: "https",
-        hostname: "**.cdninstagram.com",
-      },
-      {
-        protocol: "https",
-        hostname: "**.fbcdn.net",
-      },
-    ],
-  },
+  // No remote image patterns on purpose: nothing uses next/image, and allowing remote hosts keeps
+  // the /_next/image optimizer reachable without login (it is outside the auth middleware) while
+  // Next 14 has open optimizer advisories. Thumbnails are plain <img> tags.
 };
 
 export default nextConfig;
