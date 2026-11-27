@@ -1,4 +1,4 @@
-import { createAdminClient } from "../supabase/admin.ts";
+import { createAdminClient, type AdminClient } from "../supabase/admin.ts";
 import type { ScraperRefreshStrategy } from "../../types/database.ts";
 
 export const DEFAULT_REFRESH_STRATEGY: ScraperRefreshStrategy = {
@@ -26,8 +26,8 @@ export const DEFAULT_PLATFORM_SETTINGS: SystemPlatformSettings = {
  * use their defaults). A database error THROWS: silently falling back to defaults would e.g. turn
  * Facebook/X off for a run, or let an update overwrite the real settings with defaults.
  */
-async function readSetting(key: string): Promise<unknown | null> {
-  const supabase = createAdminClient();
+async function readSetting(key: string, client?: AdminClient): Promise<unknown | null> {
+  const supabase = client ?? createAdminClient();
   const { data, error } = await supabase.from("system_settings").select("value").eq("key", key).maybeSingle();
   if (error) {
     throw new Error(`Could not read setting '${key}': ${error.message}`);
@@ -93,9 +93,12 @@ export const DEFAULT_FEATURE_SETTINGS: FeatureSettings = {
   campaign_captions_enabled: true,
 };
 
-/** Loads feature on/off flags from system_settings (defaults to everything on). */
-export async function getFeatureSettings(): Promise<FeatureSettings> {
-  const raw = await readSetting("feature_settings");
+/**
+ * Loads feature on/off flags from system_settings (defaults to everything on).
+ * `client` lets ingestion read through the same database client it writes with (tests pass one).
+ */
+export async function getFeatureSettings(client?: AdminClient): Promise<FeatureSettings> {
+  const raw = await readSetting("feature_settings", client);
   if (!raw) return DEFAULT_FEATURE_SETTINGS;
   const val = raw as Partial<FeatureSettings>;
   return {

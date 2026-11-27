@@ -1,4 +1,4 @@
-import { createAdminClient } from "../supabase/admin.ts";
+import { createAdminClient, type AdminClient } from "../supabase/admin.ts";
 import { formatDate } from "../utils.ts";
 import { applyDayWindowAndCap } from "../utils/day-window.ts";
 import { fetchAllRows, chunk } from "../supabase/paginate.ts";
@@ -7,7 +7,7 @@ import { getFeatureSettings } from "./settings.ts";
 import { RunGainAccumulator, type RunGain } from "../metrics/run-gain.ts";
 import type { AdapterResult } from "../collectors/instagram.ts";
 import type { PlatformType, RunStatus, ScraperJobType, PostMatchStatus } from "../../types/database.ts";
-import { routePost } from "./post-routing.ts";
+import { routePost, type FinalMatch } from "./post-routing.ts";
 import {
   matchCaption,
   type MatchableCaption,
@@ -48,6 +48,8 @@ export interface IngestionOptions {
    * Defaults to now.
    */
   dayWindowAnchor?: Date;
+  /** Database client to use. Defaults to the service-role client; tests pass a local database. */
+  db?: AdminClient;
 }
 
 export interface IngestionSummary {
@@ -81,7 +83,7 @@ export async function processIngestion(
   data: AdapterResult,
   options: IngestionOptions = {}
 ): Promise<IngestionSummary> {
-  const supabase = createAdminClient();
+  const supabase = options.db ?? createAdminClient();
   const targetDate = options.targetDate ?? formatDate();
   const startTime = new Date().toISOString();
   const errors: string[] = [];
@@ -323,115 +325,34 @@ export async function processIngestion(
       }
     }
 
-    // Upserts a post + today's snapshot into posts/post_snapshots (idempotent).
-    // Returns true when the snapshot was written; failures are recorded in `errors`
-    // so a post can never be silently "tracked" yet missing from the dashboard.
-    // `label` sets the caption-match label. When omitted the existing label is left untouched
-    // (a new post starts as 'unmatched' via the column default).
-    const mirrorToPosts = async (
-      post: AdapterResult["posts"][number],
-      accountId: string,
-      label?: PostLabel
-    ): Promise<boolean> => {
-      try {
-        const nowIso = new Date().toISOString();
-        const { data: legacyPost, error: postErr } = await supabase
-          .from("posts")
-          .upsert(
-            {
-              account_id: accountId,
-              platform: post.platform,
-              platform_post_id: post.platform_post_id,
-              url: post.url,
-              caption: post.caption,
-              media_type: post.media_type,
-              posted_at: post.posted_at,
-              last_seen_at: nowIso,
-              last_metrics_refresh_at: nowIso,
-              thumbnail_url: post.thumbnail_url ?? null,
-              ...(label
-                ? {
-                    match_status: label.matchStatus,
-                    matched_caption_id: label.captionId,
-                    ...matchDiagnosticsColumns(label.diagnostics),
-                  }
-                : {}),
-            },
-            {
-              onConflict: "platform,platform_post_id",
-            }
-          )
-          .select("id")
-          .single();
-
-        if (!legacyPost) {
-          errors.push(
-            `Failed to save post ${post.platform_post_id} for the dashboard: ${postErr?.message ?? "no row returned"}`
-          );
-          return false;
-        }
-
-        // The latest snapshot stored BEFORE this write (today's own, if an earlier run already
-        // saved one, otherwise the most recent earlier day). Used only for the run's gain summary.
-        const { data: prevSnap } = await supabase
-          .from("post_snapshots")
-          .select("likes, comments, views")
-          .eq("post_id", legacyPost.id)
-          .lte("snapshot_date", targetDate)
-          .order("snapshot_date", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        const { error: snapErr } = await supabase.from("post_snapshots").upsert(
-          {
-            post_id: legacyPost.id,
-            snapshot_date: targetDate,
-            // Null = not measured this time: omitted so it cannot overwrite today's earlier value.
-            ...measuredOnly({
-              likes: post.metrics.likes,
-              comments: post.metrics.comments,
-              shares: post.metrics.shares,
-              views: post.metrics.views,
-              quotes: post.metrics.quotes ?? null,
-            }),
-            // The full vendor payload is kept once (first snapshot of the post) for debugging;
-            // storing it every day for every post would grow by tens of GB over a campaign.
-            ...(prevSnap ? {} : { raw_json: post.raw_json }),
-          },
-          {
-            onConflict: "post_id,snapshot_date",
-          }
-        );
-        if (snapErr) {
-          errors.push(
-            `Failed to save snapshot for post ${post.platform_post_id}: ${snapErr.message}`
-          );
-          return false;
-        }
-        runGain.record(
-          { url: post.url, handle: post.account_handle, platform: post.platform },
-          prevSnap
-            ? { likes: prevSnap.likes ?? null, comments: prevSnap.comments ?? null, views: prevSnap.views ?? null }
-            : null,
-          { likes: post.metrics.likes, comments: post.metrics.comments, views: post.metrics.views }
-        );
-        return true;
-      } catch (err: unknown) {
-        errors.push(
-          `Failed to mirror post ${post.platform_post_id}: ${err instanceof Error ? err.message : String(err)}`
-        );
-        return false;
-      }
-    };
-
     // Feature flag: when Campaign Captions is OFF, skip matching and keep every post.
     // When ON, every post is STILL kept (with its engagement history); matching only labels it
     // matched / needs review / not matched.
-    const { campaign_captions_enabled: captionMatchingEnabled } = await getFeatureSettings();
+    const { campaign_captions_enabled: captionMatchingEnabled } = await getFeatureSettings(supabase);
 
-    // 6. Process posts through the Matching Engine (labels, never discards)
+    // 6. Decide what happens to each post (in memory), then write every table in bulk.
+    // Writes are grouped and chunked (writeRows), so a run costs a handful of round-trips per
+    // 500 posts instead of 3-6 per post. Every write is still an idempotent upsert.
+    type Post = AdapterResult["posts"][number];
+    interface Planned {
+      post: Post;
+      accountId: string;
+      /** Label to write on `posts`; undefined leaves the stored label untouched. */
+      label?: PostLabel;
+      review?: { captionId: string; confidence: number };
+      track?: { captionId: string; normalizedCaption: string; tier: FinalMatch["tier"]; confidence: number };
+      /** Whether keeping this post counts toward postsMatched/snapshotsCreated (tracked posts are counted via matched_posts). */
+      counts: boolean;
+    }
+
+    // The same post twice in one dataset would make a bulk upsert touch one row twice (an error),
+    // so keep only its last occurrence (what sequential processing ended up storing).
+    const uniquePosts = new Map<string, Post>();
+    for (const post of data.posts) uniquePosts.set(`${post.platform}:${post.platform_post_id}`, post);
+
     const unknownHandles = new Set<string>();
-    const processPost = async (post: AdapterResult["posts"][number]): Promise<void> => {
+    const planned: Planned[] = [];
+    for (const post of Array.from(uniquePosts.values())) {
       const handleLower = post.account_handle.toLowerCase();
       const accountId = accountIdMap.get(`${post.platform}:${handleLower}`);
       if (!accountId) {
@@ -439,198 +360,248 @@ export async function processIngestion(
         // the run log shows it instead of the post vanishing without a trace.
         postsDiscarded++;
         unknownHandles.add(`${post.platform}:${handleLower}`);
-        return;
+        continue;
       }
-
-      const postKey = `${post.platform}:${post.platform_post_id}`;
-      const existingStatus = existingReviewStatusMap.get(postKey);
-      const route = routePost({
-        captionMatchingEnabled,
-        existingReviewStatus: existingStatus,
-        // Two-tier matching with temporal embargo. Daily captions: a post only matches the caption
-        // released on the same (IST) day.
-        match: () =>
-          matchCaption(post.caption, activeCaptions, approvedVariants, {
-            postedAt: post.posted_at,
-            sameDayOnly: true,
-          }),
-      });
-
-      const keep = async (label?: PostLabel): Promise<void> => {
-        if (await mirrorToPosts(post, accountId, label)) {
-          postsMatched++;
-          snapshotsCreated++;
-        }
-      };
-
-      if (route.action === "store_unlabelled") {
-        // Caption filter OFF: no matching; the post keeps its existing label.
-        await keep();
-        return;
-      }
-
-      if (route.action === "label") {
-        // rejected (admin decision, never re-queued) / unmatched / matched via earlier approval
-        await keep({ matchStatus: route.matchStatus, captionId: route.captionId, diagnostics: route.diagnostics });
-        return;
-      }
-
-      if (route.action === "queue_review") {
-        const { error: queueError } = await supabase
-          .from("review_queue")
-          .upsert(
-            {
-              caption_id: route.captionId,
-              account_id: accountId,
-              platform: post.platform,
-              platform_post_id: post.platform_post_id,
-              post_url: post.url,
-              candidate_caption: post.caption ?? "",
-              similarity_score: route.confidence,
-              // `status` is deliberately omitted: a new row gets the column default
-              // ('pending') and an existing row keeps the admin's decision, even one made
-              // while this run was in progress.
-            },
-            {
-              onConflict: "platform,platform_post_id",
-            }
-          );
-
-        if (queueError) {
-          errors.push(`Failed to queue post ${post.platform_post_id} for review: ${queueError.message}`);
-        } else {
-          reviewsQueued++;
-          if (!existingStatus) existingReviewStatusMap.set(postKey, "pending");
-        }
-        // Keep the post and its engagement while it waits for review
-        await keep({ matchStatus: "needs_review", captionId: route.captionId, diagnostics: route.diagnostics });
-        return;
-      }
-
-      const matchResult = route.match;
-
-      // --- CASE 3: Tier 1 Exact Match or Approved Variant -> MATCHED_POSTS ---
-      const nowIso = new Date().toISOString();
-      const { data: matchedPost, error: matchedPostError } = await supabase
-        .from("matched_posts")
-        .upsert(
-          {
-            caption_id: matchResult.captionId,
-            account_id: accountId,
-            platform: post.platform,
-            platform_post_id: post.platform_post_id,
-            post_url: post.url,
-            normalized_caption: matchResult.normalizedCaption,
-            match_tier: matchResult.tier,
-            match_confidence: matchResult.confidence,
-            tracking_status: "tracking",
-            posted_at: post.posted_at,
-            last_seen_at: nowIso,
-            last_metrics_refresh_at: nowIso,
-            thumbnail_url: post.thumbnail_url ?? null,
-          },
-          {
-            onConflict: "platform,platform_post_id",
-          }
-        )
-        .select("id")
-        .single();
-
-      if (matchedPostError || !matchedPost) {
-        errors.push(
-          `Failed to upsert matched_post ${post.platform_post_id}: ${matchedPostError?.message}`
-        );
-        // Still store the post and today's snapshot (nothing is discarded). The label is left as
-        // is: there is no matched_posts row to back a 'matched' label. The run ends 'partial', and
-        // re-ingesting it labels the post properly once the matched_posts write succeeds.
-        await keep();
-        return;
-      }
-
-      postsMatched++;
-
-      // Compute engagement deltas from previous snapshot
-      const { data: prevSnapshot } = await supabase
-        .from("metric_snapshots")
-        .select("likes, comments, views, shares")
-        .eq("post_id", matchedPost.id)
-        .lt("snapshot_date", targetDate)
-        .order("snapshot_date", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      const prevLikes = prevSnapshot?.likes ?? null;
-      const prevComments = prevSnapshot?.comments ?? null;
-      const prevViews = prevSnapshot?.views ?? null;
-      const prevShares = (prevSnapshot as { shares?: number | null } | null)?.shares ?? null;
-
-      // Growth is null (not 0) when either side was not measured.
-      const deltaLikes = growthOrNull(post.metrics.likes, prevLikes);
-      const deltaComments = growthOrNull(post.metrics.comments, prevComments);
-      const deltaViews = growthOrNull(post.metrics.views, prevViews);
-      const deltaShares = growthOrNull(post.metrics.shares, prevShares);
-
-      // Upsert daily point-in-time metric snapshot
-      const snapshotSource = options.jobType === "refresh" ? "weekly_refresh" : "daily_batch";
-      const { error: snapshotError } = await supabase
-        .from("metric_snapshots")
-        .upsert(
-          {
-            post_id: matchedPost.id,
-            snapshot_date: targetDate,
-            ...measuredOnly({
-              likes: post.metrics.likes,
-              comments: post.metrics.comments,
-              views: post.metrics.views,
-              shares: post.metrics.shares ?? null,
+      try {
+        const route = routePost({
+          captionMatchingEnabled,
+          existingReviewStatus: existingReviewStatusMap.get(`${post.platform}:${post.platform_post_id}`),
+          // Two-tier matching with temporal embargo. Daily captions: a post only matches the caption
+          // released on the same (IST) day.
+          match: () =>
+            matchCaption(post.caption, activeCaptions, approvedVariants, {
+              postedAt: post.posted_at,
+              sameDayOnly: true,
             }),
-            delta_likes: deltaLikes,
-            delta_comments: deltaComments,
-            delta_views: deltaViews,
-            delta_shares: deltaShares,
-            source: snapshotSource,
-            fetched_at: nowIso,
-          },
-          {
-            onConflict: "post_id,snapshot_date",
-          }
-        );
-
-      if (snapshotError) {
+        });
+        if (route.action === "store_unlabelled") {
+          // Caption filter OFF: no matching; the post keeps its existing label.
+          planned.push({ post, accountId, counts: true });
+        } else if (route.action === "label") {
+          // rejected (admin decision, never re-queued) / unmatched / matched via earlier approval
+          planned.push({
+            post,
+            accountId,
+            counts: true,
+            label: { matchStatus: route.matchStatus, captionId: route.captionId, diagnostics: route.diagnostics },
+          });
+        } else if (route.action === "queue_review") {
+          // Keep the post and its engagement while it waits for review
+          planned.push({
+            post,
+            accountId,
+            counts: true,
+            review: { captionId: route.captionId, confidence: route.confidence },
+            label: { matchStatus: "needs_review", captionId: route.captionId, diagnostics: route.diagnostics },
+          });
+        } else {
+          // Tier 1 exact match or approved variant -> matched_posts + metric_snapshots
+          planned.push({
+            post,
+            accountId,
+            counts: false,
+            track: {
+              captionId: route.match.captionId,
+              normalizedCaption: route.match.normalizedCaption,
+              tier: route.match.tier,
+              confidence: route.match.confidence,
+            },
+            label: { matchStatus: "matched", captionId: route.match.captionId, diagnostics: route.diagnostics },
+          });
+        }
+      } catch (postErr: unknown) {
         errors.push(
-          `Failed to record metric snapshot for post ${post.platform_post_id}: ${snapshotError.message}`
+          `Failed to process post ${post.platform_post_id}: ${postErr instanceof Error ? postErr.message : String(postErr)}`
         );
-      } else {
+      }
+    }
+
+    const nowIso = new Date().toISOString();
+
+    // 6a. Review queue. `status` is deliberately omitted: a new row gets the column default
+    // ('pending') and an existing row keeps the admin's decision, even one made mid-run.
+    const toReview = planned.filter((p) => p.review);
+    const reviewResults = await writeRows(
+      supabase,
+      "review_queue",
+      toReview.map((p) => ({
+        caption_id: p.review!.captionId,
+        account_id: p.accountId,
+        platform: p.post.platform,
+        platform_post_id: p.post.platform_post_id,
+        post_url: p.post.url,
+        candidate_caption: p.post.caption ?? "",
+        similarity_score: p.review!.confidence,
+      })),
+      "platform,platform_post_id",
+      null
+    );
+    reviewResults.forEach((r, i) => {
+      if (r.ok) reviewsQueued++;
+      else errors.push(`Failed to queue post ${toReview[i].post.platform_post_id} for review: ${r.error}`);
+    });
+
+    // 6b. matched_posts for tracked posts.
+    const toTrack = planned.filter((p) => p.track);
+    const trackResults = await writeRows(
+      supabase,
+      "matched_posts",
+      toTrack.map((p) => ({
+        caption_id: p.track!.captionId,
+        account_id: p.accountId,
+        platform: p.post.platform,
+        platform_post_id: p.post.platform_post_id,
+        post_url: p.post.url,
+        normalized_caption: p.track!.normalizedCaption,
+        match_tier: p.track!.tier,
+        match_confidence: p.track!.confidence,
+        tracking_status: "tracking",
+        posted_at: p.post.posted_at,
+        last_seen_at: nowIso,
+        last_metrics_refresh_at: nowIso,
+        thumbnail_url: p.post.thumbnail_url ?? null,
+      })),
+      "platform,platform_post_id",
+      "id"
+    );
+    const tracked: Array<{ plan: Planned; matchedPostId: string }> = [];
+    trackResults.forEach((r, i) => {
+      const plan = toTrack[i];
+      const id = r.ok ? (r.row?.id as string | undefined) : undefined;
+      if (id) {
+        postsMatched++;
+        tracked.push({ plan, matchedPostId: id });
+        return;
+      }
+      errors.push(`Failed to upsert matched_post ${plan.post.platform_post_id}: ${r.ok ? "no row returned" : r.error}`);
+      // Still store the post and today's snapshot (nothing is discarded). The label is left as
+      // is: there is no matched_posts row to back a 'matched' label. The run ends 'partial', and
+      // re-ingesting it labels the post properly once the matched_posts write succeeds.
+      plan.label = undefined;
+      plan.track = undefined;
+      plan.counts = true;
+    });
+
+    // 6c. metric_snapshots for tracked posts, with deltas against the previous day's values.
+    // Growth is null (not 0) when either side was not measured.
+    const prevMetrics = await latestSnapshotBefore<{ likes: number | null; comments: number | null; views: number | null; shares: number | null }>(
+      supabase,
+      "metric_snapshots",
+      "likes, comments, views, shares",
+      tracked.map((t) => t.matchedPostId),
+      targetDate,
+      false,
+      (msg) => errors.push(msg)
+    );
+    const snapshotSource = options.jobType === "refresh" ? "weekly_refresh" : "daily_batch";
+    const metricResults = await writeRows(
+      supabase,
+      "metric_snapshots",
+      tracked.map(({ plan, matchedPostId }) => {
+        const m = plan.post.metrics;
+        const prev = prevMetrics.get(matchedPostId);
+        return {
+          post_id: matchedPostId,
+          snapshot_date: targetDate,
+          ...measuredOnly({ likes: m.likes, comments: m.comments, views: m.views, shares: m.shares ?? null }),
+          delta_likes: growthOrNull(m.likes, prev?.likes ?? null),
+          delta_comments: growthOrNull(m.comments, prev?.comments ?? null),
+          delta_views: growthOrNull(m.views, prev?.views ?? null),
+          delta_shares: growthOrNull(m.shares, prev?.shares ?? null),
+          source: snapshotSource,
+          fetched_at: nowIso,
+        };
+      }),
+      "post_id,snapshot_date",
+      null
+    );
+    metricResults.forEach((r, i) => {
+      if (r.ok) snapshotsCreated++;
+      else errors.push(`Failed to record metric snapshot for post ${tracked[i].plan.post.platform_post_id}: ${r.error}`);
+    });
+
+    // 6d. Every post (all routes) into `posts`. `label` absent = existing label untouched (a new
+    // post starts as 'unmatched' via the column default).
+    const postResults = await writeRows(
+      supabase,
+      "posts",
+      planned.map(({ post, accountId, label }) => ({
+        account_id: accountId,
+        platform: post.platform,
+        platform_post_id: post.platform_post_id,
+        url: post.url,
+        caption: post.caption,
+        media_type: post.media_type,
+        posted_at: post.posted_at,
+        last_seen_at: nowIso,
+        last_metrics_refresh_at: nowIso,
+        thumbnail_url: post.thumbnail_url ?? null,
+        ...(label
+          ? { match_status: label.matchStatus, matched_caption_id: label.captionId, ...matchDiagnosticsColumns(label.diagnostics) }
+          : {}),
+      })),
+      "platform,platform_post_id",
+      "id"
+    );
+    const stored: Array<{ plan: Planned; postId: string }> = [];
+    postResults.forEach((r, i) => {
+      const id = r.ok ? (r.row?.id as string | undefined) : undefined;
+      if (id) stored.push({ plan: planned[i], postId: id });
+      else
+        errors.push(
+          `Failed to save post ${planned[i].post.platform_post_id} for the dashboard: ${r.ok ? "no row returned" : r.error}`
+        );
+    });
+
+    // 6e. Today's snapshot per post. The latest snapshot stored BEFORE this write (today's own if
+    // an earlier run saved one, else the most recent earlier day) feeds the run's gain summary.
+    const prevSnaps = await latestSnapshotBefore<{ likes: number | null; comments: number | null; views: number | null }>(
+      supabase,
+      "post_snapshots",
+      "likes, comments, views",
+      stored.map((s) => s.postId),
+      targetDate,
+      true,
+      (msg) => errors.push(msg)
+    );
+    const snapResults = await writeRows(
+      supabase,
+      "post_snapshots",
+      stored.map(({ plan, postId }) => ({
+        post_id: postId,
+        snapshot_date: targetDate,
+        // Null = not measured this time: omitted so it cannot overwrite today's earlier value.
+        ...measuredOnly({
+          likes: plan.post.metrics.likes,
+          comments: plan.post.metrics.comments,
+          shares: plan.post.metrics.shares,
+          views: plan.post.metrics.views,
+          quotes: plan.post.metrics.quotes ?? null,
+        }),
+        // The full vendor payload is kept once (first snapshot of the post) for debugging;
+        // storing it every day for every post would grow by tens of GB over a campaign.
+        ...(prevSnaps.has(postId) ? {} : { raw_json: plan.post.raw_json }),
+      })),
+      "post_id,snapshot_date",
+      null
+    );
+    snapResults.forEach((r, i) => {
+      const { plan, postId } = stored[i];
+      if (!r.ok) {
+        errors.push(`Failed to save snapshot for post ${plan.post.platform_post_id}: ${r.error}`);
+        return;
+      }
+      if (plan.counts) {
+        postsMatched++;
         snapshotsCreated++;
       }
-
-      // Also mirror to legacy posts/post_snapshots for backwards compatibility
-      // with current dashboard views
-      await mirrorToPosts(post, accountId, {
-        matchStatus: "matched",
-        captionId: matchResult.captionId,
-        diagnostics: route.diagnostics,
-      });
-    };
-
-    // Process posts a few at a time: thousands of posts x several DB round-trips each would be
-    // slow one-by-one. Every write is an idempotent upsert, so concurrency cannot create
-    // duplicates; counters are only touched on the single JS thread.
-    const POST_CONCURRENCY = 8;
-    let nextIndex = 0;
-    const worker = async (): Promise<void> => {
-      while (nextIndex < data.posts.length) {
-        const post = data.posts[nextIndex++];
-        try {
-          await processPost(post);
-        } catch (postErr: unknown) {
-          errors.push(
-            `Failed to process post ${post.platform_post_id}: ${postErr instanceof Error ? postErr.message : String(postErr)}`
-          );
-        }
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(POST_CONCURRENCY, data.posts.length) }, () => worker()));
+      const prev = prevSnaps.get(postId);
+      runGain.record(
+        { url: plan.post.url, handle: plan.post.account_handle, platform: plan.post.platform },
+        prev ? { likes: prev.likes ?? null, comments: prev.comments ?? null, views: prev.views ?? null } : null,
+        { likes: plan.post.metrics.likes, comments: plan.post.metrics.comments, views: plan.post.metrics.views }
+      );
+    });
 
     if (unknownHandles.size > 0) {
       console.warn(
@@ -716,4 +687,114 @@ export async function processIngestion(
       errors,
     };
   }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Bulk write helpers
+// ─────────────────────────────────────────────────────────────
+
+type DbRow = Record<string, unknown>;
+export type WriteResult = { ok: true; row: DbRow | null } | { ok: false; error: string };
+
+/** Rows per bulk upsert. Keeps request bodies and statement sizes modest. */
+const WRITE_CHUNK = 500;
+/** Post ids per `.in()` lookup (each uuid adds ~37 characters to the request URL). */
+const LOOKUP_CHUNK = 100;
+
+/**
+ * Idempotent bulk upsert with per-row results, in input order.
+ *
+ * - Rows are grouped by their exact set of columns: a bulk upsert writes the union of columns and
+ *   would set a column missing from one row to NULL (e.g. erase a measured metric or a label).
+ * - Each group is written in chunks; a chunk that fails is retried row by row, so one bad row
+ *   cannot fail its neighbours and every failure is reported against its own row.
+ * - With `returning`, each result carries its returned row (matched back by the conflict key).
+ * The caller must not pass two rows with the same conflict key (Postgres rejects that).
+ */
+export async function writeRows(
+  supabase: AdminClient,
+  table: string,
+  rows: DbRow[],
+  onConflict: string,
+  returning: string | null
+): Promise<WriteResult[]> {
+  const results: WriteResult[] = new Array(rows.length);
+  if (rows.length === 0) return results;
+
+  const keyCols = onConflict.split(",").map((c) => c.trim());
+  const keyOf = (r: DbRow) => keyCols.map((c) => String(r[c])).join("\u0000");
+  const selectCols = returning
+    ? Array.from(new Set([...returning.split(",").map((c) => c.trim()), ...keyCols])).join(", ")
+    : null;
+
+  const upsert = async (batch: DbRow[]): Promise<{ data: DbRow[] | null; error: string | null }> => {
+    const q = supabase.from(table).upsert(batch, { onConflict });
+    const { data, error } = selectCols ? await q.select(selectCols) : await q;
+    return { data: (data as DbRow[] | null) ?? null, error: error ? error.message : null };
+  };
+
+  const record = (indexes: number[], data: DbRow[] | null) => {
+    const byKey = new Map((data ?? []).map((r) => [keyOf(r), r]));
+    for (const i of indexes) results[i] = { ok: true, row: selectCols ? byKey.get(keyOf(rows[i])) ?? null : null };
+  };
+
+  const groups = new Map<string, number[]>();
+  rows.forEach((r, i) => {
+    const signature = Object.keys(r).sort().join(",");
+    const list = groups.get(signature) ?? [];
+    list.push(i);
+    groups.set(signature, list);
+  });
+
+  for (const indexes of Array.from(groups.values())) {
+    for (const part of chunk(indexes, WRITE_CHUNK)) {
+      const res = await upsert(part.map((i) => rows[i]));
+      if (!res.error) {
+        record(part, res.data);
+        continue;
+      }
+      for (const i of part) {
+        const single = await upsert([rows[i]]);
+        if (single.error) results[i] = { ok: false, error: single.error };
+        else record([i], single.data);
+      }
+    }
+  }
+  return results;
+}
+
+/**
+ * For each post id, its most recent snapshot row on/before (`inclusive`) or strictly before
+ * `targetDate`. A failed lookup is reported through `onError` and treated as "no earlier
+ * snapshot" (the run still stores everything; only the gain summary / deltas lose a baseline).
+ */
+export async function latestSnapshotBefore<T extends DbRow>(
+  supabase: AdminClient,
+  table: "post_snapshots" | "metric_snapshots",
+  columns: string,
+  postIds: string[],
+  targetDate: string,
+  inclusive: boolean,
+  onError: (message: string) => void
+): Promise<Map<string, T>> {
+  const latest = new Map<string, T>();
+  for (const part of chunk(Array.from(new Set(postIds)), LOOKUP_CHUNK)) {
+    try {
+      const rows = await fetchAllRows<T & { post_id: string }>((from, to) => {
+        const q = supabase.from(table).select(`post_id, snapshot_date, ${columns}`).in("post_id", part);
+        // The column list is built at runtime, so the client cannot type the rows; T describes them.
+        return (inclusive ? q.lte("snapshot_date", targetDate) : q.lt("snapshot_date", targetDate))
+          .order("post_id", { ascending: true })
+          .order("snapshot_date", { ascending: false })
+          .range(from, to) as unknown as PromiseLike<{
+          data: Array<T & { post_id: string }> | null;
+          error: { message: string } | null;
+        }>;
+      });
+      for (const r of rows) if (!latest.has(r.post_id)) latest.set(r.post_id, r);
+    } catch (err: unknown) {
+      onError(`Could not read earlier ${table} for ${part.length} post(s): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return latest;
 }
