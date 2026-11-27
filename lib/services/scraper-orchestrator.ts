@@ -5,6 +5,7 @@ import { getScraperRefreshStrategy, getPlatformSettings } from "./settings.ts";
 import { recordRunUsage } from "./apify-usage.ts";
 import { ApifyRunAccessError, getCurrentApifyAccountId } from "../apify/client.ts";
 import { processIngestion, type IngestionSummary } from "./ingestion.ts";
+import { acquireRunStartLock } from "./run-start-lock.ts";
 import { getScrapeBoundaryDate } from "../utils/day-window.ts";
 import { fetchAllRows } from "../supabase/paginate.ts";
 import { DIRECT_URL_BATCH_SIZE, MAX_CONCURRENT_REFRESH_RUNS } from "../config/batching.ts";
@@ -121,6 +122,48 @@ export async function findActiveRunIds(
   return (data ?? []).map((r) => r.actor_run_id as string);
 }
 
+/**
+ * Thrown when another request in this server is still starting a run of the same platform + job
+ * type (double-click, two tabs). Nothing has been logged yet, so there is no run to follow.
+ */
+export class RunStartingError extends Error {
+  constructor(platform: PlatformType, jobType: "discovery" | "refresh") {
+    super(
+      `A ${jobType === "refresh" ? "refresh" : "discovery"} run for ${platform} is being started right now. Wait a few seconds; it will show up as running.`
+    );
+    this.name = "RunStartingError";
+  }
+}
+
+/**
+ * Closes the gap between "no run is active" and "the new run is logged": that takes seconds (load
+ * accounts, start at Apify), and a second click inside it would pass the check and pay for a
+ * duplicate run. Two layers: an in-process set (double-click, two tabs on one server; no DB trip)
+ * and a database lock (two admins on separate copies of the app; see run-start-lock.ts).
+ */
+const startingRuns = new Set<string>();
+
+async function withStartLock<T>(
+  platform: PlatformType,
+  jobType: "discovery" | "refresh",
+  fn: () => Promise<T>
+): Promise<T> {
+  const key = `${platform}:${jobType}`;
+  if (startingRuns.has(key)) throw new RunStartingError(platform, jobType);
+  startingRuns.add(key);
+  try {
+    const dbLock = await acquireRunStartLock(createAdminClient(), platform, jobType);
+    if (!dbLock.acquired) throw new RunStartingError(platform, jobType);
+    try {
+      return await fn();
+    } finally {
+      await dbLock.release();
+    }
+  } finally {
+    startingRuns.delete(key);
+  }
+}
+
 async function assertNoActiveRun(platform: PlatformType, jobType: "discovery" | "refresh"): Promise<void> {
   const active = await findActiveRunIds(platform, jobType);
   const group = jobType === "refresh" ? await findPendingRefreshGroup(platform) : null;
@@ -207,6 +250,14 @@ export async function triggerDailyDiscovery(
   providerOverride?: ScraperProviderType
 ): Promise<ScraperJobTriggerResult> {
   const platform: PlatformType = options.platform || "instagram";
+  return withStartLock(platform, "discovery", () => startDiscovery(platform, options, providerOverride));
+}
+
+async function startDiscovery(
+  platform: PlatformType,
+  options: ScraperDiscoveryOptions,
+  providerOverride?: ScraperProviderType
+): Promise<ScraperJobTriggerResult> {
   await assertPlatformEnabled(platform);
   const provider = getScraperProvider(providerOverride);
   const strategy = await getScraperRefreshStrategy();
@@ -448,6 +499,14 @@ export async function getScraperRefreshEligibilityStats(
  * selects eligible post URLs whose refresh is due, and dispatches them in direct-URL batches.
  */
 export async function triggerWeeklyRefresh(
+  options: RefreshOptions = {}
+): ReturnType<typeof startRefresh> {
+  return withStartLock(options.platform || "instagram", "refresh", () => startRefresh(options));
+}
+
+type RefreshOptions = NonNullable<Parameters<typeof startRefresh>[0]>;
+
+async function startRefresh(
   options: {
     platform?: PlatformType;
     maxBatchSize?: number;

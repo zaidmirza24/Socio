@@ -1,31 +1,40 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
+import { logInternal } from "@/lib/api/errors";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createServerComponentClient } from "@/lib/supabase/server";
+import { checkCaller, verifyAdminCaller } from "@/lib/supabase/require-admin";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { processCaption } from "@/lib/matching/normalizer.ts";
 import type { CampaignCaption, CampaignCaptionStatus } from "@/types/database";
 
-async function verifyAdminCaller() {
-  const authClient = createServerComponentClient();
-  const { data: { user } } = await authClient.auth.getUser();
-  if (!user) {
-    return { authorized: false as const, error: "Authentication required." };
-  }
 
-  const adminClient = createAdminClient();
-  const { data: profile } = await adminClient
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
+// Server actions are public POST endpoints: validate their arguments at the boundary.
+const optionalDate = z
+  .string()
+  .trim()
+  .optional()
+  .refine((v) => !v || !Number.isNaN(new Date(v).getTime()), { message: "Invalid release date." });
 
-  if (!profile || profile.role !== "admin") {
-    return { authorized: false as const, error: "Only administrators can perform this action." };
-  }
+const captionInputSchema = z.object({
+  title: z.string().max(500, "Title is too long (max 500 characters)."),
+  // Generous on purpose: Facebook captions can be very long. This only stops absurd payloads.
+  canonicalCaption: z.string().max(70000, "Caption is too long."),
+  releasedAt: optionalDate,
+});
 
-  return { authorized: true as const, user, adminClient };
+const bulkCaptionsSchema = z
+  .array(captionInputSchema)
+  .max(1000, "Maximum 1000 captions per batch.");
+
+const captionStatusSchema = z.object({
+  id: z.string().uuid("Invalid caption ID."),
+  status: z.enum(["active", "archived"]),
+});
+
+function firstIssue(err: z.ZodError): string {
+  return err.issues[0]?.message ?? "Invalid input.";
 }
 
 export interface CaptionWithStats extends CampaignCaption {
@@ -42,11 +51,7 @@ export interface CaptionWithStats extends CampaignCaption {
  */
 export async function getCampaignCaptions(): Promise<CaptionWithStats[]> {
   // Server action reading with the service role: verify the caller is a signed-in team member.
-  const authClient = createServerComponentClient();
-  const {
-    data: { user },
-  } = await authClient.auth.getUser();
-  if (!user) return [];
+  if (!(await checkCaller("member")).ok) return [];
 
   const supabase = createAdminClient();
 
@@ -148,6 +153,12 @@ export async function createCampaignCaption(input: {
     return { success: false, error: auth.error };
   }
 
+  const parsed = captionInputSchema.safeParse(input);
+  if (!parsed.success) {
+    return { success: false, error: firstIssue(parsed.error) };
+  }
+  input = parsed.data;
+
   const title = input.title.trim();
   const rawCaption = input.canonicalCaption.trim();
 
@@ -193,7 +204,7 @@ export async function createCampaignCaption(input: {
   if (insertError) {
     return {
       success: false,
-      error: `Database error: ${insertError.message}`,
+      error: logInternal(insertError, "Could not save the caption. Please try again."),
     };
   }
 
@@ -243,7 +254,20 @@ export async function createCampaignCaptionsBulk(
     };
   }
 
-  if (!items || items.length === 0) {
+  const parsedItems = bulkCaptionsSchema.safeParse(items);
+  if (!parsedItems.success) {
+    return {
+      success: false,
+      error: firstIssue(parsedItems.error),
+      totalSubmitted: Array.isArray(items) ? items.length : 0,
+      insertedCount: 0,
+      skippedDuplicatesCount: 0,
+      insertedCaptions: [],
+    };
+  }
+  items = parsedItems.data;
+
+  if (items.length === 0) {
     return {
       success: false,
       error: "No captions provided for bulk registration.",
@@ -318,7 +342,7 @@ export async function createCampaignCaptionsBulk(
   if (checkError) {
     return {
       success: false,
-      error: `Database check error: ${checkError.message}`,
+      error: logInternal(checkError, "Could not check existing captions. Please try again."),
       totalSubmitted: items.length,
       insertedCount: 0,
       skippedDuplicatesCount: 0,
@@ -351,7 +375,7 @@ export async function createCampaignCaptionsBulk(
   if (insertError) {
     return {
       success: false,
-      error: `Database insert error: ${insertError.message}`,
+      error: logInternal(insertError, "Could not save the captions. Please try again."),
       totalSubmitted: items.length,
       insertedCount: 0,
       skippedDuplicatesCount: totalSkipped,
@@ -383,6 +407,11 @@ export async function updateCaptionStatus(
     return { success: false, error: auth.error };
   }
 
+  const parsed = captionStatusSchema.safeParse({ id, status });
+  if (!parsed.success) {
+    return { success: false, error: firstIssue(parsed.error) };
+  }
+
   const supabase = createAdminClient();
 
   const { error } = await supabase
@@ -391,7 +420,7 @@ export async function updateCaptionStatus(
     .eq("id", id);
 
   if (error) {
-    return { success: false, error: error.message };
+    return { success: false, error: logInternal(error, "Could not update the caption status.") };
   }
 
   revalidatePath("/dashboard/captions");

@@ -1,5 +1,49 @@
 # Socio Codebase Audit
 
+## Fourth pass (2026-11-26/27): dependencies, config and cleanup
+
+Type-check, lint, `npm test` (156 tests) and the production build pass after every batch. No migration is needed for this pass.
+
+> **Correction to the third pass below:** the Apify webhook was later re-added (`app/api/webhooks/apify`, `APIFY_WEBHOOK_SECRET`, middleware exemption). It is optional: it only runs when `APIFY_WEBHOOK_BASE_URL` and `APIFY_WEBHOOK_SECRET` are set, and it authenticates with a constant-time secret check.
+
+### Fixed
+
+| # | Problem | Fix |
+|---|---------|-----|
+| F1 | **Next.js 14.2.35 had critical advisories**: remote code execution in the Image Optimizer and on Windows hosts, plus Server Action DoS, and more | Upgraded to **Next 15.5.29** (the patched 15.x line) and React 19. `cookies()`, `params` and `searchParams` are async, so `createServerComponentClient()` is now `async` and awaited everywhere |
+| F2 | `images.remotePatterns` kept `/_next/image` live and outside the auth middleware, although nothing uses `next/image` | Removed. `npm run dev` binds to `127.0.0.1` so the local admin copy is not reachable from the LAN |
+| F3 | Supabase self-signup was open. With "any authenticated user can read" RLS, anyone holding the public anon key could sign up and read everything | Signups disabled in the Supabase dashboard (verified: `/auth/v1/settings` reports `disable_signup: true`). **Keep it off**; team members are created via `/api/admin/users` |
+| F4 | A failed `matched_posts` upsert returned before the post was saved to `posts`, so the post was lost | The post and its snapshot are still stored; the run ends `partial` and a retry labels it |
+| F5 | Re-importing the accounts list reset `status` to `active`, which reactivated paused or archived accounts | An existing account keeps its status unless the row explicitly asks for a non-active one |
+| F6 | Changing a handle to one already in use returned 500, and the volunteer was renamed before the failing update | The account is updated first; a duplicate handle returns 409; the rename runs only after success |
+| F7 | Caption server actions took unvalidated arguments (an invalid date crashed with a 500) | Zod schemas at the boundary. `getNearMissPosts(days)` is clamped |
+| F8 | The admin check was implemented five different ways | One `checkCaller()` in `lib/supabase/require-admin.ts`; `requireUser` / `requireAdmin` / `verifyAdminCaller` wrap it. **Do not re-implement it** |
+| F9 | Raw Postgres messages reached the browser from `admin/users` and the caption and review actions | `internalError` / `logInternal` log the detail and return a generic message. Typed, user-facing errors (schedule, Apify, run-active) still show their text |
+| F10 | Two clicks within the few seconds a run takes to start could both pass the "no active run" check and pay for two runs | In-process start lock per platform and job type (`withStartLock`). The second click gets `RunStartingError` (409) |
+| F11 | `clean-db` skipped volunteers, the refresh queue and schedules; deleting only schedule rows would leave Apify Schedules firing | Clears volunteers and `refresh_queue`; refuses to run while schedules exist |
+| F12 | A volunteer spreadsheet could be committed by accident | `*.xlsx` and `*.xls` are git-ignored |
+
+### Still open
+
+- **Dashboard aggregation** has moved to SQL (`20261207_dashboard_gain_functions.sql`, used by `lib/supabase/queries.ts`). `tests/dashboard_sql.test.ts` runs the migration on PGlite and checks that it matches `lib/metrics/gain.ts`. Until the migration is applied, the dashboard falls back to the old JavaScript path and logs a warning. The volunteer profile page still computes in JavaScript, which is fine at the scale of one volunteer.
+- **Database idempotency test is done** (AGENTS.md §5). `tests/ingestion_idempotency.test.ts` runs the real `processIngestion` on PGlite with every migration applied (`tests/helpers/test-db.ts`). It goes through a PostgREST-compatible adapter (`tests/helpers/pglite-supabase.ts`) and checks:
+  - re-runs create zero new rows;
+  - there is one snapshot per post per day;
+  - null stays null and 0 stays 0;
+  - a same-day re-run never erases a measured value;
+  - review decisions survive;
+  - overlapping runs create no duplicates.
+
+  Not covered: an admin deciding a review *while* a run is in progress (the in-run upsert path).
+- **The daily trend chart now explains itself** in a note under the chart. Values are recorded on refresh days, so growth shows as spikes; new posts count in full; drops count as 0. The math itself is unchanged.
+- **Ingestion is batched** (`writeRows` / `latestSnapshotBefore` in `lib/services/ingestion.ts`). Posts are routed in memory, then each table is written in chunks of 500.
+  - Rows are grouped by column set, so a missing metric never becomes NULL.
+  - A failed chunk is retried row by row.
+  - Duplicate posts in one dataset are de-duplicated (the last copy wins).
+  - 1,200 posts take 28 round-trips instead of about 3,600, so the 15-minute ingest-claim window is no longer a practical risk.
+- **There is now a database start lock as well as the in-process one** (`20261208_run_start_locks.sql`, `lib/services/run-start-lock.ts`). It covers two admins on separate copies. Until the migration is applied, only the in-process lock is used, and a warning is logged once.
+- **Remaining `npm audit` items have low real-world risk.** PostCSS is pinned inside Next and only runs at build time on our own CSS. The Zod issue needs huge inputs and is fixed by Zod 4, a separate migration. The `basic-ftp` issue sits under `apify-client` and is only reachable through FTP proxy configs.
+
 ## Second pass (2026-11-21): scale and concurrency
 
 These problems only appear at campaign scale (about 1800 accounts and about 100k posts) or when requests overlap. Small test runs do not show them.

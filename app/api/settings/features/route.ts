@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { internalError } from "@/lib/api/errors";
-import { createServerComponentClient } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/supabase/require-admin";
 import { getFeatureSettings } from "@/lib/services/settings";
 
 export const dynamic = "force-dynamic";
@@ -10,14 +10,8 @@ export const dynamic = "force-dynamic";
  * Lightweight feature-flag read for any signed-in team member (used by nav/command palette).
  */
 export async function GET() {
-  const supabase = createServerComponentClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const guard = await requireUser();
+  if (!guard.ok) return guard.response;
 
   try {
     return NextResponse.json(await getFeatureSettings());

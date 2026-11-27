@@ -1,8 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { logInternal } from "@/lib/api/errors";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createServerComponentClient } from "@/lib/supabase/server";
+import { checkCaller, verifyAdminCaller } from "@/lib/supabase/require-admin";
 import { processCaption } from "@/lib/matching/normalizer.ts";
 import { fetchSinglePostDetails } from "@/lib/services/scraper-orchestrator";
 import { formatDate } from "@/lib/utils";
@@ -39,27 +40,6 @@ interface ReviewQueueRow {
   accounts: AccountEmbed | AccountEmbed[] | null;
 }
 
-async function verifyAdminCaller() {
-  const authClient = createServerComponentClient();
-  const { data: { user } } = await authClient.auth.getUser();
-  if (!user) {
-    return { authorized: false as const, error: "Authentication required." };
-  }
-
-  const adminClient = createAdminClient();
-  const { data: profile } = await adminClient
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-
-  if (!profile || profile.role !== "admin") {
-    return { authorized: false as const, error: "Only administrators can perform this action." };
-  }
-
-  return { authorized: true as const, user, adminClient };
-}
-
 export interface ReviewQueueDisplayItem {
   id: string;
   captionId: string;
@@ -88,11 +68,7 @@ export async function getReviewQueueItems(
 ): Promise<ReviewQueueDisplayItem[]> {
   // This is a server action (callable as an endpoint) that reads with the service role, so it
   // checks the caller itself instead of relying only on page middleware.
-  const authClient = createServerComponentClient();
-  const {
-    data: { user },
-  } = await authClient.auth.getUser();
-  if (!user) return [];
+  if (!(await checkCaller("member")).ok) return [];
 
   const supabase = createAdminClient();
 
@@ -215,14 +191,12 @@ interface NearMissRow {
  * post?" list. Best score first. Dismissed posts are left out.
  */
 export async function getNearMissPosts(days = 14): Promise<NearMissItem[]> {
-  const authClient = createServerComponentClient();
-  const {
-    data: { user },
-  } = await authClient.auth.getUser();
-  if (!user) return [];
+  if (!(await checkCaller("member")).ok) return [];
 
+  // Server action argument: keep it a sane whole number of days (1-90).
+  const safeDays = Number.isFinite(days) ? Math.min(90, Math.max(1, Math.floor(days))) : 14;
   const supabase = createAdminClient();
-  const since = new Date(Date.now() - Math.max(1, days) * 86_400_000).toISOString();
+  const since = new Date(Date.now() - safeDays * 86_400_000).toISOString();
 
   let rows: NearMissRow[];
   try {
@@ -331,7 +305,7 @@ export async function dismissNearMiss(postId: string): Promise<{ success: boolea
     .from("posts")
     .update({ match_dismissed_at: new Date().toISOString() })
     .eq("id", postId);
-  if (error) return { success: false, error: error.message };
+  if (error) return { success: false, error: logInternal(error, "Could not dismiss the post.") };
 
   revalidatePath("/dashboard/review");
   return { success: true };
@@ -389,7 +363,7 @@ export async function approveReviewItem(
       }
     );
     if (variantError) {
-      return { success: false, error: `Failed to save the approved caption variant: ${variantError.message}` };
+      return { success: false, error: logInternal(variantError, "Failed to save the approved caption variant.") };
     }
 
     // 3. Fetch live metrics from the scraper. Never invent numbers: if the live fetch fails we
@@ -470,7 +444,7 @@ export async function approveReviewItem(
         }
       );
       if (metricError) {
-        return { success: false, error: `Failed to save the post's metrics: ${metricError.message}` };
+        return { success: false, error: logInternal(metricError, "Failed to save the post's metrics.") };
       }
     }
 
@@ -523,7 +497,7 @@ export async function approveReviewItem(
         }
       );
       if (postSnapError) {
-        return { success: false, error: `Failed to save the post's snapshot: ${postSnapError.message}` };
+        return { success: false, error: logInternal(postSnapError, "Failed to save the post's snapshot.") };
       }
     }
 
@@ -539,7 +513,7 @@ export async function approveReviewItem(
       .eq("id", reviewId);
 
     if (updateError) {
-      return { success: false, error: `Failed to update review status: ${updateError.message}` };
+      return { success: false, error: logInternal(updateError, "Failed to update review status.") };
     }
 
     // 8. Revalidate dashboard caches
@@ -588,7 +562,7 @@ export async function rejectReviewItem(
     .eq("platform", item.platform)
     .eq("platform_post_id", item.platform_post_id);
   if (archiveError) {
-    return { success: false, error: `Failed to stop tracking the post: ${archiveError.message}` };
+    return { success: false, error: logInternal(archiveError, "Failed to stop tracking the post.") };
   }
 
   // ...and label the stored copy 'rejected'. It keeps its engagement history, drops out of
@@ -599,7 +573,7 @@ export async function rejectReviewItem(
     .eq("platform", item.platform)
     .eq("platform_post_id", item.platform_post_id);
   if (labelError) {
-    return { success: false, error: `Failed to label the post as rejected: ${labelError.message}` };
+    return { success: false, error: logInternal(labelError, "Failed to label the post as rejected.") };
   }
 
   const { error } = await supabase
@@ -612,7 +586,7 @@ export async function rejectReviewItem(
     .eq("id", reviewId);
 
   if (error) {
-    return { success: false, error: error.message };
+    return { success: false, error: logInternal(error, "Could not save the review decision.") };
   }
 
   revalidatePath("/dashboard");

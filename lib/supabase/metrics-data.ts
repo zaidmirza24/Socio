@@ -1,7 +1,7 @@
 import type { createServerComponentClient } from "@/lib/supabase/server";
 import type { SnapshotPoint } from "@/lib/metrics/gain";
 
-type Client = ReturnType<typeof createServerComponentClient>;
+type Client = Awaited<ReturnType<typeof createServerComponentClient>>;
 
 // Supabase returns at most 1000 rows per request. Every query that can exceed that MUST page
 // through the results, otherwise totals are silently truncated.

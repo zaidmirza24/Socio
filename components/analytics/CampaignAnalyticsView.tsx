@@ -517,6 +517,12 @@ export function CampaignAnalyticsView({
             }
           >
             <EngagementTrendChart data={trendData} metricFilter={trendMetric} />
+            <p className="mt-3 text-xs text-slate-500">
+              Each point is the engagement <strong>recorded</strong> that day, not necessarily earned that day.
+              A new post counts all its likes and comments on the day it is first collected. Older posts are
+              re-checked only on refresh days (see Settings), so growth since the last check shows up as a
+              spike on the refresh day. Likes that drop are counted as 0, not as a loss.
+            </p>
           </SectionCard>
 
           {/* Format Mix + Top Ranking Trend side-by-side */}

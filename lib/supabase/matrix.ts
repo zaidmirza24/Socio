@@ -1,7 +1,7 @@
 "use server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createServerComponentClient } from "@/lib/supabase/server";
+import { checkCaller } from "@/lib/supabase/require-admin";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { getFeatureSettings } from "@/lib/services/settings";
 import { formatDate } from "@/lib/utils";
@@ -33,11 +33,8 @@ export interface DayCoverageData {
 
 async function requireTeamMember(): Promise<void> {
   // Server action reading with the service role: verify the caller is a signed-in team member.
-  const authClient = createServerComponentClient();
-  const {
-    data: { user },
-  } = await authClient.auth.getUser();
-  if (!user) throw new Error("Unauthorized: Team login required");
+  const check = await checkCaller("member");
+  if (!check.ok) throw new Error(check.error);
 }
 
 interface PostRow {

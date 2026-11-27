@@ -15,9 +15,28 @@ if (!url || !serviceRoleKey) {
 const supabase = createClient(url, serviceRoleKey);
 
 async function cleanDatabase() {
+  // Scheduled runs live on Apify too. Deleting only our rows would leave those Apify Schedules
+  // firing (and billing) with nothing in the app to see or stop them, so refuse instead.
+  const { count: scheduleCount, error: scheduleErr } = await supabase
+    .from("scraper_schedules")
+    .select("*", { count: "exact", head: true });
+  if (scheduleErr) {
+    console.error("Could not check scraper_schedules:", scheduleErr.message);
+    process.exit(1);
+  }
+  if ((scheduleCount ?? 0) > 0) {
+    console.error(
+      `Refusing to clean: ${scheduleCount} schedule(s) exist. Delete them on the Scheduler page ` +
+        "(/dashboard/schedules) first, which also removes them from Apify, then re-run."
+    );
+    process.exit(1);
+  }
+
   console.log("Cleaning database tables (preserving table schemas and profiles)...");
 
+  // Children before parents (accounts reference volunteers).
   const tables = [
+    "refresh_queue",
     "metric_snapshots",
     "review_queue",
     "caption_approved_variants",
@@ -28,6 +47,7 @@ async function cleanDatabase() {
     "account_snapshots",
     "collection_runs",
     "accounts",
+    "volunteers",
   ];
 
   for (const table of tables) {
@@ -50,5 +70,5 @@ async function cleanDatabase() {
   }
 }
 
-await confirmDestructive("Delete all accounts, posts, snapshots, captions and runs", url);
-cleanDatabase();
+await confirmDestructive("Delete all volunteers, accounts, posts, snapshots, captions, runs and queued refreshes", url);
+await cleanDatabase();

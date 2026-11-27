@@ -1,23 +1,16 @@
 import { NextResponse } from "next/server";
 import { internalError } from "@/lib/api/errors";
 import { getCampaignCaptions } from "@/lib/supabase/captions";
-import { createServerComponentClient } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/supabase/require-admin";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export async function GET() {
+  const guard = await requireUser();
+  if (!guard.ok) return guard.response;
+
   try {
-    const supabase = createServerComponentClient();
-    const { data: { user } } = await supabase.auth.getUser();
-
-    if (!user) {
-      return NextResponse.json(
-        { success: false, error: "Unauthorized: Team login required" },
-        { status: 401 }
-      );
-    }
-
     const captions = await getCampaignCaptions();
     return NextResponse.json({ success: true, captions });
   } catch (err: unknown) {

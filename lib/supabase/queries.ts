@@ -177,12 +177,12 @@ import { cache } from "react";
  * load instead of re-reading the whole history seven times.
  */
 const loadPeriodPoints = cache(async (since: string | null) =>
-  loadSnapshotsForPeriod(createServerComponentClient(), since)
+  loadSnapshotsForPeriod(await createServerComponentClient(), since)
 );
 /** Post + account details, also shared across widgets in the same request. */
 const loadPeriodMeta = cache(async (since: string | null) => {
   const points = await loadPeriodPoints(since);
-  return loadPostMeta(createServerComponentClient(), Array.from(new Set(points.map((p) => p.post_id))));
+  return loadPostMeta(await createServerComponentClient(), Array.from(new Set(points.map((p) => p.post_id))));
 });
 
 /** "YYYY-MM-DD" day -> "Nov 21" (timezone-proof). */
@@ -234,6 +234,113 @@ interface DailyGainRow extends DailyPostGain {
   volunteerName: string;
 }
 
+// ─────────────────────────────────────────────────────────────
+// SQL-side aggregation (migration 20261207_dashboard_gain_functions.sql)
+//
+// The dashboard_* functions compute the same gains as lib/metrics/gain.ts inside Postgres and
+// return small, already-aggregated results (tests/dashboard_sql.test.ts proves they agree).
+// If the migration is not applied yet, every caller falls back to the JavaScript path above.
+// ─────────────────────────────────────────────────────────────
+
+type RpcArgs = Record<string, string | number | null>;
+interface RpcError { code?: string; message: string }
+
+let warnedMissingSql = false;
+
+/** PostgREST "function not found": the migration has not been applied to this database yet. */
+function isMissingFunction(err: RpcError | null): boolean {
+  return !!err && (err.code === "PGRST202" || err.code === "42883");
+}
+
+/**
+ * Calls a set-returning dashboard function, paging past the 1000-row API cap.
+ * Returns null when the function does not exist (caller uses the JavaScript fallback).
+ */
+async function rpcRows<T>(fn: string, args: RpcArgs, orderBy: string): Promise<T[] | null> {
+  const supabase = await createServerComponentClient();
+  const rows: T[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase.rpc(fn, args).order(orderBy).range(from, from + 999);
+    if (isMissingFunction(error)) {
+      if (!warnedMissingSql) {
+        warnedMissingSql = true;
+        console.warn(
+          `[dashboard] SQL function ${fn} not found; using the slower JavaScript path. Apply migration 20261207_dashboard_gain_functions.sql.`
+        );
+      }
+      return null;
+    }
+    if (error) throw new Error(error.message);
+    const page = (data ?? []) as T[];
+    rows.push(...page);
+    if (page.length < 1000) return rows;
+  }
+}
+
+/** Likes / comments / views gained per account in the period (accounts with activity only). */
+interface AccountGainRow {
+  accountId: string;
+  handle: string;
+  platform: string;
+  volunteerId: string | null;
+  volunteerName: string;
+  posts: number;
+  likes: number;
+  comments: number;
+  views: number;
+}
+
+const loadAccountGains = cache(async (preset: DateRangePreset, platform: PlatformFilter): Promise<AccountGainRow[]> => {
+  const since = getDateFilterSince(preset);
+  const sql = await rpcRows<{
+    account_id: string;
+    handle: string;
+    platform: string;
+    volunteer_id: string | null;
+    volunteer_name: string;
+    posts: number;
+    likes: number;
+    comments: number;
+    views: number;
+  }>("dashboard_account_gains", { p_since: since, p_platform: platform }, "account_id");
+
+  if (sql) {
+    return sql.map((r) => ({
+      accountId: r.account_id,
+      handle: r.handle,
+      platform: r.platform,
+      volunteerId: r.volunteer_id,
+      volunteerName: r.volunteer_name,
+      posts: Number(r.posts),
+      likes: Number(r.likes),
+      comments: Number(r.comments),
+      views: Number(r.views),
+    }));
+  }
+
+  // Fallback: same numbers from the per-post JavaScript path.
+  const byAccount = new Map<string, AccountGainRow>();
+  for (const r of await loadPostGains(preset, platform)) {
+    const e = byAccount.get(r.meta.accountId) ?? {
+      accountId: r.meta.accountId,
+      handle: r.meta.handle,
+      platform: r.meta.platform,
+      volunteerId: r.meta.volunteerId,
+      volunteerName: r.meta.volunteerName,
+      posts: 0,
+      likes: 0,
+      comments: 0,
+      views: 0,
+    };
+    e.posts += 1;
+    e.likes += sumGain([r.likes]);
+    e.comments += sumGain([r.comments]);
+    e.views += sumGain([r.views]);
+    byAccount.set(r.meta.accountId, e);
+  }
+  return Array.from(byAccount.values());
+});
+
 /** Gain per post per day, joined with account details (for trend / ranking charts). */
 const loadDailyGains = cache(async (preset: DateRangePreset, platform: PlatformFilter): Promise<DailyGainRow[]> => {
   const since = getDateFilterSince(preset);
@@ -263,6 +370,15 @@ export async function getDailyEngagementTrend(
   preset: DateRangePreset = "today",
   platform: PlatformFilter = "all"
 ): Promise<TrendDataPoint[]> {
+  const sql = await rpcRows<{ day: string; likes: number; comments: number }>(
+    "dashboard_daily_trend",
+    { p_since: getDateFilterSince(preset), p_platform: platform },
+    "day"
+  );
+  if (sql) {
+    return sql.map((r) => ({ date: fmtDate(r.day), likes: Number(r.likes), comments: Number(r.comments) }));
+  }
+
   const daily = await loadDailyGains(preset, platform);
 
   const byDay = new Map<string, { likes: number; comments: number }>();
@@ -286,6 +402,26 @@ export async function getTopPosts(
   preset: DateRangePreset = "today",
   platform: PlatformFilter = "all"
 ): Promise<TopPostData[]> {
+  const toTitle = (handle: string, caption: string | null) => {
+    const c = caption ?? "";
+    return `@${handle}: ${c.slice(0, 30)}${c.length > 30 ? "…" : ""}`;
+  };
+  const sql = await rpcRows<{ handle: string; caption: string | null; likes: number; comments: number; views: number }>(
+    "dashboard_top_posts",
+    { p_since: getDateFilterSince(preset), p_platform: platform, p_limit: 10 },
+    // The function already sorts; this only keeps PostgREST paging stable.
+    "post_id"
+  );
+  if (sql) {
+    return sql
+      .map((r) => {
+        const likes = Number(r.likes);
+        const comments = Number(r.comments);
+        return { title: toTitle(r.handle, r.caption), likes, comments, views: Number(r.views), engagement: likes + comments };
+      })
+      .sort((a, b) => b.engagement - a.engagement);
+  }
+
   const rows = await loadPostGains(preset, platform);
 
   return rows
@@ -312,15 +448,15 @@ export async function getVolunteerEngagement(
   preset: DateRangePreset = "today",
   platform: PlatformFilter = "all"
 ): Promise<VolunteerEngagementData[]> {
-  const rows = await loadPostGains(preset, platform);
+  const rows = await loadAccountGains(preset, platform);
 
   const byVolunteer = new Map<string, { volunteer: string; likes: number; comments: number; views: number }>();
   for (const r of rows) {
-    const key = r.meta.volunteerId ?? `acct:${r.meta.accountId}`;
-    const e = byVolunteer.get(key) ?? { volunteer: r.meta.volunteerName, likes: 0, comments: 0, views: 0 };
-    e.likes += sumGain([r.likes]);
-    e.comments += sumGain([r.comments]);
-    e.views += sumGain([r.views]);
+    const key = r.volunteerId ?? `acct:${r.accountId}`;
+    const e = byVolunteer.get(key) ?? { volunteer: r.volunteerName, likes: 0, comments: 0, views: 0 };
+    e.likes += r.likes;
+    e.comments += r.comments;
+    e.views += r.views;
     byVolunteer.set(key, e);
   }
 
@@ -337,6 +473,15 @@ export async function getVolunteerRanking(
   preset: DateRangePreset = "today",
   platform: PlatformFilter = "all"
 ): Promise<VolunteerRankingPoint[]> {
+  const sql = await rpcRows<{ day: string; volunteer_name: string; engagement: number }>(
+    "dashboard_daily_top_volunteer",
+    { p_since: getDateFilterSince(preset), p_platform: platform },
+    "day"
+  );
+  if (sql) {
+    return sql.map((r) => ({ date: fmtDate(r.day), volunteer: r.volunteer_name, engagement: Number(r.engagement) }));
+  }
+
   const daily = await loadDailyGains(preset, platform);
 
   // date -> volunteerKey -> { name, engagement }
@@ -367,22 +512,22 @@ export async function getAccountComparison(
   preset: DateRangePreset = "today",
   platform: PlatformFilter = "all"
 ): Promise<AccountPerformance[]> {
-  const rows = await loadPostGains(preset, platform);
+  const rows = await loadAccountGains(preset, platform);
 
   // Keyed by platform + handle: the same handle can exist on two platforms and must not be merged.
   const byAccount = new Map<string, { handle: string; platform: string; posts: number; likes: number; comments: number; views: number }>();
   const platformsPerHandle = new Map<string, Set<string>>();
   for (const r of rows) {
-    const key = `${r.meta.platform}:${r.meta.handle}`;
-    const e = byAccount.get(key) ?? { handle: r.meta.handle, platform: r.meta.platform, posts: 0, likes: 0, comments: 0, views: 0 };
-    e.posts += 1;
-    e.likes += sumGain([r.likes]);
-    e.comments += sumGain([r.comments]);
-    e.views += sumGain([r.views]);
+    const key = `${r.platform}:${r.handle}`;
+    const e = byAccount.get(key) ?? { handle: r.handle, platform: r.platform, posts: 0, likes: 0, comments: 0, views: 0 };
+    e.posts += r.posts;
+    e.likes += r.likes;
+    e.comments += r.comments;
+    e.views += r.views;
     byAccount.set(key, e);
-    const set = platformsPerHandle.get(r.meta.handle) ?? new Set<string>();
-    set.add(r.meta.platform);
-    platformsPerHandle.set(r.meta.handle, set);
+    const set = platformsPerHandle.get(r.handle) ?? new Set<string>();
+    set.add(r.platform);
+    platformsPerHandle.set(r.handle, set);
   }
 
   return Array.from(byAccount.values())
@@ -417,8 +562,8 @@ export async function getVolunteerLeaderboard(
   preset: DateRangePreset = "today",
   platform: PlatformFilter = "all"
 ): Promise<LeaderboardEntry[]> {
-  const supabase = createServerComponentClient();
-  const rows = await loadPostGains(preset, platform);
+  const supabase = await createServerComponentClient();
+  const rows = await loadAccountGains(preset, platform);
 
   const byVolunteer = new Map<string, LeaderboardAgg>();
   const accountToKey = new Map<string, string>();
@@ -453,18 +598,16 @@ export async function getVolunteerLeaderboard(
     return agg;
   };
 
-  // First row per account, so the primary-account pass below is a map lookup (not O(n^2)).
-  const firstRowByAccount = new Map<string, PostGainRow>();
+  // One row per account with activity, so the primary-account pass below is a map lookup.
+  const rowByAccount = new Map<string, AccountGainRow>();
   for (const r of rows) {
-    if (!firstRowByAccount.has(r.meta.accountId)) firstRowByAccount.set(r.meta.accountId, r);
-    const key = r.meta.volunteerId ?? `acct:${r.meta.accountId}`;
-    const agg = ensure(key, r.meta.volunteerName, r.meta.accountId, r.meta.handle, r.meta.platform);
-    const likes = sumGain([r.likes]);
-    const comments = sumGain([r.comments]);
-    agg.posts += 1;
-    agg.likes += likes;
-    agg.comments += comments;
-    accountEngagement.set(r.meta.accountId, (accountEngagement.get(r.meta.accountId) ?? 0) + likes + comments);
+    rowByAccount.set(r.accountId, r);
+    const key = r.volunteerId ?? `acct:${r.accountId}`;
+    const agg = ensure(key, r.volunteerName, r.accountId, r.handle, r.platform);
+    agg.posts += r.posts;
+    agg.likes += r.likes;
+    agg.comments += r.comments;
+    accountEngagement.set(r.accountId, (accountEngagement.get(r.accountId) ?? 0) + r.likes + r.comments);
   }
 
   // Paged: `.limit(5000)` is still capped at 1000 rows by the API, which dropped volunteers.
@@ -502,11 +645,11 @@ export async function getVolunteerLeaderboard(
   for (const [accountId, engagement] of Array.from(accountEngagement.entries())) {
     const agg = byVolunteer.get(accountToKey.get(accountId) ?? "");
     if (!agg || engagement <= agg.primaryEngagement) continue;
-    const row = firstRowByAccount.get(accountId);
+    const row = rowByAccount.get(accountId);
     if (row) {
       agg.primaryEngagement = engagement;
-      agg.primaryHandle = row.meta.handle;
-      agg.primaryPlatform = row.meta.platform;
+      agg.primaryHandle = row.handle;
+      agg.primaryPlatform = row.platform;
     }
   }
 
@@ -566,7 +709,7 @@ export async function getKPISummary(
   preset: DateRangePreset = "today",
   platform: PlatformFilter = "all"
 ): Promise<KPISummary> {
-  const supabase = createServerComponentClient();
+  const supabase = await createServerComponentClient();
 
   let totalAccountsQ = supabase.from("accounts").select("id", { count: "exact", head: true });
   let activeAccountsQ = supabase.from("accounts").select("id", { count: "exact", head: true }).eq("status", "active");
@@ -581,16 +724,18 @@ export async function getKPISummary(
     totalAccountsQ,
     activeAccountsQ,
     totalPostsQ,
-    loadPostGains(preset, platform),
+    loadAccountGains(preset, platform),
   ]);
 
+  const sum = (pick: (r: AccountGainRow) => number) => rows.reduce((acc, r) => acc + pick(r), 0);
   return {
     totalAccounts: totalAccounts ?? 0,
     activeAccounts: activeAccounts ?? 0,
-    totalPosts: preset === "all" ? (totalPosts ?? 0) : rows.length,
-    totalLikes: sumGain(rows.map((r) => r.likes)),
-    totalComments: sumGain(rows.map((r) => r.comments)),
-    totalViews: sumGain(rows.map((r) => r.views)),
+    // Posts with activity in the period (every account row counts its own posts).
+    totalPosts: preset === "all" ? (totalPosts ?? 0) : sum((r) => r.posts),
+    totalLikes: sum((r) => r.likes),
+    totalComments: sum((r) => r.comments),
+    totalViews: sum((r) => r.views),
   };
 }
 
@@ -694,7 +839,7 @@ const ENGAGEMENT_SORT_CAP = 1000;
  * are correct); only the optional engagement sort happens in memory, over the newest 1,000 matches.
  */
 export async function getPostsPage(opts: PostsPageOptions): Promise<PostsPageResult> {
-  const supabase = createServerComponentClient();
+  const supabase = await createServerComponentClient();
   const pageSize = Math.min(Math.max(opts.pageSize ?? 50, 1), 200);
   const page = Math.max(opts.page ?? 1, 1);
   const sort = opts.sort ?? "recent";
@@ -793,7 +938,7 @@ async function buildProfile(
   volunteerId: string | null,
   preset?: DateRangePreset
 ): Promise<VolunteerProfileData> {
-  const supabase = createServerComponentClient();
+  const supabase = await createServerComponentClient();
   // Used only for server-side metrics/timeline aggregation, NOT to filter fetched posts
   const since = preset ? getDateFilterSince(preset) : null;
 
@@ -983,7 +1128,7 @@ export async function getVolunteerDetails(
   preset?: DateRangePreset,
   platform?: string
 ): Promise<VolunteerProfileData | null> {
-  const supabase = createServerComponentClient();
+  const supabase = await createServerComponentClient();
   const cleanHandle = rawHandle.replace(/^@/, "").trim().toLowerCase();
 
   // Exact .eq matching prevents wildcard ILIKE collisions on underscore handles.
@@ -1023,7 +1168,7 @@ export async function getVolunteerProfile(
   volunteerId: string,
   preset?: DateRangePreset
 ): Promise<VolunteerProfileData | null> {
-  const supabase = createServerComponentClient();
+  const supabase = await createServerComponentClient();
   const { data, error } = await supabase
     .from("accounts")
     .select(PROFILE_ACCOUNT_COLUMNS)

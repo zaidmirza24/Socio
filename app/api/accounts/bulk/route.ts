@@ -2,8 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { internalError } from "@/lib/api/errors";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createServerComponentClient } from "@/lib/supabase/server";
+import { requireAdmin } from "@/lib/supabase/require-admin";
 import { resolveVolunteerIds } from "@/lib/services/volunteers";
+import { fetchAllRows } from "@/lib/supabase/paginate";
+
+type AccountStatus = "active" | "paused" | "archived";
 
 const accountItemSchema = z.object({
   volunteer_name: z.string().min(1, "Volunteer name is required").trim(),
@@ -22,34 +25,10 @@ const bulkAccountsSchema = z.object({
     .max(500, "Maximum 500 accounts per bulk batch"),
 });
 
-async function getAuthenticatedAdmin() {
-  const supabase = createServerComponentClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return { authorized: false as const, status: 401, error: "Unauthorized: Team login required" };
-  }
-
-  const admin = createAdminClient();
-  const { data: profile } = await admin
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-
-  if (!profile || profile.role !== "admin") {
-    return { authorized: false as const, status: 403, error: "Forbidden: Admin privileges required" };
-  }
-
-  return { authorized: true as const, user };
-}
-
 export async function POST(request: NextRequest) {
   try {
-    const auth = await getAuthenticatedAdmin();
-    if (!auth.authorized) {
-      return NextResponse.json({ error: auth.error }, { status: auth.status });
-    }
+    const guard = await requireAdmin();
+    if (!guard.ok) return guard.response;
 
     const body = await request.json().catch(() => ({}));
     const parseResult = bulkAccountsSchema.safeParse(body);
@@ -72,6 +51,20 @@ export async function POST(request: NextRequest) {
 
     const now = new Date().toISOString();
     const uniqueAccounts = Array.from(uniqueMap.values());
+    const admin = createAdminClient();
+
+    // Re-importing a list must not reactivate accounts an admin paused or archived. "active" is
+    // also what the importer sends when a row says nothing about status, so an existing account
+    // keeps its current status unless the row explicitly asks for a non-active one (e.g. "paused").
+    const existing = await fetchAllRows<{ platform: string; handle: string; status: AccountStatus }>((from, to) =>
+      admin.from("accounts").select("platform, handle, status").order("id").range(from, to)
+    );
+    const existingStatus = new Map(existing.map((a) => [`${a.platform}:${a.handle}`, a.status]));
+    const statusFor = (acc: (typeof accounts)[number]): AccountStatus => {
+      const current = existingStatus.get(`${acc.platform}:${acc.handle}`);
+      if (current === undefined) return acc.status;
+      return acc.status === "active" ? current : acc.status;
+    };
     // Same-name rows on different platforms become one volunteer (IG + FB + X)
     const volunteerIds = await resolveVolunteerIds(
       uniqueAccounts.map((a) => ({ platform: a.platform, handle: a.handle, volunteer_name: a.volunteer_name }))
@@ -81,11 +74,9 @@ export async function POST(request: NextRequest) {
       volunteer_name: acc.volunteer_name,
       handle: acc.handle,
       platform: acc.platform,
-      status: acc.status,
+      status: statusFor(acc),
       updated_at: now,
     }));
-
-    const admin = createAdminClient();
 
     // Idempotent upsert matching UNIQUE(platform, handle)
     const { data, error } = await admin
