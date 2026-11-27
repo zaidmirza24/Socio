@@ -25,11 +25,23 @@ Type-check, lint, `npm test` (156 tests) and the production build pass after eve
 
 ### Still open
 
-- **Dashboard aggregation in JavaScript** (`lib/supabase/metrics-data.ts`, `lib/metrics/gain.ts`) loads every snapshot of the period in 1000-row pages. It will slow down as the campaign grows. It should become a SQL function, as AGENTS.md §3 requires.
-- **No database-level idempotency test** (AGENTS.md §5). The tests cover pure functions; nothing ingests a fixture twice against Postgres.
-- **The daily trend reads oddly.** Weekly refresh puts a week of growth on the refresh day, and `Math.max(0, …)` hides drops.
-- **Ingestion makes 3–6 round-trips per post.** A run that takes longer than the 15-minute claim can be ingested twice. The data stays correct, but the gain summary is wrong.
-- **The start lock is per server process.** Two admins on separate local copies can still race; that needs a database lock row.
+- **Dashboard aggregation** has moved to SQL (`20261207_dashboard_gain_functions.sql`, used by `lib/supabase/queries.ts`). `tests/dashboard_sql.test.ts` runs the migration on PGlite and checks that it matches `lib/metrics/gain.ts`. Until the migration is applied, the dashboard falls back to the old JavaScript path and logs a warning. The volunteer profile page still computes in JavaScript, which is fine at the scale of one volunteer.
+- **Database idempotency test is done** (AGENTS.md §5). `tests/ingestion_idempotency.test.ts` runs the real `processIngestion` on PGlite with every migration applied (`tests/helpers/test-db.ts`). It goes through a PostgREST-compatible adapter (`tests/helpers/pglite-supabase.ts`) and checks:
+  - re-runs create zero new rows;
+  - there is one snapshot per post per day;
+  - null stays null and 0 stays 0;
+  - a same-day re-run never erases a measured value;
+  - review decisions survive;
+  - overlapping runs create no duplicates.
+
+  Not covered: an admin deciding a review *while* a run is in progress (the in-run upsert path).
+- **The daily trend chart now explains itself** in a note under the chart. Values are recorded on refresh days, so growth shows as spikes; new posts count in full; drops count as 0. The math itself is unchanged.
+- **Ingestion is batched** (`writeRows` / `latestSnapshotBefore` in `lib/services/ingestion.ts`). Posts are routed in memory, then each table is written in chunks of 500.
+  - Rows are grouped by column set, so a missing metric never becomes NULL.
+  - A failed chunk is retried row by row.
+  - Duplicate posts in one dataset are de-duplicated (the last copy wins).
+  - 1,200 posts take 28 round-trips instead of about 3,600, so the 15-minute ingest-claim window is no longer a practical risk.
+- **There is now a database start lock as well as the in-process one** (`20261208_run_start_locks.sql`, `lib/services/run-start-lock.ts`). It covers two admins on separate copies. Until the migration is applied, only the in-process lock is used, and a warning is logged once.
 - **Remaining `npm audit` items have low real-world risk.** PostCSS is pinned inside Next and only runs at build time on our own CSS. The Zod issue needs huge inputs and is fixed by Zod 4, a separate migration. The `basic-ftp` issue sits under `apify-client` and is only reachable through FTP proxy configs.
 
 ## Second pass (2026-11-21): scale and concurrency

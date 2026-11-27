@@ -5,6 +5,7 @@ import { getScraperRefreshStrategy, getPlatformSettings } from "./settings.ts";
 import { recordRunUsage } from "./apify-usage.ts";
 import { ApifyRunAccessError, getCurrentApifyAccountId } from "../apify/client.ts";
 import { processIngestion, type IngestionSummary } from "./ingestion.ts";
+import { acquireRunStartLock } from "./run-start-lock.ts";
 import { getScrapeBoundaryDate } from "../utils/day-window.ts";
 import { fetchAllRows } from "../supabase/paginate.ts";
 import { DIRECT_URL_BATCH_SIZE, MAX_CONCURRENT_REFRESH_RUNS } from "../config/batching.ts";
@@ -137,8 +138,8 @@ export class RunStartingError extends Error {
 /**
  * Closes the gap between "no run is active" and "the new run is logged": that takes seconds (load
  * accounts, start at Apify), and a second click inside it would pass the check and pay for a
- * duplicate run. In-process on purpose: the admin's single local server handles every click and
- * tab. (Two admins on separate copies are still only covered by assertNoActiveRun.)
+ * duplicate run. Two layers: an in-process set (double-click, two tabs on one server; no DB trip)
+ * and a database lock (two admins on separate copies of the app; see run-start-lock.ts).
  */
 const startingRuns = new Set<string>();
 
@@ -151,7 +152,13 @@ async function withStartLock<T>(
   if (startingRuns.has(key)) throw new RunStartingError(platform, jobType);
   startingRuns.add(key);
   try {
-    return await fn();
+    const dbLock = await acquireRunStartLock(createAdminClient(), platform, jobType);
+    if (!dbLock.acquired) throw new RunStartingError(platform, jobType);
+    try {
+      return await fn();
+    } finally {
+      await dbLock.release();
+    }
   } finally {
     startingRuns.delete(key);
   }
