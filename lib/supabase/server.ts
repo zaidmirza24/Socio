@@ -2,8 +2,9 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { getClientEnv } from "@/lib/env";
 
-export function createServerComponentClient() {
-  const cookieStore = cookies();
+/** Supabase client bound to the signed-in user's session (RLS applies). Async since Next 15's cookies(). */
+export async function createServerComponentClient() {
+  const cookieStore = await cookies();
   const env = getClientEnv();
 
   return createServerClient(

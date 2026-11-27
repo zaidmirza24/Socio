@@ -40,7 +40,7 @@ Socio is an automated volunteer monitoring platform designed to track whether vo
 ## 2. Phase 1: End-to-End System Audit
 
 ### 2.1 Architecture & Stack
-- **Framework**: Next.js 14.2.18 (App Router), React 18.3.1, TypeScript 5.6.3 (Strict Mode enabled).
+- **Framework**: Next.js 15.5.29 (App Router), React 19, TypeScript 5.6.3 (Strict Mode enabled). `cookies()`, `params` and `searchParams` are async, so `createServerComponentClient()` must be awaited.
 - **Styling & Visualization**: Tailwind CSS, Lucide Icons, Recharts 2.15.4.
 - **Database**: Supabase PostgreSQL with `@supabase/supabase-js` (2.46.1) and `@supabase/ssr` (0.5.2).
 - **Data Collection Engine**: Apify Cloud API (`apify-client` 2.11.4) running `apify/instagram-scraper`.

@@ -17,13 +17,13 @@ function errorResponse(err: unknown, fallback: string): NextResponse {
   return NextResponse.json({ error: err instanceof Error ? err.message : fallback }, { status: 500 });
 }
 
-type Ctx = { params: { id: string } };
+type Ctx = { params: Promise<{ id: string }> };
 
 /** PATCH /api/scraper/schedules/:id  { action: "pause" | "resume" | "refresh-accounts" } */
 export async function PATCH(request: NextRequest, { params }: Ctx) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
-  const id = idSchema.safeParse(params.id);
+  const id = idSchema.safeParse((await params).id);
   if (!id.success) return NextResponse.json({ error: "Invalid schedule id" }, { status: 400 });
   const body = patchSchema.safeParse(await request.json().catch(() => null));
   if (!body.success) return NextResponse.json({ error: "Unknown action" }, { status: 400 });
@@ -43,7 +43,7 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
 export async function DELETE(_request: NextRequest, { params }: Ctx) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
-  const id = idSchema.safeParse(params.id);
+  const id = idSchema.safeParse((await params).id);
   if (!id.success) return NextResponse.json({ error: "Invalid schedule id" }, { status: 400 });
   try {
     await deleteSchedule(id.data);

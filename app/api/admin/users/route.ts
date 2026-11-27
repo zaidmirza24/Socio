@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { createServerComponentClient } from "@/lib/supabase/server";
+import { internalError, logInternal } from "@/lib/api/errors";
+import { checkCaller } from "@/lib/supabase/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getServerEnv } from "@/lib/env";
 import { safeEqual } from "@/lib/services/crypto";
@@ -47,25 +48,13 @@ async function verifyAdminOrBootstrap(request: NextRequest) {
     };
   }
 
-  // If not bootstrap, check if the current requester is an authenticated Admin
-  const supabase = createServerComponentClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return { authorized: false, isBootstrap: false, error: "Authentication required" };
+  // If not bootstrap, the requester must be a signed-in admin
+  const check = await checkCaller("admin");
+  if (!check.ok) {
+    return { authorized: false, isBootstrap: false, error: check.error };
   }
 
-  const { data: profile } = await admin
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-
-  if (!profile || profile.role !== "admin") {
-    return { authorized: false, isBootstrap: false, error: "Only administrators can perform this action" };
-  }
-
-  return { authorized: true, isBootstrap: false, user };
+  return { authorized: true, isBootstrap: false, user: { id: check.userId } };
 }
 
 export async function GET(request: NextRequest) {
@@ -82,13 +71,12 @@ export async function GET(request: NextRequest) {
       .order("created_at", { ascending: true });
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      return internalError(error, "Failed to retrieve users");
     }
 
     return NextResponse.json({ users: users || [] });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Failed to retrieve users";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return internalError(err, "Failed to retrieve users");
   }
 }
 
@@ -152,7 +140,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           warning: "User created in Auth, but profile sync failed",
-          error: profileError.message,
+          error: logInternal(profileError, "Profile sync failed"),
           user: { id: authData.user.id, email },
         },
         { status: 207 }
@@ -174,8 +162,7 @@ export async function POST(request: NextRequest) {
       { status: 201 }
     );
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Failed to register team user";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return internalError(err, "Failed to register team user");
   }
 }
 
@@ -209,13 +196,12 @@ export async function DELETE(request: NextRequest) {
     const { error: deleteError } = await admin.auth.admin.deleteUser(userId);
 
     if (deleteError) {
-      return NextResponse.json({ error: deleteError.message }, { status: 500 });
+      return internalError(deleteError, "Failed to delete team user");
     }
 
     return NextResponse.json({ message: "Team user deleted successfully" });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Failed to delete team user";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return internalError(err, "Failed to delete team user");
   }
 }
 

@@ -177,12 +177,12 @@ import { cache } from "react";
  * load instead of re-reading the whole history seven times.
  */
 const loadPeriodPoints = cache(async (since: string | null) =>
-  loadSnapshotsForPeriod(createServerComponentClient(), since)
+  loadSnapshotsForPeriod(await createServerComponentClient(), since)
 );
 /** Post + account details, also shared across widgets in the same request. */
 const loadPeriodMeta = cache(async (since: string | null) => {
   const points = await loadPeriodPoints(since);
-  return loadPostMeta(createServerComponentClient(), Array.from(new Set(points.map((p) => p.post_id))));
+  return loadPostMeta(await createServerComponentClient(), Array.from(new Set(points.map((p) => p.post_id))));
 });
 
 /** "YYYY-MM-DD" day -> "Nov 21" (timezone-proof). */
@@ -417,7 +417,7 @@ export async function getVolunteerLeaderboard(
   preset: DateRangePreset = "today",
   platform: PlatformFilter = "all"
 ): Promise<LeaderboardEntry[]> {
-  const supabase = createServerComponentClient();
+  const supabase = await createServerComponentClient();
   const rows = await loadPostGains(preset, platform);
 
   const byVolunteer = new Map<string, LeaderboardAgg>();
@@ -566,7 +566,7 @@ export async function getKPISummary(
   preset: DateRangePreset = "today",
   platform: PlatformFilter = "all"
 ): Promise<KPISummary> {
-  const supabase = createServerComponentClient();
+  const supabase = await createServerComponentClient();
 
   let totalAccountsQ = supabase.from("accounts").select("id", { count: "exact", head: true });
   let activeAccountsQ = supabase.from("accounts").select("id", { count: "exact", head: true }).eq("status", "active");
@@ -694,7 +694,7 @@ const ENGAGEMENT_SORT_CAP = 1000;
  * are correct); only the optional engagement sort happens in memory, over the newest 1,000 matches.
  */
 export async function getPostsPage(opts: PostsPageOptions): Promise<PostsPageResult> {
-  const supabase = createServerComponentClient();
+  const supabase = await createServerComponentClient();
   const pageSize = Math.min(Math.max(opts.pageSize ?? 50, 1), 200);
   const page = Math.max(opts.page ?? 1, 1);
   const sort = opts.sort ?? "recent";
@@ -793,7 +793,7 @@ async function buildProfile(
   volunteerId: string | null,
   preset?: DateRangePreset
 ): Promise<VolunteerProfileData> {
-  const supabase = createServerComponentClient();
+  const supabase = await createServerComponentClient();
   // Used only for server-side metrics/timeline aggregation, NOT to filter fetched posts
   const since = preset ? getDateFilterSince(preset) : null;
 
@@ -983,7 +983,7 @@ export async function getVolunteerDetails(
   preset?: DateRangePreset,
   platform?: string
 ): Promise<VolunteerProfileData | null> {
-  const supabase = createServerComponentClient();
+  const supabase = await createServerComponentClient();
   const cleanHandle = rawHandle.replace(/^@/, "").trim().toLowerCase();
 
   // Exact .eq matching prevents wildcard ILIKE collisions on underscore handles.
@@ -1023,7 +1023,7 @@ export async function getVolunteerProfile(
   volunteerId: string,
   preset?: DateRangePreset
 ): Promise<VolunteerProfileData | null> {
-  const supabase = createServerComponentClient();
+  const supabase = await createServerComponentClient();
   const { data, error } = await supabase
     .from("accounts")
     .select(PROFILE_ACCOUNT_COLUMNS)

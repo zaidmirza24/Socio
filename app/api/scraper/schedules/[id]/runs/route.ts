@@ -15,10 +15,10 @@ const detailSchema = z.object({
  * GET /api/scraper/schedules/:id/runs?date=YYYY-MM-DD&platform=instagram
  *   -> per-account result of that run day.
  */
-export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
-  const id = idSchema.safeParse(params.id);
+  const id = idSchema.safeParse((await params).id);
   if (!id.success) return NextResponse.json({ error: "Invalid schedule id" }, { status: 400 });
 
   try {

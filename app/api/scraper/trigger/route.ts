@@ -4,6 +4,7 @@ import { requireAdmin } from "@/lib/supabase/require-admin";
 import {
   MEMORY_FULL_MESSAGE,
   RunAlreadyActiveError,
+  RunStartingError,
   isMemoryLimitError,
   triggerDailyDiscovery,
   triggerWeeklyRefresh,
@@ -116,6 +117,9 @@ export async function POST(request: NextRequest) {
         { error: err.message, errorType: "RUN_ACTIVE", runIds: err.runIds, runId: err.runIds[0] ?? null },
         { status: 409 }
       );
+    }
+    if (err instanceof RunStartingError) {
+      return NextResponse.json({ error: err.message, errorType: "RUN_STARTING" }, { status: 409 });
     }
     if (isMemoryLimitError(err)) {
       return NextResponse.json({ error: MEMORY_FULL_MESSAGE, errorType: "MEMORY_FULL" }, { status: 429 });

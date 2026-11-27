@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { internalError } from "@/lib/api/errors";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createServerComponentClient } from "@/lib/supabase/server";
+import { requireAdmin, requireUser } from "@/lib/supabase/require-admin";
 import { resolveVolunteerIds, renameVolunteer } from "@/lib/services/volunteers";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 
@@ -27,36 +27,10 @@ const updateAccountSchema = z.object({
   status: z.enum(["active", "paused", "archived"]).optional(),
 });
 
-async function getAuthenticatedUser(requireAdmin: boolean = false) {
-  const supabase = createServerComponentClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return { authorized: false as const, status: 401, error: "Unauthorized: Team login required" };
-  }
-
-  if (requireAdmin) {
-    const admin = createAdminClient();
-    const { data: profile } = await admin
-      .from("profiles")
-      .select("role")
-      .eq("id", user.id)
-      .single();
-
-    if (!profile || profile.role !== "admin") {
-      return { authorized: false as const, status: 403, error: "Forbidden: Admin privileges required" };
-    }
-  }
-
-  return { authorized: true as const, user };
-}
-
 export async function GET() {
   try {
-    const auth = await getAuthenticatedUser(false);
-    if (!auth.authorized) {
-      return NextResponse.json({ error: auth.error }, { status: auth.status });
-    }
+    const guard = await requireUser();
+    if (!guard.ok) return guard.response;
 
     const admin = createAdminClient();
 
@@ -101,10 +75,8 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await getAuthenticatedUser(true);
-    if (!auth.authorized) {
-      return NextResponse.json({ error: auth.error }, { status: auth.status });
-    }
+    const guard = await requireAdmin();
+    if (!guard.ok) return guard.response;
 
     const body = await request.json().catch(() => ({}));
     const parseResult = createAccountSchema.safeParse(body);
@@ -178,10 +150,8 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
-    const auth = await getAuthenticatedUser(true);
-    if (!auth.authorized) {
-      return NextResponse.json({ error: auth.error }, { status: auth.status });
-    }
+    const guard = await requireAdmin();
+    if (!guard.ok) return guard.response;
 
     const body = await request.json().catch(() => ({}));
     const parseResult = updateAccountSchema.safeParse(body);
@@ -196,14 +166,7 @@ export async function PATCH(request: NextRequest) {
     const { id, ...updates } = parseResult.data;
     const admin = createAdminClient();
 
-    // Renaming a volunteer renames them on all of their platform accounts
-    if (updates.volunteer_name) {
-      const { data: current } = await admin.from("accounts").select("volunteer_id").eq("id", id).single();
-      if (current?.volunteer_id) {
-        await renameVolunteer(current.volunteer_id as string, updates.volunteer_name);
-      }
-    }
-
+    // Update the account first: if it fails (e.g. the new handle is taken), nothing else changed.
     const { data, error } = await admin
       .from("accounts")
       .update({
@@ -215,7 +178,18 @@ export async function PATCH(request: NextRequest) {
       .single();
 
     if (error) {
+      if (error.code === "23505") {
+        return NextResponse.json(
+          { error: `Another account already uses @${updates.handle ?? "that handle"} on this platform.` },
+          { status: 409 }
+        );
+      }
       return internalError(error, "Database error while saving the account");
+    }
+
+    // Renaming a volunteer renames them on all of their platform accounts
+    if (updates.volunteer_name && data?.volunteer_id) {
+      await renameVolunteer(data.volunteer_id as string, updates.volunteer_name);
     }
 
     return NextResponse.json({ account: data });
@@ -226,10 +200,8 @@ export async function PATCH(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
-    const auth = await getAuthenticatedUser(true);
-    if (!auth.authorized) {
-      return NextResponse.json({ error: auth.error }, { status: auth.status });
-    }
+    const guard = await requireAdmin();
+    if (!guard.ok) return guard.response;
 
     const url = new URL(request.url);
     const idParse = z.string().uuid("A valid account ID is required").safeParse(url.searchParams.get("id"));

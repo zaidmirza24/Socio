@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const supabase = createServerComponentClient();
+    const supabase = await createServerComponentClient();
     const { data: { user }, error: authError } = await supabase.auth.getUser();
 
     // Anonymous callers learn nothing about the system (not even how many users exist).

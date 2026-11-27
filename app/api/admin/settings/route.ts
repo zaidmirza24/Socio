@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { createServerComponentClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { internalError } from "@/lib/api/errors";
+import { requireAdmin, requireUser } from "@/lib/supabase/require-admin";
 import {
   getScraperRefreshStrategy,
   updateScraperRefreshStrategy,
@@ -38,16 +38,10 @@ const updateStrategySchema = z.object({
  * Returns the current scraper strategy, platform enablement, and post refresh eligibility counts.
  */
 export async function GET() {
+  const guard = await requireUser();
+  if (!guard.ok) return guard.response;
+
   try {
-    const supabaseUser = createServerComponentClient();
-    const {
-      data: { user },
-    } = await supabaseUser.auth.getUser();
-
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const strategy = await getScraperRefreshStrategy();
     const platformSettings = await getPlatformSettings();
     const featureSettings = await getFeatureSettings();
@@ -60,8 +54,7 @@ export async function GET() {
       stats,
     });
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "Failed to load settings";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return internalError(err, "Failed to load settings");
   }
 }
 
@@ -70,31 +63,11 @@ export async function GET() {
  * Updates scraper refresh strategy and/or platform toggles. Restricted to Admins.
  */
 export async function POST(request: NextRequest) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+  const user = { id: guard.userId };
+
   try {
-    const supabaseUser = createServerComponentClient();
-    const {
-      data: { user },
-    } = await supabaseUser.auth.getUser();
-
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Verify Admin role
-    const admin = createAdminClient();
-    const { data: profile } = await admin
-      .from("profiles")
-      .select("role")
-      .eq("id", user.id)
-      .single();
-
-    if (!profile || profile.role !== "admin") {
-      return NextResponse.json(
-        { error: "Forbidden: Only administrators can update platform settings." },
-        { status: 403 }
-      );
-    }
-
     const body = await request.json().catch(() => ({}));
     const parsed = updateStrategySchema.safeParse(body);
 
@@ -155,7 +128,6 @@ export async function POST(request: NextRequest) {
       message: "Settings updated successfully.",
     });
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "Failed to update settings";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return internalError(err, "Failed to update settings");
   }
 }
